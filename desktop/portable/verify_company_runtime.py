@@ -45,8 +45,8 @@ def main() -> None:
     ):
         importlib.import_module(module)
     harness_version = importlib.metadata.version("octop-harness")
-    if harness_version != "1.0.3":
-        raise SystemExit(f"Expected locked octop-harness 1.0.3, got {harness_version}")
+    if harness_version != "1.0.4":
+        raise SystemExit(f"Expected locked octop-harness 1.0.4, got {harness_version}")
     system = "windows" if sys.platform == "win32" else sys.platform
     arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
         platform.machine().lower()

@@ -622,10 +622,10 @@ class AgentManager:
             await asyncio.to_thread(self._release_isolated_backends)
 
     def _release_isolated_backends(self, agent_id: str | None = None) -> None:
-        for key, backend in list(self._isolated_backends.items()):
+        for key, backend in list(getattr(self, "_isolated_backends", {}).items()):
             if agent_id is not None and json.loads(key)[0]["agent_id"] != agent_id:
                 continue
-            self._isolated_backends.pop(key, None)
+            getattr(self, "_isolated_backends", {}).pop(key, None)
             try:
                 backend.release()
             except Exception:

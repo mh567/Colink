@@ -173,7 +173,7 @@ python3 desktop/package-company.py \
 and `windows-arm64/` (only requested platforms are needed). Each directory must
 contain `runtime/`, `packages/`, `launch.py`, and `tools/ffmpeg[.exe]` plus
 `tools/ffprobe[.exe]`. Install dependencies while preparing the payload, never on
-the employee machine. The package requires octop-harness 1.0.3, pandas, openpyxl,
+the employee machine. The package requires octop-harness 1.0.4, pandas, openpyxl,
 python-docx, python-pptx, pypdf and Pillow. Run the supplied
 `desktop/portable/verify_company_runtime.py <payload>` **using that payload's
 Python on its target OS/architecture**; it imports the engine and exercises

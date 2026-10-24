@@ -118,9 +118,9 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
             raise ValueError(
                 f"Runtime native binary has a different platform or architecture: {binary}"
             )
-    metadata = source / "packages/octop_harness-1.0.3.dist-info/METADATA"
-    if not metadata.is_file() or "Version: 1.0.3\n" not in metadata.read_text():
-        raise ValueError("Runtime requires the locked octop-harness 1.0.3 distribution")
+    metadata = source / "packages/octop_harness-1.0.4.dist-info/METADATA"
+    if not metadata.is_file() or "Version: 1.0.4\n" not in metadata.read_text():
+        raise ValueError("Runtime requires the locked octop-harness 1.0.4 distribution")
     attestation_file = source / "company-runtime-build.json"
     attestation = json.loads(attestation_file.read_text()) if attestation_file.is_file() else {}
     if attestation:
@@ -135,7 +135,7 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
                 "Runtime smoke-test record has a different platform, architecture or protocol"
             )
         if (
-            attestation.get("harness_version") != "1.0.3"
+            attestation.get("harness_version") != "1.0.4"
             or attestation.get("smoke_test_passed") is not True
         ):
             raise ValueError("Invalid optional runtime smoke-test record")
@@ -151,7 +151,14 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
         if not item.resolve().is_relative_to(source):
             raise ValueError(f"Runtime symlink escapes package: {item}")
         relative = item.relative_to(source).as_posix()
-        if relative == "company-runtime-manifest.json" or "__pycache__" in item.parts:
+        if (
+            relative == "company-runtime-manifest.json"
+            or "__pycache__" in item.parts
+            or "builtin/skills/en/powerpoint" in relative
+            or "builtin/skills/zh/powerpoint" in relative
+            or "/powerpoint/" in relative
+            or relative.endswith("/powerpoint")
+        ):
             continue
         with item.open("rb") as stream:
             files[relative] = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -168,7 +175,7 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
         "protocol_version": release["company_protocol_version"],
         "platform": platform,
         "arch": arch,
-        "harness_version": "1.0.3",
+        "harness_version": "1.0.4",
         "target_smoke_verified": bool(attestation),
         "files": files,
     }
@@ -427,7 +434,9 @@ def main() -> None:
                 "protocol_version": 1,
                 "local_runtime_included": not args.legacy_shell_only,
                 "dashboard_included": True,
-                "dashboard_zip_sha256": hashlib.sha256((root / "desktop/src/assets/company-dashboard.zip").read_bytes()).hexdigest(),
+                "dashboard_zip_sha256": hashlib.sha256(
+                    (root / "desktop/src/assets/company-dashboard.zip").read_bytes()
+                ).hexdigest(),
                 "built": True,
                 "deployed": False,
                 "real_device_verified": False,

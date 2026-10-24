@@ -32,6 +32,6 @@ When producing binaries, Docker images or client installers, include the license
 
 ## Material not in the public export
 
-The docx, pptx, pdf and xlsx skills in the `office-automation` expert are subject to Anthropic license restrictions on copying, derivation and redistribution and are not included in this project's public source release.
+The docx, pptx, pdf and xlsx skills in the `office-automation` expert, as well as the restricted-license PowerPoint (PPT) skill materials in Octop Harness, are subject to Anthropic license restrictions on copying, derivation and redistribution, and are excluded from this project's public source export and delivery packages (including desktop runtime bundles and instance workspaces).
 
 Document tooling in this project is implemented with independent dependencies such as python-docx, python-pptx, pypdf and openpyxl; each dependency follows its own license.

@@ -48,7 +48,7 @@ class CompanyPackageTest(unittest.TestCase):
             "packages/octop_harness/__init__.py",
             "tools/ffmpeg",
             "tools/ffprobe",
-            "packages/octop_harness-1.0.3.dist-info/METADATA",
+            "packages/octop_harness-1.0.4.dist-info/METADATA",
         ]
         names += [f"packages/{m}/__init__.py" for m in module.RUNTIME_MODULES]
         for name in names:
@@ -59,7 +59,7 @@ class CompanyPackageTest(unittest.TestCase):
                     b"\xcf\xfa\xed\xfe" + (0x100000C).to_bytes(4, "little") + b"\0" * 56
                 )
             elif name.endswith("METADATA"):
-                item.write_text("Version: 1.0.3\n")
+                item.write_text("Version: 1.0.4\n")
             else:
                 item.write_text("company-runtime")
         app_metadata = source / "packages/octop-1.0.0.dist-info/METADATA"
@@ -75,7 +75,7 @@ class CompanyPackageTest(unittest.TestCase):
                     "platform": "darwin",
                     "arch": "arm64",
                     "protocol_version": 1,
-                    "harness_version": "1.0.3",
+                    "harness_version": "1.0.4",
                     "octop_version": "1.0.0",
                     "smoke_test_passed": True,
                     "file_hashes": {

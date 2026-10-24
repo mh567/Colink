@@ -7,7 +7,7 @@ from importlib.resources.abc import Traversable
 from typing import Any
 
 OCTOP_BUILTIN_SKILLS_ROOT = "_builtin_skills"
-RETIRED_BUILTIN_SKILLS = ("install-skill",)
+RETIRED_BUILTIN_SKILLS = ("install-skill", "powerpoint")
 _WORKSPACE_TOKEN = b"{{OCTOP_WORKSPACE}}"
 _SKILLS_TOKEN = b"{{OCTOP_SKILLS}}"
 _BUILTIN_TOKEN = b"{{OCTOP_BUILTIN_SKILLS}}"
@@ -81,9 +81,12 @@ async def sync_octop_builtin_skills(workspace: Any) -> list[str]:
         await workspace.aupload_many(uploads)
 
     for name in RETIRED_BUILTIN_SKILLS:
-        path = f"{OCTOP_BUILTIN_SKILLS_ROOT}/{name}"
-        if await workspace.aexists(path):
-            await workspace.adelete(path)
+        for path in (
+            f"{OCTOP_BUILTIN_SKILLS_ROOT}/{name}",
+            f"{workspace.system_rel(OCTOP_BUILTIN_SKILLS_ROOT)}/{name}",
+        ):
+            if await workspace.aexists(path):
+                await workspace.adelete(path)
     return sorted(skill_names)
 
 
