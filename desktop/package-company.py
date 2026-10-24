@@ -142,6 +142,7 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
     if "company-runtime" not in (source / "launch.py").read_text():
         raise ValueError("Portable launcher does not implement the company-runtime entry point")
     files: dict[str, str] = {}
+    input_files: dict[str, str] = {}
     entries: list[tuple[str, Path]] = []
     for item in sorted(source.rglob("*")):
         if item.is_symlink() and item.is_dir():
@@ -151,20 +152,21 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
         if not item.resolve().is_relative_to(source):
             raise ValueError(f"Runtime symlink escapes package: {item}")
         relative = item.relative_to(source).as_posix()
+        if relative == "company-runtime-manifest.json" or "__pycache__" in item.parts:
+            continue
+        with item.open("rb") as stream:
+            input_files[relative] = hashlib.file_digest(stream, "sha256").hexdigest()
         if (
-            relative == "company-runtime-manifest.json"
-            or "__pycache__" in item.parts
-            or "builtin/skills/en/powerpoint" in relative
+            "builtin/skills/en/powerpoint" in relative
             or "builtin/skills/zh/powerpoint" in relative
             or "/powerpoint/" in relative
             or relative.endswith("/powerpoint")
         ):
             continue
-        with item.open("rb") as stream:
-            files[relative] = hashlib.file_digest(stream, "sha256").hexdigest()
+        files[relative] = input_files[relative]
         entries.append((relative, item))
     if attestation and attestation.get("file_hashes") != {
-        key: value for key, value in files.items() if key != "company-runtime-build.json"
+        key: value for key, value in input_files.items() if key != "company-runtime-build.json"
     }:
         raise ValueError(
             "Runtime payload changed after its target smoke test; run verify_company_runtime.py again"

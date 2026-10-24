@@ -149,8 +149,8 @@ assemble_one() {
 
   # uv pip resolves against the host interpreter. macOS /usr/bin/python3 is
   # often Xcode 3.9, which cannot satisfy octop's requires-python >=3.12.
+  local install_python
   if [[ "$plat" == "$host" ]]; then
-    local install_python
     install_python="$(runtime_python "${staging}/runtime")"
     if [[ ! -x "$install_python" && ! -f "$install_python" ]]; then
       echo "[package] portable python missing: ${install_python}" >&2
@@ -160,6 +160,7 @@ assemble_one() {
     common_args+=( --python "$install_python" )
   else
     uv python install 3.12 >/dev/null
+    install_python="$(uv python find 3.12)"
     echo "[package] ${plat}: resolving with uv-managed CPython 3.12" >&2
     common_args+=( --python 3.12 )
   fi
@@ -228,6 +229,8 @@ assemble_one() {
     fi
     exit "$status"
   fi
+
+  "$install_python" "${REPO_ROOT}/tools/prune_runtime_materials.py" "${staging}/packages"
 
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"

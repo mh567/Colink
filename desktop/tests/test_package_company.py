@@ -117,6 +117,41 @@ class CompanyPackageTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing offline runtime dependency"):
                 module.package_runtime(source, root / "bad.zip", "darwin", "arm64")
 
+    def test_verified_payload_excludes_restricted_skills(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self.payload(root)
+            record_path = source / "company-runtime-build.json"
+            record = json.loads(record_path.read_text())
+            for language in ("en", "zh"):
+                relative = f"packages/octop_harness/builtin/skills/{language}/powerpoint/SKILL.md"
+                skill = source / relative
+                skill.parent.mkdir(parents=True)
+                skill.write_text("restricted fixture")
+                record["file_hashes"][relative] = hashlib.sha256(skill.read_bytes()).hexdigest()
+            record_path.write_text(json.dumps(record))
+
+            archive = module.package_runtime(source, root / "payload.zip", "darwin", "arm64")
+
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertFalse(any("/powerpoint/" in name for name in bundle.namelist()))
+                manifest = json.loads(
+                    bundle.read("Octop-company-darwin-arm64/company-runtime-manifest.json")
+                )
+                self.assertTrue(manifest["target_smoke_verified"])
+                self.assertFalse(any("/powerpoint/" in name for name in manifest["files"]))
+                for name, digest in manifest["files"].items():
+                    self.assertEqual(
+                        hashlib.sha256(
+                            bundle.read("Octop-company-darwin-arm64/" + name)
+                        ).hexdigest(),
+                        digest,
+                    )
+
+            (source / "packages/openpyxl/__init__.py").write_text("tampered")
+            with self.assertRaisesRegex(ValueError, "changed after"):
+                module.package_runtime(source, root / "tampered.zip", "darwin", "arm64")
+
     def test_changes_after_smoke_test_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

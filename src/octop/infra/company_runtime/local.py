@@ -14,6 +14,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -248,7 +249,7 @@ class ProjectBackend(HarnessLocalShellBackend):
         raise RuntimeError("Synchronous execution is disabled; use asynchronous runtime")
 
     async def stop_process(self, process: asyncio.subprocess.Process) -> None:
-        if os.name == "nt":
+        if sys.platform == "win32":
             killer = await asyncio.create_subprocess_exec(
                 "taskkill",
                 "/PID",
@@ -424,7 +425,7 @@ class ProjectBackend(HarnessLocalShellBackend):
             raise
         finally:
             # Kill descendants even if a shell daemonized them and exited first.
-            if os.name != "nt":
+            if sys.platform != "win32":
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
             self.processes.discard(process)
