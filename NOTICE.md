@@ -30,6 +30,6 @@ Octop Enterprise 基于 [TencentCloud/Octop](https://github.com/TencentCloud/Oct
 
 ## 未纳入公开导出的材料
 
-`office-automation` 专家中的 docx、pptx、pdf、xlsx 技能受 Anthropic 许可的复制、衍生和再分发限制，未纳入本项目的公开源码发行。
+`office-automation` 专家中的 docx、pptx、pdf、xlsx 技能，以及 Octop Harness 内置带限制许可的 PowerPoint（PPT）技能材料，受 Anthropic 许可的复制、衍生和再分发限制，未纳入本项目的公开源码发行与实际交付包（包括桌面运行包与实例工作区）。
 
 本项目的文档工具基于 python-docx、python-pptx、pypdf、openpyxl 等独立依赖实现，各依赖遵循自身许可证。

@@ -105,12 +105,14 @@ WORKDIR /app
 
 # 先安装锁定依赖，仅改源码时可复用此层缓存
 COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY tools/prune_runtime_materials.py /usr/local/libexec/octop-prune-runtime-materials.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$PIP_INDEX_URL" ]; then \
         export UV_INDEX_URL="$PIP_INDEX_URL"; \
         if [ -n "$PIP_TRUSTED_HOST" ]; then export UV_INSECURE_HOST="$PIP_TRUSTED_HOST"; fi; \
     fi \
-    && uv sync --frozen --no-install-project --no-dev --extra browser
+    && uv sync --frozen --no-install-project --no-dev --extra browser \
+    && .venv/bin/python /usr/local/libexec/octop-prune-runtime-materials.py .venv/lib/python3.12/site-packages
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
@@ -128,6 +130,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         if [ -n "$PIP_TRUSTED_HOST" ]; then export UV_INSECURE_HOST="$PIP_TRUSTED_HOST"; fi; \
     fi \
     && uv sync --frozen --no-dev --extra browser \
+    && .venv/bin/python /usr/local/libexec/octop-prune-runtime-materials.py .venv/lib/python3.12/site-packages \
     && apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/* /tmp/*

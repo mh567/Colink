@@ -48,7 +48,7 @@ class CompanyPackageTest(unittest.TestCase):
             "packages/octop_harness/__init__.py",
             "tools/ffmpeg",
             "tools/ffprobe",
-            "packages/octop_harness-1.0.3.dist-info/METADATA",
+            "packages/octop_harness-1.0.4.dist-info/METADATA",
         ]
         names += [f"packages/{m}/__init__.py" for m in module.RUNTIME_MODULES]
         for name in names:
@@ -59,7 +59,7 @@ class CompanyPackageTest(unittest.TestCase):
                     b"\xcf\xfa\xed\xfe" + (0x100000C).to_bytes(4, "little") + b"\0" * 56
                 )
             elif name.endswith("METADATA"):
-                item.write_text("Version: 1.0.3\n")
+                item.write_text("Version: 1.0.4\n")
             else:
                 item.write_text("company-runtime")
         app_metadata = source / "packages/octop-1.0.0.dist-info/METADATA"
@@ -75,7 +75,7 @@ class CompanyPackageTest(unittest.TestCase):
                     "platform": "darwin",
                     "arch": "arm64",
                     "protocol_version": 1,
-                    "harness_version": "1.0.3",
+                    "harness_version": "1.0.4",
                     "octop_version": "1.0.0",
                     "smoke_test_passed": True,
                     "file_hashes": {
@@ -116,6 +116,41 @@ class CompanyPackageTest(unittest.TestCase):
             (source / "tools/ffmpeg").unlink()
             with self.assertRaisesRegex(ValueError, "Missing offline runtime dependency"):
                 module.package_runtime(source, root / "bad.zip", "darwin", "arm64")
+
+    def test_verified_payload_excludes_restricted_skills(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self.payload(root)
+            record_path = source / "company-runtime-build.json"
+            record = json.loads(record_path.read_text())
+            for language in ("en", "zh"):
+                relative = f"packages/octop_harness/builtin/skills/{language}/powerpoint/SKILL.md"
+                skill = source / relative
+                skill.parent.mkdir(parents=True)
+                skill.write_text("restricted fixture")
+                record["file_hashes"][relative] = hashlib.sha256(skill.read_bytes()).hexdigest()
+            record_path.write_text(json.dumps(record))
+
+            archive = module.package_runtime(source, root / "payload.zip", "darwin", "arm64")
+
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertFalse(any("/powerpoint/" in name for name in bundle.namelist()))
+                manifest = json.loads(
+                    bundle.read("Octop-company-darwin-arm64/company-runtime-manifest.json")
+                )
+                self.assertTrue(manifest["target_smoke_verified"])
+                self.assertFalse(any("/powerpoint/" in name for name in manifest["files"]))
+                for name, digest in manifest["files"].items():
+                    self.assertEqual(
+                        hashlib.sha256(
+                            bundle.read("Octop-company-darwin-arm64/" + name)
+                        ).hexdigest(),
+                        digest,
+                    )
+
+            (source / "packages/openpyxl/__init__.py").write_text("tampered")
+            with self.assertRaisesRegex(ValueError, "changed after"):
+                module.package_runtime(source, root / "tampered.zip", "darwin", "arm64")
 
     def test_changes_after_smoke_test_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

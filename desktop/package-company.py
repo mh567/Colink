@@ -118,9 +118,9 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
             raise ValueError(
                 f"Runtime native binary has a different platform or architecture: {binary}"
             )
-    metadata = source / "packages/octop_harness-1.0.3.dist-info/METADATA"
-    if not metadata.is_file() or "Version: 1.0.3\n" not in metadata.read_text():
-        raise ValueError("Runtime requires the locked octop-harness 1.0.3 distribution")
+    metadata = source / "packages/octop_harness-1.0.4.dist-info/METADATA"
+    if not metadata.is_file() or "Version: 1.0.4\n" not in metadata.read_text():
+        raise ValueError("Runtime requires the locked octop-harness 1.0.4 distribution")
     attestation_file = source / "company-runtime-build.json"
     attestation = json.loads(attestation_file.read_text()) if attestation_file.is_file() else {}
     if attestation:
@@ -135,13 +135,14 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
                 "Runtime smoke-test record has a different platform, architecture or protocol"
             )
         if (
-            attestation.get("harness_version") != "1.0.3"
+            attestation.get("harness_version") != "1.0.4"
             or attestation.get("smoke_test_passed") is not True
         ):
             raise ValueError("Invalid optional runtime smoke-test record")
     if "company-runtime" not in (source / "launch.py").read_text():
         raise ValueError("Portable launcher does not implement the company-runtime entry point")
     files: dict[str, str] = {}
+    input_files: dict[str, str] = {}
     entries: list[tuple[str, Path]] = []
     for item in sorted(source.rglob("*")):
         if item.is_symlink() and item.is_dir():
@@ -154,10 +155,18 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
         if relative == "company-runtime-manifest.json" or "__pycache__" in item.parts:
             continue
         with item.open("rb") as stream:
-            files[relative] = hashlib.file_digest(stream, "sha256").hexdigest()
+            input_files[relative] = hashlib.file_digest(stream, "sha256").hexdigest()
+        if (
+            "builtin/skills/en/powerpoint" in relative
+            or "builtin/skills/zh/powerpoint" in relative
+            or "/powerpoint/" in relative
+            or relative.endswith("/powerpoint")
+        ):
+            continue
+        files[relative] = input_files[relative]
         entries.append((relative, item))
     if attestation and attestation.get("file_hashes") != {
-        key: value for key, value in files.items() if key != "company-runtime-build.json"
+        key: value for key, value in input_files.items() if key != "company-runtime-build.json"
     }:
         raise ValueError(
             "Runtime payload changed after its target smoke test; run verify_company_runtime.py again"
@@ -168,7 +177,7 @@ def package_runtime(source: Path, destination: Path, platform: str, arch: str) -
         "protocol_version": release["company_protocol_version"],
         "platform": platform,
         "arch": arch,
-        "harness_version": "1.0.3",
+        "harness_version": "1.0.4",
         "target_smoke_verified": bool(attestation),
         "files": files,
     }
@@ -427,7 +436,9 @@ def main() -> None:
                 "protocol_version": 1,
                 "local_runtime_included": not args.legacy_shell_only,
                 "dashboard_included": True,
-                "dashboard_zip_sha256": hashlib.sha256((root / "desktop/src/assets/company-dashboard.zip").read_bytes()).hexdigest(),
+                "dashboard_zip_sha256": hashlib.sha256(
+                    (root / "desktop/src/assets/company-dashboard.zip").read_bytes()
+                ).hexdigest(),
                 "built": True,
                 "deployed": False,
                 "real_device_verified": False,

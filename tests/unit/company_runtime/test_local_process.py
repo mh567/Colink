@@ -73,7 +73,7 @@ asyncio.run(run())
         assert worker.returncode == 0, errors.decode()
         result = json.loads(output)
         assert result["exit"] == 0
-        assert result["output"].strip() == "stdout:\n0\n\nstderr:".strip()
+        assert result["output"].replace("\r\n", "\n").strip() == "stdout:\n0\n\nstderr:".strip()
     finally:
         worker.stdin.close()
         if worker.returncode is None:
