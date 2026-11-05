@@ -233,6 +233,9 @@ assemble_one() {
     exit "$status"
   fi
 
+  uv run --no-project --python 3.12 python \
+    "${REPO_ROOT}/scripts/strip_restricted_skills.py" "${staging}/packages"
+
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"
   cp "${TEMPLATES}/launch.py" "${staging}/launch.py"

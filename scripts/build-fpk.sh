@@ -134,6 +134,12 @@ build_one() {
   # 复制整个包目录（manifest / cmd / config / wizard / app / ICON* / LICENSE）
   cp -r "$PKG/." "$BUILD/"
 
+  if [ "$KIND" = "native" ]; then
+    local strip_python
+    strip_python="$(command -v python3 || command -v python)"
+    "$strip_python" "$ROOT/scripts/strip_restricted_skills.py" "$BUILD/app/site-packages"
+  fi
+
   # 注入共享函数库（find_python312 / fix_ownership_and_perms / free_octop_ports），
   # 仓库单一来源 scripts/fnos/common.sh，cmd/bin 脚本统一 source cmd/common.sh。
   if [ -f "$ROOT/scripts/fnos/common.sh" ]; then
