@@ -54,7 +54,7 @@ def build_probe_chat_model(
     base_url = _required_base_url(row.base_url)
     headers = ensure_opencode_session_header(row.name, provider_headers(row), base_url=base_url)
     models = row.get_models() if hasattr(row, "get_models") else []
-    mid = _probe_model_id(row, model_id)
+    mid = resolve_probe_model_id(row, model_id)
     if not mid:
         raise ValueError("model_id is required")
     entry = next((m for m in models if m.get("id") == mid), None)
@@ -118,7 +118,14 @@ def make_probe_provider_row(
     )
 
 
-def _probe_model_id(row: Any, model_id: str | None) -> str:
+def resolve_probe_model_id(row: Any, model_id: str | None) -> str:
+    """Select the same model for probe execution and persisted evidence."""
+    from octop.infra.agents.providers.model_flags import is_onnx_local_provider
+
+    if is_onnx_local_provider(
+        getattr(row, "name", None), provider_api_key=getattr(row, "api_key", None)
+    ):
+        return _onnx_probe_model_id(row, model_id)
     models = row.get_models() if hasattr(row, "get_models") else []
     if model_id:
         return model_id
@@ -130,8 +137,7 @@ def _probe_model_id(row: Any, model_id: str | None) -> str:
 def _onnx_probe_model_id(row: Any, model_id: str | None) -> str:
     """Explicit request wins, then the row's enabled entry, then the first one.
 
-    ``_probe_model_id`` would take ``models[0]``, which for the ONNX row is
-    rarely the model the service is actually configured with.
+    The first entry for the ONNX row is rarely the model configured for use.
     """
     if model_id:
         return model_id
@@ -280,7 +286,7 @@ async def probe_provider_row(
         # path below would post its placeholder API key to OpenAI.
         from octop.infra.agents.providers.onnx_service import probe_local_model
 
-        local_result = await probe_local_model(_onnx_probe_model_id(row, model_id))
+        local_result = await probe_local_model(resolve_probe_model_id(row, model_id))
         if local_result.get("latency_ms") is not None:
             local_result["latency_ms"] = int(local_result["latency_ms"])
         if not local_result.get("ok") and local_result.get("error"):
@@ -291,7 +297,7 @@ async def probe_provider_row(
         _required_base_url(getattr(row, "base_url", None))
     except ValueError:
         return _probe_failure("invalid_config", locale)
-    mid = _probe_model_id(row, model_id)
+    mid = resolve_probe_model_id(row, model_id)
     if not mid:
         return _probe_failure("invalid_config", locale)
     if _should_probe_embedding(row, model_id=mid, embedding=embedding):

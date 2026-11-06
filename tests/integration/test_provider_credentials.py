@@ -243,3 +243,41 @@ async def test_probe_openapi_describes_capability_results(env: Any) -> None:
         assert result["$ref"] == "#/components/schemas/ProviderProbeResult"
     properties = schema["components"]["schemas"]["ProviderProbeResult"]["properties"]
     assert {"ok", "error_type", "dimension", "capability", "latency_ms"} <= properties.keys()
+
+
+@pytest.mark.parametrize(
+    ("body", "enabled", "expected"),
+    [(None, True, "second"), ({"model_id": "first"}, True, "first"), (None, False, "first")],
+)
+async def test_onnx_probe_records_actual_model(
+    env: Any, body: dict[str, str] | None, enabled: bool, expected: str
+) -> None:
+    client, _, auth = env
+    created = await client.post(
+        "/api/admin/providers",
+        headers=auth,
+        json={
+            "name": "onnx",
+            "kind": "openai",
+            "api_key": "onnx",
+            "models": [
+                {"id": "first", "enabled": False, "embedding": True},
+                {"id": "second", "enabled": enabled, "embedding": True},
+            ],
+        },
+    )
+    assert created.status_code == 201
+    with patch(
+        "octop.infra.agents.providers.onnx_service.probe_local_model",
+        new=AsyncMock(return_value={"ok": True, "dim": 384}),
+    ) as probe:
+        response = await client.post(
+            f"/api/admin/providers/{created.json()['id']}/test", headers=auth, json=body
+        )
+    assert response.status_code == 200
+    probe.assert_awaited_once_with(expected)
+    listed = await client.get("/api/admin/providers", headers=auth)
+    results = listed.json()[0]["probe_results"]
+    assert set(results) == {expected}
+    assert results[expected]["embedding"]["ok"] is True
+    assert results[expected]["embedding"]["dim"] == 384

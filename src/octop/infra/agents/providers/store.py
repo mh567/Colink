@@ -504,10 +504,10 @@ def record_provider_probe_result(
     api_fallback: str | None = None,
 ) -> None:
     """Persist evidence only for the saved configuration and merge concurrent probes."""
-    from octop.infra.agents.providers.probe import parse_provider_extra
+    from octop.infra.agents.providers.probe import parse_provider_extra, resolve_probe_model_id
 
     models = row.get_models()
-    tested_model = model_id or (str(models[0].get("id", "")) if models else "")
+    tested_model = resolve_probe_model_id(row, model_id)
     model = next((entry for entry in models if entry.get("id") == tested_model), None)
     if model is None:
         return
