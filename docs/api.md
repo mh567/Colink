@@ -138,7 +138,9 @@ does not set these headers itself.
 
 列表字段为 `{device_id, owner_user_id, owner_username, name, platform, status, online, created_at, last_seen}`。时间为 Unix 秒；`online` 仅表示已批准且仍存活的本机连接。信任决定和最近接入时间持久化，在线状态不从历史时间推断，服务重启后须重新连接。
 
-WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`，公钥采用标准 Base64。服务端返回 `{type:"challenge", message}`；客户端对完整 `message` 签名，返回 `{type:"proof", signature}`。挑战仅在该连接使用一次，不接受旧签名重放。成功后服务端返回 `{type:"status", device_id, status, online}`；客户端每 5 秒发送 `{type:"heartbeat"}`，15 秒无心跳即断开。访问令牌不进入 URL；私钥不进入页面、服务端或审计记录。
+WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`，公钥采用标准 Base64。服务端返回 `{type:"challenge", message}`；客户端对完整 `message` 签名，返回 `{type:"proof", signature}`。挑战仅在该连接使用一次，不接受旧签名重放。成功后服务端返回 `{type:"status", device_id, status, online}`；客户端每 5 秒发送 `{type:"heartbeat", access_token}`，15 秒无心跳即断开。页面登录续期后，桌面客户端立即将新令牌送入原连接，不重新登记；新令牌必须属于原员工，且不能恢复因停用、口令重置或设备撤销而失效的会话。兼容不带令牌的心跳，使用该连接最近一次通过验证的令牌，过期仍拒绝。访问令牌不进入 URL；私钥不进入页面、服务端或审计记录。
+
+子路径部署沿用页面配置的 API 前缀，例如 `/colink/api/devices/connect`；桌面客户端仍只连接设置中的企业服务域名，不接受页面另行指定服务器。
 
 退出登录、切换账号和退出客户端会断开本机连接。停用、重置口令或撤销设备后，状态查询立即显示离线，下一次心跳拒绝继续使用原会话。重新批准已撤销设备后须主动重新接入。新通道不提供任意命令、文件、中央桌面或浏览器操作，也不通过 Bridge 转用他人身份；后续本机任务仍须分别校验设备、目录和动作权限。
 

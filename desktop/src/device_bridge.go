@@ -10,6 +10,7 @@ import (
 )
 
 const deviceConnectEventPrefix = "desktop:device-connect:"
+const deviceRefreshEventPrefix = "desktop:device-refresh:"
 
 type deviceEventListener struct{ client *deviceClient }
 
@@ -21,12 +22,16 @@ func (l *deviceEventListener) DispatchWailsEvent(event *application.CustomEvent)
 		l.client.disconnect()
 		return
 	}
-	if !strings.HasPrefix(event.Name, deviceConnectEventPrefix) {
+	prefix := deviceConnectEventPrefix
+	if strings.HasPrefix(event.Name, deviceRefreshEventPrefix) {
+		prefix = deviceRefreshEventPrefix
+	} else if !strings.HasPrefix(event.Name, deviceConnectEventPrefix) {
 		return
 	}
-	raw, err := url.QueryUnescape(strings.TrimPrefix(event.Name, deviceConnectEventPrefix))
+	raw, err := url.QueryUnescape(strings.TrimPrefix(event.Name, prefix))
 	var body struct {
 		AccessToken string `json:"access_token"`
+		APIPath     string `json:"api_path"`
 	}
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &body)
@@ -39,7 +44,11 @@ func (l *deviceEventListener) DispatchWailsEvent(event *application.CustomEvent)
 		}
 		return
 	}
-	l.client.connect(body.AccessToken)
+	if prefix == deviceRefreshEventPrefix {
+		l.client.refresh(body.AccessToken)
+	} else {
+		l.client.connect(body.AccessToken, body.APIPath)
+	}
 }
 
 func (a *App) emitDeviceStatus(message deviceMessage) {

@@ -10,6 +10,7 @@ import {
 } from "../../hooks/useCurrentUser";
 import { routeConfigs } from "../../routes";
 import AuthGuard from "../../components/AuthGuard";
+import { applyRenewedAccessToken } from "../../api/request";
 
 vi.mock("../../i18n", () => ({ default: { language: "zh" } }));
 vi.mock("../../utils/locale", () => ({
@@ -244,9 +245,17 @@ describe("设备页", () => {
     const connect = await screen.findByRole("button", { name: "接入当前设备" });
     expect(invoke).not.toHaveBeenCalled();
     await user.click(connect);
-    expect(invoke).toHaveBeenCalledWith(
-      "wails:event:emit:desktop:device-connect:%7B%22access_token%22%3A%22employee-token%22%7D",
+    const payload = JSON.parse(
+      decodeURIComponent(
+        invoke.mock.calls[0][0].slice(
+          "wails:event:emit:desktop:device-connect:".length,
+        ),
+      ),
     );
+    expect(payload).toEqual({
+      access_token: "employee-token",
+      api_path: "/api/devices/connect",
+    });
     expect(screen.queryByText("在线")).not.toBeInTheDocument();
     registered = true;
     act(() =>
@@ -280,6 +289,21 @@ describe("设备页", () => {
     );
     await waitFor(() => expect(screen.getAllByText("在线")).toHaveLength(2));
     act(() =>
+      applyRenewedAccessToken(
+        new Response(null, {
+          headers: { "X-Octop-Access-Token": "renewed-token" },
+        }),
+      ),
+    );
+    expect(invoke).toHaveBeenLastCalledWith(
+      "wails:event:emit:desktop:device-refresh:%7B%22access_token%22%3A%22renewed-token%22%7D",
+    );
+    expect(
+      invoke.mock.calls.filter(([message]) =>
+        message.includes("device-connect:"),
+      ),
+    ).toHaveLength(1);
+    act(() =>
       window.dispatchEvent(
         new CustomEvent("colink:device-status", {
           detail: {
@@ -305,6 +329,15 @@ describe("设备页", () => {
       ),
     );
     expect(await screen.findByText("当前设备已断开")).toBeInTheDocument();
+    invoke.mockClear();
+    act(() =>
+      applyRenewedAccessToken(
+        new Response(null, {
+          headers: { "X-Octop-Access-Token": "next-token" },
+        }),
+      ),
+    );
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("离开设备页保持连接，切换账号和退出认证树会主动断开且不自动恢复", async () => {

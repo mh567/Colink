@@ -177,7 +177,7 @@ func TestDeviceSessionSignsServerChallengeAndSendsHeartbeat(t *testing.T) {
 	done := make(chan error, 1)
 	statuses := make(chan deviceMessage, 2)
 	go func() {
-		done <- runDeviceSession(ctx, srv.URL+"/dashboard", "employee-token", key, func(m deviceMessage) { statuses <- m })
+		done <- runDeviceSession(ctx, srv.URL+"/dashboard", "employee-token", "", key, nil, func(m deviceMessage) { statuses <- m })
 	}()
 	select {
 	case state := <-statuses:
@@ -217,7 +217,7 @@ func TestDeviceSessionRejectsRedirectWithoutLeakingToken(t *testing.T) {
 	}))
 	defer source.Close()
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
-	err := runDeviceSession(context.Background(), source.URL, "secret-access-token", key, func(deviceMessage) {})
+	err := runDeviceSession(context.Background(), source.URL, "secret-access-token", "", key, nil, func(deviceMessage) {})
 	if err == nil || strings.Contains(err.Error(), "secret-access-token") {
 		t.Fatalf("redirect result leaked credentials: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestDeviceSessionReportsServerErrorAndRefusesArbitraryChallenge(t *testing.
 			}
 		}))
 		_, key, _ := ed25519.GenerateKey(rand.Reader)
-		err := runDeviceSession(context.Background(), srv.URL, "token", key, func(deviceMessage) {})
+		err := runDeviceSession(context.Background(), srv.URL, "token", "", key, nil, func(deviceMessage) {})
 		srv.Close()
 		if err == nil {
 			t.Fatal("rejected handshake did not fail")
@@ -279,5 +279,35 @@ func TestDeviceClientIgnoresOldGenerationStatus(t *testing.T) {
 	case state := <-got:
 		t.Fatalf("old connection replaced disconnected state: %+v", state)
 	default:
+	}
+}
+
+func TestDeviceSessionRejectsUntrustedAPIPaths(t *testing.T) {
+	for _, path := range []string{
+		"https://attacker.invalid/api/devices/connect",
+		"//attacker.invalid/api/devices/connect",
+		"/colink/api/devices/connect?token=secret",
+		"/colink/api/devices/connect#secret",
+		"/api/users",
+		"api/devices/connect",
+	} {
+		t.Run(path, func(t *testing.T) {
+			requests := make(chan struct{}, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- struct{}{}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+			_, key, _ := ed25519.GenerateKey(rand.Reader)
+			err := runDeviceSession(context.Background(), srv.URL, "secret", path, key, nil, func(deviceMessage) {})
+			if err == nil || !strings.Contains(err.Error(), "invalid device API path") {
+				t.Fatalf("unsafe API path was not rejected: %v", err)
+			}
+			select {
+			case <-requests:
+				t.Fatal("unsafe API path reached the network")
+			default:
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 
@@ -287,3 +288,85 @@ async def test_device_without_heartbeat_becomes_offline(env, monkeypatch):
         assert (await client.get("/api/devices", headers=alice)).json()[0]["online"] is True
         assert (await ws.receive_json())["type"] == "error"
         assert (await client.get("/api/devices", headers=alice)).json()[0]["online"] is False
+
+
+async def test_device_accepts_http_renewal_after_original_token_expires(env):
+    from octop.api.deps import ACCESS_TOKEN_RESPONSE_HEADER
+    from octop.infra.auth.tokens import PURPOSE_ACCESS, sign_token
+    from tests.support.auth import bearer
+
+    client, server, admin = env
+    alice = await create_user(client, admin, username="alice")
+    user_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    short = bearer(
+        sign_token(
+            server.services.secret_repo.get("jwt"),
+            sub=user_id,
+            uname="alice",
+            role="user",
+            purpose=PURPOSE_ACCESS,
+            ttl_seconds=3,
+        )
+    )
+    async with ws_connect(client._octop_app, "/api/devices/connect") as ws:
+        state = await _hello(ws, short, Ed25519PrivateKey.generate())
+        await client.post(f"/api/devices/{state['device_id']}/approve", headers=admin)
+        response = await client.get("/api/devices", headers=short)
+        renewed = response.headers[ACCESS_TOKEN_RESPONSE_HEADER]
+        await asyncio.sleep(3.1)
+        assert (await client.get("/api/devices", headers=bearer(renewed))).status_code == 200
+        await ws.send_json({"type": "heartbeat", "access_token": renewed})
+        refreshed = await ws.receive_json()
+        assert refreshed["type"] == "status"
+        assert refreshed["device_id"] == state["device_id"]
+        assert refreshed["online"] is True
+        # A legacy heartbeat continues using the most recently authenticated token.
+        await ws.send_json({"type": "heartbeat"})
+        assert (await ws.receive_json())["online"] is True
+        await ws.send_json({"type": "heartbeat", "access_token": ws_token(short)})
+        assert (await ws.receive_json())["code"] == "TOKEN_EXPIRED"
+
+
+@pytest.mark.parametrize("actor", ["employee", "administrator"])
+async def test_device_token_refresh_cannot_switch_owner(env, actor):
+    client, _server, admin = env
+    alice = await create_user(client, admin, username="alice")
+    other = admin if actor == "administrator" else await create_user(client, admin, username="bob")
+    async with ws_connect(client._octop_app, "/api/devices/connect") as ws:
+        state = await _hello(ws, alice, Ed25519PrivateKey.generate())
+        await client.post(f"/api/devices/{state['device_id']}/approve", headers=admin)
+        await ws.send_json({"type": "heartbeat", "access_token": ws_token(other)})
+        rejected = await ws.receive_json()
+        assert rejected["code"] == "FORBIDDEN"
+    assert (await client.get("/api/devices", headers=alice)).json()[0]["online"] is False
+
+
+@pytest.mark.parametrize("action", ["revoke", "disable", "reset"])
+async def test_device_refresh_cannot_restore_revoked_session(env, action):
+    from tests.support.auth import auth_header
+
+    client, _server, admin = env
+    alice = await create_user(client, admin, username="alice")
+    user_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    async with ws_connect(client._octop_app, "/api/devices/connect") as ws:
+        state = await _hello(ws, alice, Ed25519PrivateKey.generate())
+        await client.post(f"/api/devices/{state['device_id']}/approve", headers=admin)
+        if action == "reset":
+            response = await client.post(
+                f"/api/users/{user_id}/reset-password",
+                headers=admin,
+                json={"new_password": "NewPass123"},
+            )
+            assert response.status_code == 204
+            alice = await auth_header(client, username="alice", password="NewPass123")
+        elif action == "disable":
+            response = await client.patch(
+                f"/api/users/{user_id}", headers=admin, json={"disabled": True}
+            )
+            assert response.status_code == 200
+        else:
+            response = await client.post(f"/api/devices/{state['device_id']}/revoke", headers=admin)
+            assert response.status_code == 200
+        await ws.send_json({"type": "heartbeat", "access_token": ws_token(alice)})
+        assert (await ws.receive_json())["type"] == "error"
+    assert (await client.get("/api/devices/manage", headers=admin)).json()[0]["online"] is False

@@ -87,6 +87,7 @@ type deviceClient struct {
 	base       string
 	generation uint64
 	cancel     context.CancelFunc
+	renewals   chan string
 	emit       func(deviceMessage)
 }
 
@@ -99,6 +100,7 @@ func (c *deviceClient) setBase(raw string) error {
 		c.cancel = nil
 	}
 	c.generation++
+	c.renewals = nil
 	c.base = base
 	return err
 }
@@ -111,6 +113,7 @@ func (c *deviceClient) disconnect() {
 		c.cancel = nil
 	}
 	c.generation++
+	c.renewals = nil
 	if c.emit != nil {
 		c.emit(deviceMessage{Type: "disconnected"})
 	}
@@ -124,7 +127,20 @@ func (c *deviceClient) publish(generation uint64, message deviceMessage) {
 	}
 }
 
-func (c *deviceClient) connect(token string) {
+func (c *deviceClient) refresh(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.renewals == nil {
+		return
+	}
+	select {
+	case <-c.renewals:
+	default:
+	}
+	c.renewals <- token
+}
+
+func (c *deviceClient) connect(token, apiPath string) {
 	c.mu.Lock()
 	if c.cancel != nil {
 		c.cancel()
@@ -133,9 +149,19 @@ func (c *deviceClient) connect(token string) {
 	generation, base := c.generation, c.base
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
+	renewals := make(chan string, 1)
+	c.renewals = renewals
 	c.mu.Unlock()
 	go func() {
-		defer cancel()
+		defer func() {
+			cancel()
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.generation == generation {
+				c.cancel = nil
+				c.renewals = nil
+			}
+		}()
 		var err error
 		if strings.TrimSpace(token) == "" || base == "" {
 			err = errors.New("sign in to the configured server before connecting this device")
@@ -143,7 +169,7 @@ func (c *deviceClient) connect(token string) {
 			var key ed25519.PrivateKey
 			key, err = loadDevicePrivateKey(filepath.Join(octopHome(), "device-key"))
 			if err == nil {
-				err = runDeviceSession(ctx, base, token, key, func(m deviceMessage) { c.publish(generation, m) })
+				err = runDeviceSession(ctx, base, token, apiPath, key, renewals, func(m deviceMessage) { c.publish(generation, m) })
 			}
 		}
 		if err != nil && ctx.Err() == nil {
@@ -157,7 +183,7 @@ func (c *deviceClient) connect(token string) {
 	}()
 }
 
-func runDeviceSession(ctx context.Context, base, token string, key ed25519.PrivateKey, emit func(deviceMessage)) error {
+func runDeviceSession(ctx context.Context, base, token, apiPath string, key ed25519.PrivateKey, renewals <-chan string, emit func(deviceMessage)) error {
 	normalized, err := normalizeServerURL(base)
 	if err != nil {
 		return err
@@ -166,7 +192,15 @@ func runDeviceSession(ctx context.Context, base, token string, key ed25519.Priva
 	if err != nil {
 		return err
 	}
-	u.Path, u.RawPath = "/api/devices/connect", ""
+	if apiPath == "" {
+		apiPath = "/api/devices/connect"
+	}
+	endpoint, err := url.ParseRequestURI(apiPath)
+	if err != nil || endpoint.IsAbs() || endpoint.Host != "" || endpoint.RawQuery != "" || endpoint.ForceQuery || !strings.HasPrefix(endpoint.Path, "/") || strings.HasPrefix(endpoint.Path, "//") || !strings.HasSuffix(endpoint.Path, "/api/devices/connect") {
+		return errors.New("invalid device API path")
+	}
+	// The dashboard knows its deployment prefix; the native client keeps the configured origin.
+	u.Path, u.RawPath = endpoint.Path, endpoint.RawPath
 	if u.Scheme == "https" {
 		u.Scheme = "wss"
 	} else {
@@ -227,11 +261,16 @@ func runDeviceSession(ctx context.Context, base, token string, key ed25519.Priva
 			select {
 			case <-sessionCtx.Done():
 				return
+			case token = <-renewals:
 			case <-ticker.C:
-				if wsjson.Write(sessionCtx, conn, map[string]string{"type": "heartbeat"}) != nil {
-					stop()
-					return
-				}
+			}
+			select {
+			case token = <-renewals:
+			default:
+			}
+			if wsjson.Write(sessionCtx, conn, map[string]string{"type": "heartbeat", "access_token": token}) != nil {
+				stop()
+				return
 			}
 		}
 	}()

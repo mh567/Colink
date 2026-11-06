@@ -55,6 +55,7 @@ class DeviceProof(BaseModel):
 class DeviceHeartbeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["heartbeat"]
+    access_token: str | None = Field(default=None, min_length=1, max_length=8192)
 
 
 def _view(manager: DeviceManager, row: DeviceRow) -> DeviceView:
@@ -144,6 +145,7 @@ async def connect_device(ws: WebSocket) -> None:
         connection = manager.connect(
             user, public_key=hello.public_key, name=hello.name, platform=hello.platform
         )
+        access_token = hello.access_token
         while True:
             row = manager.heartbeat(connection)
             await ws.send_json(
@@ -154,8 +156,11 @@ async def connect_device(ws: WebSocket) -> None:
                     "online": manager.is_online(row),
                 }
             )
-            DeviceHeartbeat.model_validate_json(await _receive(ws))
-            resolve_user_from_token(server, hello.access_token)
+            heartbeat = DeviceHeartbeat.model_validate_json(await _receive(ws))
+            access_token = heartbeat.access_token or access_token
+            user = resolve_user_from_token(server, access_token)
+            if user.id != connection.user_id:
+                raise OctopError(ErrorCode.FORBIDDEN, "device token belongs to another employee")
             if manager is not server.device_manager:
                 raise OctopError(ErrorCode.FORBIDDEN, "device database changed")
     except WebSocketDisconnect:

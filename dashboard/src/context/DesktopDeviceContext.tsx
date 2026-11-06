@@ -7,11 +7,13 @@ import {
   type ReactNode,
 } from "react";
 import { useCurrentUser } from "../hooks/useCurrentUser";
+import { AUTH_TOKEN_RENEWED_EVENT } from "../api/request";
 import { isDesktopShell } from "../utils/desktopChrome";
 import {
   connectDesktopDevice,
   DEVICE_STATUS_EVENT,
   disconnectDesktopDevice,
+  refreshDesktopDeviceToken,
   type NativeDeviceEvent,
 } from "../utils/desktopDevice";
 
@@ -50,11 +52,16 @@ export function DesktopDeviceProvider({ children }: { children: ReactNode }) {
       setBusy(null);
       if (detail.type === "disconnected") accepting.current = false;
     };
+    const onRenewedToken = () => {
+      if (accepting.current) refreshDesktopDeviceToken();
+    };
     window.addEventListener(DEVICE_STATUS_EVENT, onStatus);
+    window.addEventListener(AUTH_TOKEN_RENEWED_EVENT, onRenewedToken);
     window.addEventListener("pagehide", disconnectDesktopDevice);
     return () => {
       accepting.current = false;
       window.removeEventListener(DEVICE_STATUS_EVENT, onStatus);
+      window.removeEventListener(AUTH_TOKEN_RENEWED_EVENT, onRenewedToken);
       window.removeEventListener("pagehide", disconnectDesktopDevice);
       disconnectDesktopDevice();
     };

@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { clampAbsurdDocxCssLengths } from "./DocumentPreviewCore";
+
+// DOCX sanitization does not render PDFs; jsdom lacks PDF.js's DOMMatrix.
+vi.mock("react-pdf", () => ({
+  Document: () => null,
+  Page: () => null,
+  pdfjs: { GlobalWorkerOptions: {} },
+}));
 
 describe("clampAbsurdDocxCssLengths", () => {
   it("zeros out overflow-scale min-height / line-height from corrupt DOCX spacing", () => {

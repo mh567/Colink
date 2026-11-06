@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildSkillMarkdown,
   isValidSkillName,
   OCTOP_EMOJI_META_KEY,
   parseSkillEmojiAndMetadata,
 } from "./SkillDrawer";
+
+// Skill form helpers do not render PDFs; jsdom lacks PDF.js's DOMMatrix.
+vi.mock("react-pdf", () => ({
+  Document: () => null,
+  Page: () => null,
+  pdfjs: { GlobalWorkerOptions: {} },
+}));
 
 describe("isValidSkillName", () => {
   it("accepts CJK, letters, digits and . _ -", () => {
