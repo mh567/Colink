@@ -39,6 +39,9 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if decoder.Decode(&extra) != io.EOF {
 		return request, errors.New("无效任务请求")
 	}
+	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" {
+		return request, errors.New("不支持的文件类型")
+	}
 	if request.Action != "list" && request.Action != "grant" && request.Action != "run" {
 		return request, errors.New("不支持该操作；不允许命令执行")
 	}
@@ -85,6 +88,7 @@ func (a *App) handleDOCX(raw string) {
 		a.emitDOCX(session, false, err)
 		return
 	}
+	session.Format = request.Format
 	a.docx.mu.Lock()
 	busy := a.docx.busy
 	if request.Action != "list" && !busy {

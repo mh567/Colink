@@ -301,7 +301,8 @@
     "WEBAUTHN_CONFIG_INVALID": "还不能使用通行密钥。请管理员在「应用设置 → 通行密钥」填写本站域名和完整网址。如果已经填过，请改用登记的那个网址打开。用 localhost 打开则不用填。",
     "WEBAUTHN_INVALID_DOMAIN": "通行密钥需要有效域名。请通过 http://localhost 打开（不要用 127.0.0.1 等 IP 地址）。",
     "WEBAUTHN_LOGIN_DISABLED": "登录页的通行密钥登录已关闭。管理员可在「应用设置 → 通行密钥」中开启。",
-    "LOCAL_DOCX_GENERATION_FAILED": "文档生成失败，未写入文件。请检查已启用的内网 OpenAI 兼容模型、关闭 API 回退，并核对网络与模型输出。"
+    "LOCAL_DOCX_GENERATION_FAILED": "文档生成失败，未写入文件。请检查已启用的内网 OpenAI 兼容模型、关闭 API 回退，并核对网络与模型输出。",
+    "LOCAL_XLSX_GENERATION_FAILED": "表格生成失败，未写入文件。请检查内网模型连接与输出后重试。"
   },
   "nav": {
     "chat": "对话",
@@ -7425,7 +7426,7 @@
     "emptyResult": "模型未返回结果"
   },
   "localDocx": {
-    "title": "本机 DOCX 任务",
+    "title": "本机文档任务",
     "privacy": "原始文件保留在本机；所选文档的正文经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
     "grantRead": "选择只读目录",
     "grantWrite": "选择读写目录",
@@ -7447,6 +7448,15 @@
     "completed": "已完成",
     "failed": "失败",
     "interrupted": "已中断",
-    "limits": "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。"
+    "limits": "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。",
+    "format": "文件类型"
+  },
+  "localXlsx": {
+    "privacy": "原始文件保留在本机；表格数据经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
+    "limits": "支持授权目录直属的 XLSX 文件，不超过 20 MB、10 个工作表、合计 10,000 个单元格及 60,000 字符的提取数据。生成新数据表，不保留样式、图表或宏；公式支持同表算术及 SUM、AVERAGE、MIN、MAX、COUNT。不支持或计算失败时停止生成。",
+    "sourceExample": "例如：台账.xlsx",
+    "outputExample": "例如：汇总.xlsx",
+    "instructionExample": "按部门汇总台账金额，保留明细并增加合计公式。",
+    "run": "生成 XLSX"
   }
 }
