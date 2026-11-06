@@ -1,8 +1,7 @@
 name: Restrict pull request authors
 
-# Temporary gate for who may open a pull request, plus the branch rule that
-# feature and fix changes target develop. main only accepts release/* and
-# hotfix/* pull requests opened from this repository.
+# Author checks apply to developer PRs targeting main and post-release
+# synchronization PRs targeting develop, as defined in AGENTS.md.
 # Forks cannot drop this check because pull_request_target runs the workflow
 # from the base branch. Do not checkout the pull request head.
 on:
@@ -113,35 +112,6 @@ jobs:
               }
             }
 
-            function isRepoReleaseToMain(pullRequest) {
-              const baseRef = pullRequest.base && pullRequest.base.ref;
-              const headRef = (pullRequest.head && pullRequest.head.ref) || "";
-              const headRepo = pullRequest.head && pullRequest.head.repo && pullRequest.head.repo.full_name;
-              if (baseRef !== "main" || headRepo !== `${owner}/${repo}`) return false;
-              return headRef.startsWith("release/") || headRef.startsWith("hotfix/");
-            }
-
-            async function closeForWrongBase(pullRequest) {
-              const commentBody = [
-                "请把这个变更重新提交到 `develop`。功能修改和问题修复都要指向 `develop`，不要直接指向 `main`。",
-                "",
-                "Please open this change against `develop` instead of `main`."
-              ].join("\n");
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: pullRequest.number,
-                body: commentBody
-              });
-              await github.rest.pulls.update({
-                owner,
-                repo,
-                pull_number: pullRequest.number,
-                state: "closed"
-              });
-              core.info(`Closed pull request #${pullRequest.number} because its base is main.`);
-            }
-
             async function closeUntrusted(pullRequest, author) {
               const commentBody = [
                 "This pull request was closed by a temporary author restriction.",
@@ -209,10 +179,6 @@ jobs:
             }
             if (pullRequest.state === "closed") {
               core.info(`Pull request #${pullRequest.number} is already closed.`);
-              return;
-            }
-            if (pullRequest.base && pullRequest.base.ref === "main" && !isRepoReleaseToMain(pullRequest)) {
-              await closeForWrongBase(pullRequest);
               return;
             }
 
