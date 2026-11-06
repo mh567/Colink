@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import socket
 import typing
+from functools import partial
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -15,6 +16,72 @@ from httpcore._backends.base import SOCKET_OPTION, AsyncNetworkStream
 
 class UnsafeOutboundUrl(ValueError):
     """Raised when a URL must not be fetched server-side."""
+
+
+_INTRANET_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
+
+
+def _check_intranet_ip(value: str) -> None:
+    address = ipaddress.ip_address(value)
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if not any(address in network for network in _INTRANET_NETWORKS):
+        raise UnsafeOutboundUrl("model endpoint must resolve only to intranet addresses")
+
+
+async def resolve_intranet_endpoint(url: str) -> tuple[str, str]:
+    """Return a validated hostname and intranet IP for a pinned, no-redirect call."""
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise UnsafeOutboundUrl("invalid intranet model URL")
+    # Use the transport's IDNA rules: stdlib IDNA maps ß to ss, while
+    # httpx preserves it as a different ASCII hostname.
+    endpoint = httpx.URL(url)
+    port = endpoint.port or (443 if endpoint.scheme == "https" else 80)
+    host = endpoint.raw_host.decode("ascii")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            async with asyncio.timeout(10):
+                infos = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    partial(
+                        socket.getaddrinfo,
+                        host,
+                        port,
+                        type=socket.SOCK_STREAM,
+                        proto=socket.IPPROTO_TCP,
+                    ),
+                )
+        except (OSError, TimeoutError):
+            raise UnsafeOutboundUrl("cannot resolve intranet model hostname") from None
+        if not infos:
+            raise UnsafeOutboundUrl("cannot resolve intranet model hostname") from None
+        addresses = [str(info[4][0]) for info in infos]
+    else:
+        addresses = [host]
+    for address in addresses:
+        _check_intranet_ip(address)
+    return host, addresses[0]
 
 
 # Hostnames that never refer to a public Internet endpoint (Docker Desktop, etc.).
@@ -150,10 +217,11 @@ class _PinnedNetworkBackend(AutoBackend):
     validation is unaffected by the IP pinning.
     """
 
-    def __init__(self, target_host: str, pin_ip: str) -> None:
+    def __init__(self, target_host: str, pin_ip: str, *, strict_host: bool = False) -> None:
         super().__init__()
         self._target_host = target_host
         self._pin_ip = pin_ip
+        self._strict_host = strict_host
 
     async def connect_tcp(
         self,
@@ -171,6 +239,8 @@ class _PinnedNetworkBackend(AutoBackend):
                 local_address=local_address,
                 socket_options=socket_options,
             )
+        if self._strict_host:
+            raise UnsafeOutboundUrl("connection host differs from validated model host")
         return await super().connect_tcp(
             host,
             port,
@@ -188,9 +258,11 @@ class PinnedIPTransport(httpx.AsyncHTTPTransport):
     validation and the actual TCP connection (CWE-918).
     """
 
-    def __init__(self, target_host: str, pin_ip: str) -> None:
+    def __init__(self, target_host: str, pin_ip: str, *, strict_host: bool = False) -> None:
         super().__init__()
-        self._pool._network_backend = _PinnedNetworkBackend(target_host, pin_ip)
+        self._pool._network_backend = _PinnedNetworkBackend(
+            target_host, pin_ip, strict_host=strict_host
+        )
 
 
 async def safe_request(

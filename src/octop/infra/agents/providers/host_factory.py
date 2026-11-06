@@ -11,6 +11,7 @@ import logging
 from collections.abc import Callable
 from typing import cast
 
+import httpx
 from octop_harness.config import HarnessAgentConfig, ProviderConfig
 from octop_harness.llm.access import ModelAccess
 from octop_harness.llm.factory import ChatModelFactory
@@ -90,6 +91,64 @@ class HostModelFactory:
         self._config = None
         if factory is not None:
             factory.close()
+
+    async def ainvoke_intranet_text(
+        self,
+        spec: str,
+        prompt: str,
+        *,
+        system: str,
+        base_url: str,
+        host: str,
+        pin_ip: str,
+    ) -> str:
+        """Use the existing OpenAI model with an isolated, pinned HTTP client."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_openai import ChatOpenAI
+
+        from octop.infra.utils.llm_text import ainvoke_text
+        from octop.infra.utils.ssrf_guard import PinnedIPTransport
+
+        model = self.get(spec).chat_model
+        if (
+            not isinstance(model, ChatOpenAI)
+            or getattr(model, "_harness_api_fallback_model", None) is not None
+        ):
+            raise ValueError("local DOCX requires OpenAI-compatible protocol without API fallback")
+        expected = httpx.URL(base_url)
+        sdk = model.root_async_client
+        if sdk is None or str(sdk.base_url).rstrip("/") != str(expected).rstrip("/"):
+            raise ValueError("model factory endpoint differs from validated endpoint")
+
+        async def require_origin(request: httpx.Request) -> None:
+            if (request.url.scheme, request.url.host, request.url.port) != (
+                expected.scheme,
+                expected.host,
+                expected.port,
+            ):
+                raise ValueError("model request left the validated origin")
+
+        async with httpx.AsyncClient(
+            transport=PinnedIPTransport(host, pin_ip, strict_host=True),
+            follow_redirects=False,
+            trust_env=False,
+            timeout=120,
+            event_hooks={"request": [require_origin]},
+        ) as client:
+            scoped_sdk = sdk.with_options(http_client=client, max_retries=0)
+            scoped_model = model.model_copy(
+                update={
+                    "root_async_client": scoped_sdk,
+                    "async_client": scoped_sdk.chat.completions,
+                    "http_async_client": client,
+                    "max_retries": 0,
+                }
+            )
+            return await ainvoke_text(
+                scoped_model,
+                [SystemMessage(content=system), HumanMessage(content=prompt)],
+                timeout=120,
+            )
 
 
 __all__ = ["HostModelFactory"]
