@@ -86,7 +86,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     OCTOP_LOG_LEVEL=info \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_CACHE_DIR=/root/.cache/uv \
     UV_PYTHON_DOWNLOADS=never
 
 ARG PIP_INDEX_URL=
@@ -125,7 +124,6 @@ WORKDIR /app
 ARG OCTOP_IMAGE_VARIANT=full
 COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=scripts/strip_restricted_skills.py,target=/strip_restricted_skills.py \
     if [ -n "$PIP_INDEX_URL" ]; then \
         export UV_INDEX_URL="$PIP_INDEX_URL"; \
         if [ -n "$PIP_TRUSTED_HOST" ]; then export UV_INSECURE_HOST="$PIP_TRUSTED_HOST"; fi; \
@@ -141,8 +139,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
          uv sync --frozen --no-install-project --no-dev \
            --extra browser --extra desktop --extra local-embedding --extra knowledge-ocr; \
        fi \
-    && /app/.venv/bin/python /strip_restricted_skills.py \
-         /app/.venv/lib/python3.12/site-packages \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -160,7 +156,6 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/bake-desktop.sh
 # pynput 在 import 时会连接 X。full 的无头构建只确认包已安装，不加载后端。
 ARG OCTOP_IMAGE_VARIANT=full
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=scripts/strip_restricted_skills.py,target=/strip_restricted_skills.py \
     if [ -n "$PIP_INDEX_URL" ]; then \
         export UV_INDEX_URL="$PIP_INDEX_URL"; \
         if [ -n "$PIP_TRUSTED_HOST" ]; then export UV_INSECURE_HOST="$PIP_TRUSTED_HOST"; fi; \
@@ -174,8 +169,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
          && .venv/bin/python -c "import cv2, fastembed, huggingface_hub, mss, rapidocr, onnxruntime, pymupdf; import importlib.util; assert importlib.util.find_spec('pynput')" \
          && apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
-    && /app/.venv/bin/python /strip_restricted_skills.py \
-         /app/.venv/lib/python3.12/site-packages \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
