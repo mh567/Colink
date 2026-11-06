@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from octop.api.deps import current_user, get_server, require_permission
 from octop.infra.agents.providers.codex_apply import (
@@ -25,7 +25,11 @@ from octop.infra.agents.providers.codex_oauth import (
     poll_device_token,
     request_device_code,
 )
-from octop.infra.agents.providers.model_flags import is_local_runtime_provider
+from octop.infra.agents.providers.model_flags import (
+    is_local_runtime_provider,
+    is_ollama_local_provider,
+    is_onnx_local_provider,
+)
 from octop.infra.agents.providers.presets import load_provider_presets
 from octop.infra.agents.providers.probe import (
     fetch_openai_compatible_models,
@@ -40,9 +44,12 @@ from octop.infra.agents.providers.store import (
     clear_stale_pins_for_provider,
     merge_provider_purpose_extra,
     merge_stream_usage_extra,
+    record_provider_probe_result,
+    resolve_probe_credentials,
     resolve_provider_purpose,
     resolve_provider_stream_usage,
     stamp_embedding_models,
+    without_provider_probe_results,
 )
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.groups import RESOURCE_MODEL, GroupAccess, model_resource_key
@@ -209,10 +216,31 @@ def _provider_patch_updates(
         updates["note"] = _blank_to_none(body.note)
     if "enabled" in fields:
         updates["enabled"] = body.enabled
+    if fields & _PROVIDER_REHYDRATE_FIELDS:
+        runtime_extra = updates.get("extra_json", current_extra_json)
+        cleaned_extra = without_provider_probe_results(runtime_extra)
+        if cleaned_extra != runtime_extra:
+            updates["extra_json"] = cleaned_extra
     return updates
 
 
+class ProviderProbeResult(BaseModel):
+    ok: bool = Field(description="Whether the requested capability passed this probe.")
+    latency_ms: int | None = None
+    error: str | None = None
+    error_type: str | None = None
+    dimension: int | None = Field(None, description="Observed remote embedding vector dimension.")
+    dim: int | None = Field(None, description="Observed local ONNX embedding dimension.")
+    capability: Literal["chat", "stream", "tools", "embedding"] | None = None
+    fallback_used: bool | None = None
+    api_mode_used: Literal["chat_completions", "responses"] | None = None
+
+
 class ProviderTestBody(BaseModel):
+    capability: Literal["chat", "stream", "tools"] = Field(
+        "chat",
+        description="Independently test chat output, streaming, or a forced tool call. Embedding models use the embeddings endpoint.",
+    )
     model_id: str | None = None
     api_mode: Literal["chat_completions", "responses"] | None = None
     api_fallback: Literal["none", "chat_completions"] | None = None
@@ -220,6 +248,14 @@ class ProviderTestBody(BaseModel):
 
 
 class ProviderTestDraftBody(BaseModel):
+    capability: Literal["chat", "stream", "tools"] = Field(
+        "chat",
+        description="Independently test chat output, streaming, or a forced tool call. Embedding models use the embeddings endpoint.",
+    )
+    provider_id: int | None = Field(
+        None,
+        description="Reuse this saved provider credential only at its saved destination; never return the credential.",
+    )
     name: str
     kind: str
     api_key: str | None = None
@@ -232,6 +268,10 @@ class ProviderTestDraftBody(BaseModel):
 
 
 class ProviderFetchModelsBody(BaseModel):
+    provider_id: int | None = Field(
+        None,
+        description="Reuse this saved provider credential only at its saved destination; never return the credential.",
+    )
     kind: str
     api_key: str | None = None
     base_url: str | None = None
@@ -272,7 +312,15 @@ def _row_to_dict(r: Any) -> dict[str, Any]:
         "name": r.name,
         "kind": r.kind,
         "base_url": r.base_url,
-        "api_key": r.api_key,
+        "api_key_set": bool(r.api_key),
+        "probe_results": extra.get("probe_results", {}),
+        "local_runtime": (
+            "onnx"
+            if is_onnx_local_provider(r.name, provider_api_key=r.api_key)
+            else "ollama"
+            if is_ollama_local_provider(r.name, provider_api_key=r.api_key)
+            else None
+        ),
         "models": models,
         "note": r.note,
         "enabled": bool(r.enabled),
@@ -380,6 +428,7 @@ async def admin_create_provider(
     models_json = _json.dumps(models) if models is not None else None
     extra_json = merge_stream_usage_extra(body.extra_json, body.stream_usage)
     extra_json = merge_provider_purpose_extra(extra_json, body.purpose)
+    extra_json = without_provider_probe_results(extra_json)
     pid = server.services.provider_repo.create(
         name=body.name,
         kind=body.kind,
@@ -456,28 +505,42 @@ async def admin_delete_provider(
         await server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
 
 
-@admin_router.post("/test-draft", summary="Test unsaved provider draft")
+@admin_router.post(
+    "/test-draft",
+    summary="Test unsaved provider draft",
+    response_model=ProviderProbeResult,
+    response_model_exclude_none=True,
+)
 async def admin_test_provider_draft(
     body: ProviderTestDraftBody,
     request: Request,
     _: Any = Depends(require_permission("providers")),
+    server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Probe connectivity for a provider draft before it is saved."""
-    api_key = (body.api_key or "").strip()
+    api_key, extra_json, provider_name = resolve_probe_credentials(
+        server.services.provider_repo,
+        provider_id=body.provider_id,
+        api_key=body.api_key,
+        base_url=body.base_url,
+        kind=body.kind,
+        extra_json=body.extra_json,
+        name=body.name,
+    )
     if not api_key:
         return {"ok": False, "error": "api_key is required"}
     model_id = body.model_id.strip()
     if not model_id:
         return {"ok": False, "error": "model_id is required"}
     row = make_probe_provider_row(
-        name=body.name.strip() or "draft",
+        name=(provider_name or "").strip() or "draft",
         kind=body.kind,
         api_key=api_key,
         base_url=(body.base_url or "").strip() or None,
         model_id=model_id,
         api_mode=body.api_mode,
         api_fallback=body.api_fallback,
-        extra_json=body.extra_json,
+        extra_json=extra_json,
         embedding=body.embedding,
     )
     return await probe_provider_row(
@@ -486,6 +549,7 @@ async def admin_test_provider_draft(
         api_mode=body.api_mode,
         api_fallback=body.api_fallback,
         embedding=body.embedding,
+        capability=body.capability,
         locale=resolve_request_locale(request),
     )
 
@@ -495,6 +559,7 @@ async def admin_fetch_provider_models(
     body: ProviderFetchModelsBody,
     request: Request,
     _: Any = Depends(require_permission("providers")),
+    server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Fetch remote model ids via OpenAI-compatible ``GET /models`` (openai kind only)."""
     if body.kind != "openai":
@@ -502,16 +567,24 @@ async def admin_fetch_provider_models(
             "ok": False,
             "error": "fetch models is only supported for openai-compatible providers",
         }
-    api_key = (body.api_key or "").strip()
+    api_key, extra_json, provider_name = resolve_probe_credentials(
+        server.services.provider_repo,
+        provider_id=body.provider_id,
+        api_key=body.api_key,
+        base_url=body.base_url,
+        kind=body.kind,
+        extra_json=body.extra_json,
+        name=body.name,
+    )
     if not api_key:
         return {"ok": False, "error": "api_key is required"}
-    draft = SimpleNamespace(extra_json=body.extra_json)
+    draft = SimpleNamespace(extra_json=extra_json)
     return await fetch_openai_compatible_models(
         base_url=(body.base_url or "").strip() or None,
         api_key=api_key,
         extra_headers=provider_headers(draft) or None,
         locale=resolve_request_locale(request),
-        provider_name=(body.name or "").strip() or None,
+        provider_name=(provider_name or "").strip() or None,
     )
 
 
@@ -639,7 +712,13 @@ async def codex_oauth_logout(
             )
 
 
-@admin_router.post("/{provider_id}/test")
+@admin_router.post(
+    "/{provider_id}/test",
+    summary="Test one saved model capability",
+    response_model=ProviderProbeResult,
+    response_model_exclude_none=True,
+    description="Requires model administration permission. Uses server-held credentials and stores a separate result for chat, streaming, tools, or embeddings. Configuration changes invalidate saved results.",
+)
 async def admin_test_provider(
     provider_id: int,
     request: Request,
@@ -656,11 +735,23 @@ async def admin_test_provider(
     api_mode = body.api_mode if body else None
     api_fallback = body.api_fallback if body else None
     embedding = body.embedding if body else None
-    return await probe_provider_row(
+    result = await probe_provider_row(
         row,
         model_id=model_id,
         api_mode=api_mode,
         api_fallback=api_fallback,
         embedding=embedding,
+        capability=body.capability if body else "chat",
         locale=resolve_request_locale(request),
     )
+    record_provider_probe_result(
+        server.services.provider_repo,
+        row,
+        result,
+        model_id=model_id,
+        api_mode=api_mode,
+        api_fallback=api_fallback,
+        embedding=embedding,
+        capability=body.capability if body else "chat",
+    )
+    return result

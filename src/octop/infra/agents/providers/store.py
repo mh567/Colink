@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from octop_harness.config import ModelConfig, ProviderConfig
 
-from octop.infra.agents.providers.model_flags import is_chat_eligible_model, is_vision_model
+from octop.infra.agents.providers.model_flags import (
+    is_chat_eligible_model,
+    is_embedding_model,
+    is_vision_model,
+)
 from octop.infra.agents.providers.opencode_session import session_header_for_provider
 from octop.infra.agents.providers.reasoning import reasoning_capability
 
@@ -473,3 +478,110 @@ __all__ = [
     "clear_stale_pins_for_provider",
     "enabled_model_refs",
 ]
+
+
+def without_provider_probe_results(raw: str | None) -> str | None:
+    """Probe evidence can only be produced by a test, not supplied by a client."""
+    try:
+        extra = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(extra, dict) and "probe_results" in extra:
+        extra.pop("probe_results")
+        return json.dumps(extra)
+    return raw
+
+
+def record_provider_probe_result(
+    repo: Any,
+    row: Any,
+    result: dict[str, Any],
+    *,
+    model_id: str | None,
+    embedding: bool | None,
+    capability: str,
+    api_mode: str | None = None,
+    api_fallback: str | None = None,
+) -> None:
+    """Persist evidence only for the saved configuration and merge concurrent probes."""
+    from octop.infra.agents.providers.probe import parse_provider_extra, resolve_probe_model_id
+
+    models = row.get_models()
+    tested_model = resolve_probe_model_id(row, model_id)
+    model = next((entry for entry in models if entry.get("id") == tested_model), None)
+    if model is None:
+        return
+    model_is_embedding = is_embedding_model(
+        model,
+        provider_name=row.name,
+        provider_api_key=row.api_key,
+    )
+    if (
+        (api_mode is not None and api_mode != (model.get("api_mode") or "chat_completions"))
+        or (api_fallback is not None and api_fallback != (model.get("api_fallback") or "none"))
+        or (embedding is True and not model_is_embedding)
+    ):
+        return
+    current = repo.get(row.id)
+    if current is None:
+        return
+    extra = parse_provider_extra(current)
+    original_extra = parse_provider_extra(row)
+    # Results and notes are not runtime configuration; another test may finish first.
+    current_config = {key: value for key, value in extra.items() if key != "probe_results"}
+    original_config = {
+        key: value for key, value in original_extra.items() if key != "probe_results"
+    }
+    if (
+        any(
+            getattr(current, field) != getattr(row, field)
+            for field in ("name", "kind", "base_url", "api_key", "enabled")
+        )
+        or current.get_models() != models
+        or current_config != original_config
+    ):
+        return
+    results = extra.get("probe_results")
+    if not isinstance(results, dict):
+        results = {}
+        extra["probe_results"] = results
+    model_results = results.get(tested_model)
+    if not isinstance(model_results, dict):
+        model_results = {}
+        results[tested_model] = model_results
+    capability = str(
+        result.get("capability") or ("embedding" if model_is_embedding else capability)
+    )
+    model_results[capability] = {**result, "tested_at": int(time.time())}
+    repo.update(row.id, extra_json=json.dumps(extra))
+
+
+def resolve_probe_credentials(
+    repo: Any,
+    *,
+    provider_id: int | None,
+    api_key: str | None,
+    base_url: str | None,
+    kind: str,
+    extra_json: str | None,
+    name: str | None,
+) -> tuple[str, str | None, str | None]:
+    """A saved credential can only be reused against its saved destination."""
+    from octop.infra.errors import ErrorCode, OctopError
+
+    if api_key and api_key.strip():
+        return api_key.strip(), extra_json, name
+    if provider_id is None:
+        return "", extra_json, name
+    row = repo.get(provider_id)
+    if row is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "provider not found")
+    if (
+        (base_url or "").strip().rstrip("/") != (row.base_url or "").strip().rstrip("/")
+        or kind != row.kind
+        or extra_json is not None
+    ):
+        raise OctopError(
+            ErrorCode.FORBIDDEN, "save destination changes or supply a new credential", status=400
+        )
+    return str(row.api_key or ""), row.extra_json, row.name

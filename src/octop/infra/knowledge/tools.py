@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.config import get_config
 from pydantic import Field
 
+from octop.i18n import tr
 from octop.infra.knowledge.retrieve import DEFAULT_RETRIEVAL_K, retrieve_context
 
 SEARCH_KNOWLEDGE_TOOL = "search_knowledge"
@@ -118,10 +119,11 @@ def build_knowledge_tools(services: Any) -> list[StructuredTool]:
             ),
         ] = DEFAULT_RETRIEVAL_K,
     ) -> str:
+        locale = "en"
         try:
             user_id, is_admin, kb_ids, locale = _tool_ctx()
             if not kb_ids:
-                return "No knowledge bases selected for this turn."
+                return tr("knowledge.retrieval.none_selected", locale)
             context = await retrieve_context(
                 services,
                 user_id=user_id,
@@ -132,10 +134,10 @@ def build_knowledge_tools(services: Any) -> list[StructuredTool]:
                 locale=locale,
             )
             if not context:
-                return "No relevant passages found."
+                return tr("knowledge.retrieval.no_results", locale)
             return context
-        except Exception as exc:
-            return f"Knowledge search failed: {exc}"
+        except Exception:
+            return tr("knowledge.retrieval.failed", locale)
 
     return [
         StructuredTool.from_function(

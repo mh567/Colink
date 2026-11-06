@@ -64,8 +64,9 @@ def log_turn_failure(
         piece = _field(key, value)
         if piece:
             parts.append(piece)
-    line = f"{' '.join(parts)} : {_truncate(detail) or 'unknown error'}"
-    logger.log(level, line, exc_info=exc)
+    failure_type = type(exc).__name__ if exc is not None else "operation_failed"
+    line = f"{' '.join(parts)} : {failure_type}"
+    logger.log(level, line)
 
 
 def _attr(msg: Any, key: str) -> Any:

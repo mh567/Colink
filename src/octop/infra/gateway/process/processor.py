@@ -2015,7 +2015,7 @@ class GlobalProcessor:
             actor=actor,
             action="agent.stream.error",
             target=agent_id,
-            payload=str(exc),
+            payload=format_stream_error(exc, "en"),
         )
 
     def _touch_thread_after_turn(self, thread_id: str, title_source: str | None) -> None:

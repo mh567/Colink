@@ -18,6 +18,9 @@ import { PresetProviderCard } from "./cards/PresetProviderCard";
 import { ProviderCard } from "./cards/ProviderCard";
 import { CustomProviderModal } from "./modals/CustomProviderModal";
 import { EmbeddingModelPool } from "./EmbeddingModelPool";
+import { EmbeddingRequestLimits } from "./EmbeddingRequestLimits";
+import { useCurrentUser } from "../../../../hooks/useCurrentUser";
+import { userCan } from "../../../../utils/permissions";
 import pageStyles from "../index.module.less";
 import styles from "./EmbeddingSettingsPanel.module.less";
 
@@ -45,6 +48,7 @@ export function EmbeddingSettingsPanel({
   onSaved,
 }: EmbeddingSettingsPanelProps) {
   const { t } = useTranslation();
+  const user = useCurrentUser();
   const [addOpen, setAddOpen] = useState(false);
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [poolFlash, setPoolFlash] = useState(false);
@@ -114,6 +118,8 @@ export function EmbeddingSettingsPanel({
       <Paragraph className={styles.intro}>
         {t("models.embeddingIntro")}
       </Paragraph>
+
+      {userCan(user, "knowledge_settings") && <EmbeddingRequestLimits />}
 
       <EmbeddingModelPool
         providers={providers}

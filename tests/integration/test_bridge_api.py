@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,6 +42,10 @@ async def test_bridge_probe_returns_expert_list(env: Any) -> None:
 
     with (
         patch(
+            "octop.infra.bridge.peer_auth.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
+        ),
+        patch(
             "octop.infra.bridge.manager.login_peer",
             new=AsyncMock(
                 return_value={
@@ -77,10 +82,16 @@ async def test_bridge_probe_returns_expert_list(env: Any) -> None:
 async def test_bridge_probe_peer_rejection_stays_logged_in(env: Any) -> None:
     """Peer credential failure is 400, so the dashboard does not clear the local session."""
     client, _srv, auth = env
-    with patch(
-        "octop.infra.bridge.manager.login_peer",
-        new=AsyncMock(
-            side_effect=OctopError(ErrorCode.BRIDGE_AUTH_FAILED, "peer rejected credentials")
+    with (
+        patch(
+            "octop.infra.bridge.peer_auth.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
+        ),
+        patch(
+            "octop.infra.bridge.manager.login_peer",
+            new=AsyncMock(
+                side_effect=OctopError(ErrorCode.BRIDGE_AUTH_FAILED, "peer rejected credentials")
+            ),
         ),
     ):
         r = await client.post(

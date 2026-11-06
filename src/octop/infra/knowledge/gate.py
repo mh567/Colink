@@ -14,7 +14,7 @@ from octop.infra.agents.providers.onnx_service import (
     local_embedding_deps_available,
     require_embedding_prerequisites_for_model,
 )
-from octop.infra.knowledge.params import get_advanced_settings
+from octop.infra.knowledge.params import get_advanced_settings, get_embedding_limits
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,7 @@ def get_capability(settings_get: SettingsGet, provider_repo: Any = None) -> dict
             "provider_ready": provider_ready,
         },
         **get_advanced_settings(settings_get),
+        **get_embedding_limits(settings_get),
     }
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from starlette.datastructures import Headers, UploadFile
@@ -75,6 +76,7 @@ async def test_enabling_without_model_maps_prerequisite_error(
     def fail(*_args: object, **_kwargs: object) -> None:
         raise ValueError("enabling knowledge bases requires an embedding model")
 
+    monkeypatch.setattr(knowledge_bases, "ensure_local_embedding_deps_async", AsyncMock())
     monkeypatch.setattr(knowledge_bases, "set_feature_enabled", fail)
 
     with pytest.raises(OctopError) as raised:
@@ -122,6 +124,7 @@ async def test_enabling_reindexes_documents_when_model_changes(
         assert model == "new-model"
         settings_set("knowledge_embedding_model", model)
 
+    monkeypatch.setattr(knowledge_bases, "ensure_local_embedding_deps_async", AsyncMock())
     monkeypatch.setattr(knowledge_bases, "set_feature_enabled", set_feature)
     monkeypatch.setattr(
         knowledge_bases,
@@ -708,16 +711,18 @@ async def test_update_base_rejects_max_documents_out_of_range() -> None:
     assert knowledge_bases.UpdateBaseBody().max_documents is None
 
 
-def test_map_knowledge_error_unclassified_returns_internal_error() -> None:
+def test_map_knowledge_error_unclassified_returns_internal_error(caplog) -> None:
     from octop.api.routers.knowledge_bases import _map_knowledge_error
 
     err = _map_knowledge_error(RuntimeError("column max_documents does not exist"), locale="zh")
     assert err.code == ErrorCode.INTERNAL_ERROR
     assert err.status == 500
 
-    err_generic = _map_knowledge_error(Exception("unexpected db failure"), locale="zh")
+    err_generic = _map_knowledge_error(Exception("unexpected db failure secret-token"), locale="zh")
     assert err_generic.code == ErrorCode.INTERNAL_ERROR
     assert err_generic.status == 500
+    assert "secret-token" not in str(err_generic.to_envelope(locale="zh"))
+    assert "secret-token" not in caplog.text
 
 
 def test_map_knowledge_error_prerequisites_distinguished() -> None:

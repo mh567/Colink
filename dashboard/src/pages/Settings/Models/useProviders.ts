@@ -75,7 +75,16 @@ export interface ProviderRow {
   name: string;
   kind: string;
   base_url: string | null;
-  api_key: string | null;
+  api_key_set?: boolean;
+  local_runtime?: "onnx" | "ollama" | null;
+  probe_results?: Record<
+    string,
+    Record<
+      string,
+      { ok: boolean; error?: string; dimension?: number; tested_at?: number }
+    >
+  >;
+  api_key?: string | null;
   models: ProviderModel[];
   note: string | null;
   enabled: boolean;

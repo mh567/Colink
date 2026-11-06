@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -16,8 +15,6 @@ from octop.infra.knowledge.plane import open_knowledge_index
 
 DEFAULT_RETRIEVAL_K = 8
 DEFAULT_CONTEXT_CHAR_BUDGET = 6000
-
-logger = logging.getLogger(__name__)
 
 
 async def retrieve_context(
@@ -32,28 +29,24 @@ async def retrieve_context(
     locale: str = "en",
     visible_bases: Sequence[Any] | None = None,
 ) -> str:
-    """Return formatted readable context, skipping unavailable or failed retrieval."""
+    """Return formatted readable context, reporting unavailable or failed retrieval."""
     if not (query or "").strip() or not knowledge_base_ids or k <= 0 or char_budget <= 0:
         return ""
     loop = asyncio.get_running_loop()
-    try:
-        return await loop.run_in_executor(
-            None,
-            lambda: _retrieve_context_sync(
-                services,
-                user_id=user_id,
-                is_admin=is_admin,
-                query=query,
-                knowledge_base_ids=knowledge_base_ids,
-                k=k,
-                char_budget=char_budget,
-                locale=locale,
-                visible_bases=visible_bases,
-            ),
-        )
-    except Exception:
-        logger.warning("knowledge retrieval skipped for user=%s", user_id, exc_info=True)
-        return ""
+    return await loop.run_in_executor(
+        None,
+        lambda: _retrieve_context_sync(
+            services,
+            user_id=user_id,
+            is_admin=is_admin,
+            query=query,
+            knowledge_base_ids=knowledge_base_ids,
+            k=k,
+            char_budget=char_budget,
+            locale=locale,
+            visible_bases=visible_bases,
+        ),
+    )
 
 
 def _retrieve_context_sync(
@@ -88,6 +81,8 @@ def _retrieve_context_sync(
         base = visible_by_id.get(kb_id)
         if base is None:
             continue
+        if base.embedding_dim and len(query_vectors[0]) != base.embedding_dim:
+            raise RuntimeError("knowledge embedding dimension mismatch")
         ready_documents = {
             document.id: document
             for document in services.knowledge_repo.list_documents(kb_id)

@@ -253,6 +253,8 @@ def test_knowledge_remote_embedding_sends_session_header() -> None:
         headers: dict[str, str],
         _model: str,
         _texts: list[str],
+        *,
+        batch_size: int = 20,
     ) -> list[list[float]]:
         seen.update(headers)
         return [[0.1]]

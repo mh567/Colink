@@ -258,7 +258,7 @@ export function ModelListEditor({
       message.warning(t("models.modelIdLabel"));
       return;
     }
-    if (!(canTest ?? !!provider.api_key)) {
+    if (!(canTest ?? !!provider.api_key_set)) {
       message.warning(t("models.testRequiresAuth"));
       return;
     }
@@ -474,7 +474,7 @@ export function ModelListEditor({
 
   const isEditing = editingModelId !== null;
   const isFormVisible = adding || isEditing;
-  const hasApiKey = canTest ?? !!provider.api_key;
+  const hasApiKey = canTest ?? !!provider.api_key_set;
 
   useEffect(() => {
     if (!isFormVisible) return;

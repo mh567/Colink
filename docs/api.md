@@ -316,16 +316,30 @@ an optional display label; when omitted, the server derives one from
 
 ## Providers
 
+企业聊天与 embedding 分别在模型设置页配置、启停与测试。统一凭据仅保存在服务端；所有列表及写入响应返回 `api_key_set`，不返回 `api_key`。更新时省略凭据表示保持原值，显式 `null` 表示撤销。`note` 记录企业服务配额、周期和限制，由上游执行；本地分别反馈鉴权、配额/频率、网络、模型和响应格式错误。
+
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| `GET`    | `/providers` | user | providers visible to the user (own + shared) |
-| `POST`   | `/providers` | user | body `{name, kind, base_url?, api_key?, model?, ...}` → `201` |
-| `PATCH`  | `/providers/{id}` | owner | body subset → updated row |
-| `DELETE` | `/providers/{id}` | owner | `204` (refuses if any agent references it) |
-| `POST`   | `/providers/{id}/test` | user | `{ok, latency_ms?, error?}` (one-token ping with 10 s timeout) |
-| `POST`   | `/admin/providers` | admin | same body as user POST; row has `user_id = NULL` |
-| `PATCH`  | `/admin/providers/{id}` | admin | as user PATCH but works on shared rows |
-| `DELETE` | `/admin/providers/{id}` | admin | `204` |
+| `GET` | `/providers` | user | 服务配置及测试记录，不返回统一凭据 |
+| `GET` | `/admin/providers` | providers | 管理配置与模型可见范围 |
+| `POST` | `/admin/providers` | providers | `{name, kind, base_url?, api_key?, purpose?, models?, note?}` |
+| `PATCH` | `/admin/providers/{id}` | providers | 修改配置或 `enabled`；影响调用的修改清除旧测试记录 |
+| `DELETE` | `/admin/providers/{id}` | providers | 被专家引用时拒绝删除 |
+| `POST` | `/admin/providers/{id}/test` | providers | `{model_id?, capability?: "chat"\|"stream"\|"tools", embedding?: boolean}` |
+| `POST` | `/admin/providers/test-draft` | providers | 测试未保存配置；可用 `provider_id` 引用服务端凭据，但不得更换目标地址或请求头 |
+| `POST` | `/admin/providers/fetch-models` | providers | 显式地址的 OpenAI-compatible `/models`；同样支持安全引用服务端凭据 |
+
+本轮依照锁文件安装并检查的组合为 Harness 1.0.7、Gateway 1.0.3、Memory 1.0.3、Browser 1.0.0；未新增依赖，Gateway 继续作为消息通道组件。
+
+测试使用现有 Harness 模型工厂；流式测试要求收到可见内容，工具测试要求返回约定工具及参数（不执行业务工具）。embedding 测试使用与知识库相同的向量校验，返回 `dimension`。保存的 `probe_results` 按模型及能力分别记录结果，单项成功不代表其他能力通过，也不代表持续健康。缺少地址或模型 ID 会明确失败，不回退公网默认服务。
+
+### 知识库请求限制与故障范围
+
+`GET /knowledge-bases/capability` 返回当前配置及 `embedding_batch_size`、`embedding_max_input_chars`。管理员通过 `PUT /knowledge-bases/feature` 随现有启用/模型配置保存这两项：批量为正整数（默认 20）；单条 Unicode 字符上限为非负整数（默认 0，不施加本地上限）。远程调用按批拆分；超长输入明确失败，不截断。上游 token 限制仍由服务端执行，字符上限不能替代 token 配额。
+
+向量结果校验索引、有限数值、非空与维度一致性；库内维度变更不能静默混入旧索引，需走已有重建流程。索引任务失败持久化为失败状态；检索服务/索引异常明确反馈知识库故障，普通聊天继续可用，不转为全文搜索或伪装无匹配资料。
+
+本轮真实内网聊天、流式、工具调用、embedding 维度/配额与 PostgreSQL/pgvector 服务联测留待最终验收。受控测试不代表这些项目已通过；测试配置、启用状态及最近结果均持久化在原有数据库，不新增推理或向量服务。
 
 ## Models
 

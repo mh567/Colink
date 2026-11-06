@@ -51,7 +51,7 @@ export function EmbeddingModelPool({
   const entries = useMemo(() => {
     const out: PoolEntry[] = [];
     for (const provider of providers) {
-      if (!provider.enabled || !provider.api_key) continue;
+      if (!provider.enabled || !provider.api_key_set) continue;
       const onnx = isOnnxProviderRow(provider);
       const embeddingLane = onnx || provider.purpose === "embedding";
       for (const model of provider.models ?? []) {

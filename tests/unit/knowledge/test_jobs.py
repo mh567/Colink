@@ -77,7 +77,7 @@ def test_process_document_marks_empty_extract_as_failed(
         jobs, "embed_knowledge_texts", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError())
     )
 
-    with pytest.raises(ValueError, match="no extractable text"):
+    with pytest.raises(RuntimeError, match="Knowledge indexing failed"):
         jobs.process_document(services, kb.id, doc.id)
 
     updated = repo.get_document(doc.id)
@@ -192,3 +192,39 @@ def test_resume_pending_index_jobs_resets_processing_and_enqueues(
 
     assert repo.get_document(doc.id).status == "pending"
     assert enqueued == [(kb.id, doc.id)]
+
+
+@pytest.mark.parametrize("mode", ["disabled", "upstream", "dimension"])
+def test_failed_indexing_preserves_existing_vectors_and_records_safe_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    kb = repo.create_base(owner_user_id=owner, name="Docs", embedding_model="embed")
+    repo.update_base(kb.id, embedding_dim=2)
+    doc = repo.create_document(
+        kb_id=kb.id, filename="notes.md", content_type="text/markdown", byte_size=5
+    )
+    write_document(kb.id, doc.id, doc.filename, b"hello")
+    KnowledgeIndex(kb.id).replace_doc_chunks(doc.id, ["old valid content"], [[1.0, 0.0]])
+    services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    if mode != "disabled":
+        monkeypatch.setattr(jobs, "assert_knowledge_usable", lambda *_args: None)
+
+    def embed_failure(*_args):
+        if mode == "upstream":
+            raise RuntimeError("private-token")
+        return [[1.0, 0.0, 0.0]]
+
+    monkeypatch.setattr(jobs, "embed_knowledge_texts", embed_failure)
+    with pytest.raises(RuntimeError) as error:
+        jobs.process_document(services, kb.id, doc.id)
+    assert "private-token" not in str(error.value)
+    updated = repo.get_document(doc.id)
+    assert updated.status == "failed"
+    assert updated.error_message == "knowledge.indexing_failed"
+    assert repo.get_base(kb.id).embedding_dim == 2
+    assert KnowledgeIndex(kb.id).list_doc_chunks(doc.id) == [(0, "old valid content")]
