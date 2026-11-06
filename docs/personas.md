@@ -119,5 +119,5 @@ Editing `mbti_profiles.py` and restarting the server is the supported
 path today. There is no admin endpoint for persona content — by
 design: persona drift across users would make agent behaviour
 irreproducible. Per-agent trimming is the official extension point
-(`system_prompt` / `config.persona`); see AGENTS.md §7 for the
+(`system_prompt` / `config.persona`); see the [technical guide](agents/project-guide.md#7-key-patterns) for the
 backend I/O rules around the resulting `SOUL.md` file.

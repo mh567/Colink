@@ -1,5 +1,7 @@
 # Contributing to Octop
 
+> **Colink 开发入口：** 当前仓库的分支、授权、检查与审查规则以 [AGENTS.md](AGENTS.md) 和[开发工作流](docs/agents/workflow.md)为准，日常任务从最新 `main` 开始。下文保留 Octop 上游贡献与发布流程作为参考，其中 `develop` 分支和发布步骤不自动适用于 Colink。
+
 Thank you for your interest in contributing! Octop is the control-plane application in the [Octop Harness](https://github.com/TencentCloud) ecosystem.
 
 ## Getting started
@@ -59,7 +61,7 @@ hotfix/* ──PR──► main (+ tag) and ──PR──► develop
 
 1. Fork (if needed) and create a feature branch from **`develop`**
 2. Open the PR with base **`develop`** (not `main`, unless it is a release or hotfix)
-3. Add or update tests for behavior changes — CI runs on **Linux and Windows**; follow the cross-platform rules in [AGENTS.md](AGENTS.md) §7 (prefer `tmp_path` / `pathlib`, `fake_bin_path` for mocked binaries, `posix_only` for Unix-only cases)
+3. Add or update tests for behavior changes — CI runs on **Linux and Windows**; follow the cross-platform rules in the [technical guide](docs/agents/project-guide.md#7-key-patterns) (prefer `tmp_path` / `pathlib`, `fake_bin_path` for mocked binaries, `posix_only` for Unix-only cases)
 4. Ensure `make install-hooks` is enabled locally; run `make all` (backend) or `make check-all` (full stack) before submitting — pre-commit enforces the same gate
 5. Update `CHANGELOG.md` when user-facing behavior changes
 6. Open a PR with a clear description and test plan
@@ -205,7 +207,7 @@ make check-all        # 全栈质量门禁
 
 1. 从 **`develop`** 创建特性分支
 2. PR 的 base 选 **`develop`**（release / hotfix 除外）
-3. 补充测试（CI 同时跑 **Linux / Windows**，路径与假二进制遵循 [AGENTS.md](AGENTS.md) §7）
+3. 补充测试（CI 同时跑 **Linux / Windows**，路径与假二进制遵循[技术指南](docs/agents/project-guide.md#7-key-patterns)）
 4. 本地执行过 `make install-hooks`；提交前 `make all` 或 `make check-all` 必须绿（hooks 会强制执行）
 5. 用户可见变更时更新 `CHANGELOG.md`
 6. 提交 Pull Request

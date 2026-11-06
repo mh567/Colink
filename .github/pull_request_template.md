@@ -4,8 +4,8 @@
 
 ## Target branch
 
-- [ ] Base is **`develop`** (feature / fix — default)
-- [ ] Base is **`main`** (`release/*` or `hotfix/*` only)
+- [ ] Base is **`main`** for a Colink development task
+- [ ] A different base, if used, is explicitly authorized and explained
 
 ## Type of change
 
@@ -20,8 +20,8 @@
 
 <!-- How did you verify this? Include commands run (e.g. `make all`). -->
 
-- [ ] `make all` passes locally
-- [ ] Added/updated tests
+- [ ] Applicable checks from [the development workflow](../docs/agents/workflow.md#验证与检查范围) pass; commands, results and unverified items are recorded
+- [ ] Added/updated behavior tests, or explained why this is a documentation-only change
 
 ## Checklist
 
