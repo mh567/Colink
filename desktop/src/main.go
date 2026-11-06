@@ -38,6 +38,7 @@ type App struct {
 	lastTrayClick  time.Time
 	trayClickTimer *time.Timer
 	drops          dropServer
+	device         *deviceClient
 	ownsListenPort bool
 }
 
@@ -46,6 +47,9 @@ func (a *App) ServiceName() string { return "desktop" }
 func (a *App) ServiceStartup(context.Context, application.ServiceOptions) error { return nil }
 
 func (a *App) ServiceShutdown() error {
+	if a.device != nil {
+		a.device.disconnect()
+	}
 	a.sleep.stop()
 	a.mu.Lock()
 	cmd := a.cmd
@@ -83,6 +87,11 @@ func (a *App) GetSettingsStatus() (Settings, error) {
 }
 
 func (a *App) SaveSettings(next Settings) (Settings, error) {
+	if next.ServerURL != "" {
+		if _, err := normalizeServerURL(next.ServerURL); err != nil {
+			return a.store.get(), err
+		}
+	}
 	cur, err := a.GetSettingsStatus()
 	if err != nil {
 		return cur, err
@@ -178,7 +187,16 @@ func (a *App) boot() {
 	if a.store != nil {
 		locale = a.store.get().Locale
 	}
-	if url := os.Getenv("OCTOP_DESKTOP_URL"); url != "" {
+	settings := defaultSettings()
+	if a.store != nil {
+		settings = a.store.get()
+	}
+	url, err := configuredServerURL(settings, os.Getenv("OCTOP_DESKTOP_URL"))
+	if err != nil {
+		a.setStatus(err.Error())
+		return
+	}
+	if url != "" {
 		a.setStatus(desktopText(locale, copyStatusConnecting))
 		if err := waitHealth(locale, url, 60*time.Second); err != nil {
 			a.setStatus(err.Error())
@@ -246,6 +264,12 @@ func (a *App) boot() {
 }
 
 func (a *App) showDashboard(base string) {
+	if a.device != nil {
+		if err := a.device.setBase(base); err != nil {
+			a.setStatus(err.Error())
+			return
+		}
+	}
 	if a.window == nil {
 		return
 	}
@@ -343,6 +367,7 @@ func main() {
 		store: store,
 		sleep: &sleepGuard{},
 	}
+	api.device = &deviceClient{emit: api.emitDeviceStatus}
 
 	app := application.New(application.Options{
 		Name:        "Octop",
@@ -366,6 +391,7 @@ func main() {
 	api.app = app
 	attachOpenURLEventListener(app, api.OpenExternal)
 	attachFileDropEventListener(app, api)
+	appendWailsEventListener(app, &deviceEventListener{client: api.device})
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 		applyAppIcon(app)
 	})

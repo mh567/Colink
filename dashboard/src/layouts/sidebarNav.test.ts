@@ -15,6 +15,19 @@ const adminUser = {
 } as OctopUser;
 
 describe("sidebarNav", () => {
+  it("keeps devices visible for a signed-in user without module permissions", () => {
+    const sections = buildNavSections({
+      ...adminUser,
+      role: "user",
+      permissions: [],
+    });
+    expect(
+      sections
+        .flatMap((section) => section.items)
+        .find((item) => item.key === "devices")?.path,
+    ).toBe("/devices");
+  });
+
   it("marks catalog keys as grouped", () => {
     for (const key of SIDEBAR_GROUPED_NAV_KEYS) {
       expect(isGroupedNavKey(key)).toBe(true);

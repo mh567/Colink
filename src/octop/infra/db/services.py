@@ -22,6 +22,7 @@ from octop.infra.db.repos.channels import ChannelRepo
 from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.control_files import ControlFileRepo
 from octop.infra.db.repos.cron import CronJobRepo
+from octop.infra.db.repos.devices import DeviceRepo
 from octop.infra.db.repos.invites import InviteRepo
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.proactive_care_config import ProactiveCareConfigRepo
@@ -87,6 +88,7 @@ class RepoBundle:
     auth_challenge_repo: AuthChallengeRepo
     profile_avatar_repo: ProfileAvatarRepo
     control_file_repo: ControlFileRepo
+    device_repo: DeviceRepo
 
     @classmethod
     def from_pool(cls, db: DatabasePool) -> RepoBundle:
@@ -127,6 +129,7 @@ class RepoBundle:
             auth_challenge_repo=AuthChallengeRepo(db),
             profile_avatar_repo=ProfileAvatarRepo(db),
             control_file_repo=ControlFileRepo(db),
+            device_repo=DeviceRepo(db),
         )
 
 
@@ -143,6 +146,10 @@ class SharedServices:
     @property
     def user_repo(self) -> UserRepo:
         return self.repos.user_repo
+
+    @property
+    def device_repo(self) -> DeviceRepo:
+        return self.repos.device_repo
 
     @property
     def user_policy_repo(self) -> UserPolicyRepo:

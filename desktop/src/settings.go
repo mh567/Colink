@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -22,6 +25,7 @@ type Settings struct {
 	MinimizeToTray bool   `json:"minimizeToTray"`
 	PreventSleep   bool   `json:"preventSleep"`
 	Port           int    `json:"port,omitempty"`
+	ServerURL      string `json:"serverUrl"`
 }
 
 func defaultSettings() Settings {
@@ -90,6 +94,13 @@ func (st *settingsStore) get() Settings {
 func (st *settingsStore) save(next Settings) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if next.ServerURL != "" {
+		base, err := normalizeServerURL(next.ServerURL)
+		if err != nil {
+			return err
+		}
+		next.ServerURL = base
+	}
 	if next.Port == 0 {
 		next.Port = 8088
 	}
@@ -105,6 +116,25 @@ func (st *settingsStore) save(next Settings) error {
 	}
 	st.cur = next
 	return nil
+}
+
+func normalizeServerURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(raw, "#") {
+		return "", errors.New("server URL must be HTTP(S), without credentials, query or fragment")
+	}
+	return u.String(), nil
+}
+
+func configuredServerURL(settings Settings, environment string) (string, error) {
+	raw := strings.TrimSpace(settings.ServerURL)
+	if raw == "" {
+		raw = strings.TrimSpace(environment)
+	}
+	if raw == "" {
+		return "", nil
+	}
+	return normalizeServerURL(raw)
 }
 
 func greenPlat() string {

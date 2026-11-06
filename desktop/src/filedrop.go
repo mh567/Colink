@@ -207,11 +207,11 @@ func (s *dropServer) ensure() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/drop/", s.serve)
 	s.server = &http.Server{Handler: mux}
-	go func() {
-		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+	go func(server *http.Server) {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("desktop file drop server: %v", err)
 		}
-	}()
+	}(s.server)
 	return nil
 }
 

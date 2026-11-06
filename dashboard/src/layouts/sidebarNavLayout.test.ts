@@ -30,6 +30,22 @@ function catalog() {
 }
 
 describe("sidebarNavLayout", () => {
+  it("shows the new devices entry in older layouts while respecting explicit hiding", () => {
+    const sections = buildNavSections(limitedUser);
+    expect(
+      sectionsFromLayout(sections, {
+        groups: [],
+        items: [{ key: "chat" }],
+      }).flatMap((section) => section.items.map((item) => item.key)),
+    ).toEqual(["chat", "devices"]);
+    expect(
+      sectionsFromLayout(sections, {
+        groups: [],
+        items: [{ key: "chat" }, { key: "devices", hidden: true }],
+      }).flatMap((section) => section.items.map((item) => item.key)),
+    ).toEqual(["chat"]);
+  });
+
   it("keeps the default catalog when no layout is saved", () => {
     const sections = catalog();
     expect(sectionsFromLayout(sections, null)).toBe(sections);
@@ -39,6 +55,7 @@ describe("sidebarNavLayout", () => {
       "experts",
       "tasks",
       "token-usage",
+      "devices",
     ]);
     expect(editor.groups.map((group) => group.id)).toEqual([
       "settings",
@@ -68,7 +85,10 @@ describe("sidebarNavLayout", () => {
       "settings",
       "control",
     ]);
-    expect(applied[0]?.items.map((item) => item.key)).toEqual(["chat"]);
+    expect(applied[0]?.items.map((item) => item.key)).toEqual([
+      "chat",
+      "devices",
+    ]);
     expect(applied[1]?.title).toBe("配置");
     expect(applied[1]?.items.map((item) => item.key)).toEqual([
       "personalization",
@@ -81,7 +101,7 @@ describe("sidebarNavLayout", () => {
       groups: [{ id: "settings" }],
       items: [{ key: "chat" }],
     });
-    expect(editor.ungrouped).toEqual(["chat"]);
+    expect(editor.ungrouped).toEqual(["chat", "devices"]);
     expect(editor.hidden).toContain("experts");
     expect(editor.hidden).toContain("personalization");
     expect(
@@ -141,7 +161,7 @@ describe("sidebarNavLayout", () => {
     expect(shown).not.toContain("personalization");
     expect(
       visibleEditorGroups(editor, sections).map((group) => group.id),
-    ).toEqual(["settings", "c_aabbccdd"]);
+    ).toEqual(["c_aabbccdd"]);
   });
 
   it("keeps a new empty group only in the editor", () => {

@@ -69,6 +69,7 @@ export const SIDEBAR_NAV_KEYS = [
   "experts",
   "tasks",
   "token-usage",
+  "devices",
   "personalization",
   "channels",
   "connectors",
@@ -181,6 +182,14 @@ export function buildNavSections(
       path: "/token-usage",
       icon: <Activity size={iconSize} strokeWidth={iconStroke} />,
       labelKey: "nav.tokenUsage",
+    });
+  }
+  if (user) {
+    topItems.push({
+      key: "devices",
+      path: "/devices",
+      icon: <Monitor size={iconSize} strokeWidth={iconStroke} />,
+      labelKey: "nav.devices",
     });
   }
   const sections: NavSection[] = [{ items: topItems }];

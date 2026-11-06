@@ -114,13 +114,35 @@ does not set these headers itself.
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| `GET`    | `/users` | admin | `[{id, username, role, display_name, email, enabled, ...}]` |
+| `GET`    | `/users` | admin | `[{id, username, role, display_name, email, disabled, ...}]` |
 | `POST`   | `/users` | admin | body `{username, password, role, display_name?, email?, permissions?, workspace_root_dir?, token_quota?}` → `201` |
 | `GET`    | `/users/{id}` | admin | full user row |
-| `PATCH`  | `/users/{id}` | admin | body subset of `{role, display_name, email, enabled, locale}` |
+| `PATCH`  | `/users/{id}` | admin | body subset of `{role, display_name, email, disabled, permissions}`; `disabled: true` 停用账号 |
 | `POST`   | `/users/{id}/reset-password` | admin | body `{new_password}` → `204` |
 | `POST`   | `/users/{id}/unlock-login` | admin | `204` (clears the lockout) |
 | `DELETE` | `/users/{id}` | admin | `204` |
+
+## 本人设备接入
+
+管理员继续在“用户管理”创建、停用和重置员工账号；重置口令会使旧口令和旧访问令牌失效，停用后拒绝登录及后续产品请求。
+
+员工在桌面客户端设置中填写企业服务地址，重启后登录，从“本人设备”发起接入。客户端在本机保存 Ed25519 私钥，只发送公钥并签署服务端的一次性挑战。首次申请为 `pending`；管理员在同页的设备管理区域核对员工和设备 ID 后批准为 `approved`，也可撤销为 `revoked`。浏览器页面可以查看状态和管理登记，不能代替桌面客户端证明当前设备。一个设备公钥只绑定一个员工；管理员身份不能接管该员工的设备连接。
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `GET` | `/devices` | 登录用户 | 仅本人设备；管理员调用也仅返回本人设备 |
+| `GET` | `/devices/manage` | admin | 全部接入申请及登记状态，不授予电脑操作权 |
+| `POST` | `/devices/{device_id}/approve` | admin | 批准本人发起的设备登记；停用账号不能获准 |
+| `POST` | `/devices/{device_id}/revoke` | admin | 撤销信任，立即使现有设备会话授权失效 |
+| `WS` | `/devices/connect` | 员工访问令牌＋本机私钥证明 | 仅设备所属员工；不接收其他员工身份或执行命令 |
+
+列表字段为 `{device_id, owner_user_id, owner_username, name, platform, status, online, created_at, last_seen}`。时间为 Unix 秒；`online` 仅表示已批准且仍存活的本机连接。信任决定和最近接入时间持久化，在线状态不从历史时间推断，服务重启后须重新连接。
+
+WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`，公钥采用标准 Base64。服务端返回 `{type:"challenge", message}`；客户端对完整 `message` 签名，返回 `{type:"proof", signature}`。挑战仅在该连接使用一次，不接受旧签名重放。成功后服务端返回 `{type:"status", device_id, status, online}`；客户端每 5 秒发送 `{type:"heartbeat"}`，15 秒无心跳即断开。访问令牌不进入 URL；私钥不进入页面、服务端或审计记录。
+
+退出登录、切换账号和退出客户端会断开本机连接。停用、重置口令或撤销设备后，状态查询立即显示离线，下一次心跳拒绝继续使用原会话。重新批准已撤销设备后须主动重新接入。新通道不提供任意命令、文件、中央桌面或浏览器操作，也不通过 Bridge 转用他人身份；后续本机任务仍须分别校验设备、目录和动作权限。
+
+本票不新增运行依赖，复用 Go 标准库、已锁定的 WebSocket 库和 `cryptography`，运行不从公网补装。按 2026-11-06 的开发确认，T01 的真实模型任务与麒麟干净环境验收缺口继续保留，分别由 #4/#5 和 #7 补齐；本票的设备接入测试不替代这些验收。
 
 ## Agents
 

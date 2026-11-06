@@ -24,6 +24,47 @@
     "maximize": "Maximize",
     "close": "Close"
   },
+  "devices": {
+    "title": "My devices",
+    "subtitle": "View approval and connection status for your devices.",
+    "desktopRequired": "Use the desktop client to connect this device. The browser can only display device status. First-time connections require administrator approval.",
+    "connectHint": "Connect this computer to your account. An administrator must verify its device ID and approve the first connection.",
+    "connect": "Connect this device",
+    "disconnect": "Disconnect this device",
+    "waitingNative": "Waiting for the desktop client…",
+    "currentId": "Current device ID: {{id}}",
+    "disconnected": "This device is disconnected",
+    "name": "Device name",
+    "id": "Device ID",
+    "owner": "Account",
+    "platform": "System",
+    "approval": "Approval",
+    "connection": "Connection",
+    "online": "Online",
+    "offline": "Offline",
+    "lastSeen": "Last contact",
+    "neverSeen": "No record yet",
+    "createdAt": "Registered at",
+    "status": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "revoked": "Revoked"
+    },
+    "empty": "No devices registered",
+    "manageTitle": "Device approvals",
+    "manageHint": "Verify the device ID with the employee before approval. Approval registers it as that employee's trusted device. Administrators only manage authorization.",
+    "manageEmpty": "No devices to manage",
+    "approve": "Approve",
+    "approveTitle": "Approve device “{{name}}”?",
+    "approveConfirm": "Account: {{owner}}; device ID: {{id}}. Verify that this matches the employee's client. Approval registers it as that employee's trusted device.",
+    "confirmApprove": "Confirm approval",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke device “{{name}}”?",
+    "revokeConfirm": "Account: {{owner}}; device ID: {{id}}. This device will lose its connection authorization.",
+    "confirmRevoke": "Confirm revocation",
+    "loadFailed": "Failed to load devices",
+    "actionFailed": "Device operation failed"
+  },
   "avatarPicker": {
     "presets": {
       "skill": {
@@ -263,6 +304,7 @@
   },
   "nav": {
     "chat": "Conversation",
+    "devices": "My devices",
     "common": "Common",
     "control": "Control",
     "experts": "Experts",

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from octop.infra.auth.ldap.service import LdapAuthService
     from octop.infra.auth.ldap.throttle import LdapBindThrottle
     from octop.infra.auth.sso.service import SsoService
+    from octop.infra.control.devices import DeviceManager
     from octop.infra.db.services import SharedServices
     from octop.infra.history.trajectory.service import TrajectoryService
 
@@ -335,6 +336,19 @@ class OctopServer:
         self._ldap_service: LdapAuthService | None = None
         self._ldap_bind_throttle: LdapBindThrottle | None = None
         self._ldap_bind_throttle_services: SharedServices | None = None
+        self._device_manager: DeviceManager | None = None
+
+    @property
+    def device_manager(self) -> DeviceManager:
+        from octop.infra.control.devices import DeviceManager
+
+        if self.services is None:
+            raise RuntimeError("shared services not ready for devices")
+        if self._device_manager is None or self._device_manager.services is not self.services:
+            if self._device_manager is not None:
+                self._device_manager.clear()
+            self._device_manager = DeviceManager(self.services)
+        return self._device_manager
 
     # Backward compat: expose user_manager directly
     @property
@@ -796,6 +810,8 @@ class OctopServer:
         if not self._started:
             return
         try:
+            if self._device_manager is not None:
+                self._device_manager.clear()
             from octop.infra.connectors.gateway import agently_auth
 
             await agently_auth.close()

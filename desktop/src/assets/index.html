@@ -239,6 +239,22 @@
         border-color: var(--brand);
         box-shadow: 0 0 0 3px rgba(232, 93, 117, 0.12);
       }
+      .server-row > div {
+        width: 100%;
+      }
+      .server-row input {
+        width: 100%;
+        margin-top: 10px;
+        padding: 7px 10px;
+        font: inherit;
+        font-size: 13px;
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .status.success {
+        color: var(--text-secondary);
+      }
       .switch {
         position: relative;
         width: 40px;
@@ -509,6 +525,20 @@
         <h1 id="title">Octop 设置</h1>
         <p class="subtitle" id="subtitle">桌面端偏好</p>
         <div class="card">
+          <div class="row server-row">
+            <div>
+              <label class="label" id="l-server" for="server-url"
+                >企业服务地址</label
+              >
+              <small id="h-server">保存后重启生效，留空沿用默认连接</small>
+              <input
+                id="server-url"
+                type="url"
+                placeholder="https://colink.example.com"
+                autocomplete="url"
+              />
+            </div>
+          </div>
           <div class="row">
             <div>
               <div class="label" id="l-lang">语言 / Language</div>
@@ -570,6 +600,9 @@
           loadingHint: "正在检查运行环境，可能需要几分钟。",
           title: "Octop 设置",
           subtitle: "桌面端偏好",
+          server: "企业服务地址",
+          serverH: "保存后重启生效，留空沿用默认连接",
+          serverSaved: "服务地址已保存，重启客户端后生效。",
           lang: "语言",
           langH: "选择偏好语言 / Choose your preferred language",
           auto: "开机启动",
@@ -590,6 +623,9 @@
           loadingHint: "Checking the runtime. This may take a few minutes.",
           title: "Octop Settings",
           subtitle: "Desktop preferences",
+          server: "Enterprise server URL",
+          serverH: "Restart after saving. Leave blank for the default connection.",
+          serverSaved: "Server URL saved. Restart the app to apply.",
           lang: "Language",
           langH: "Choose your preferred language",
           auto: "Launch at login",
@@ -624,6 +660,8 @@
         const t = copy[locale] || copy.en;
         document.getElementById("title").textContent = t.title;
         document.getElementById("subtitle").textContent = t.subtitle;
+        document.getElementById("l-server").textContent = t.server;
+        document.getElementById("h-server").textContent = t.serverH;
         document.getElementById("l-lang").textContent = t.lang;
         document.getElementById("h-lang").textContent = t.langH;
         document.getElementById("l-auto").textContent = t.auto;
@@ -691,6 +729,7 @@
           autostart: document.getElementById("autostart").checked,
           minimizeToTray: document.getElementById("tray").checked,
           preventSleep: document.getElementById("sleep").checked,
+          serverUrl: document.getElementById("server-url").value.trim(),
         };
       }
 
@@ -709,7 +748,12 @@
           });
           document.getElementById("autostart").checked = !!saved.autostart;
           document.getElementById("sleep").checked = !!saved.preventSleep;
-          errEl.classList.add("hidden");
+          document.getElementById("server-url").value = saved.serverUrl || "";
+          const serverChanged =
+            (savedBefore.serverUrl || "") !== (saved.serverUrl || "");
+          errEl.classList.toggle("hidden", !serverChanged);
+          errEl.classList.add("success");
+          errEl.textContent = (copy[saved.locale] || copy.en).serverSaved;
           applyCopy(saved.locale);
         } catch (error) {
           if (savedBefore) {
@@ -717,8 +761,11 @@
               !!savedBefore.autostart;
             document.getElementById("sleep").checked =
               !!savedBefore.preventSleep;
+            document.getElementById("server-url").value =
+              savedBefore.serverUrl || "";
           }
           errEl.textContent = String(error);
+          errEl.classList.remove("success");
           errEl.classList.remove("hidden");
         }
       }
@@ -738,8 +785,15 @@
         document.getElementById("autostart").checked = !!s.autostart;
         document.getElementById("tray").checked = s.minimizeToTray !== false;
         document.getElementById("sleep").checked = !!s.preventSleep;
+        document.getElementById("server-url").value = s.serverUrl || "";
 
-        for (const id of ["locale", "autostart", "tray", "sleep"]) {
+        for (const id of [
+          "locale",
+          "autostart",
+          "tray",
+          "sleep",
+          "server-url",
+        ]) {
           document.getElementById(id).addEventListener("change", persist);
         }
         document

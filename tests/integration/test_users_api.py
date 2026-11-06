@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
+from tests.support.app import octop_client
+from tests.support.auth import TEST_PASSWORD, auth_header, bootstrap_admin, create_user
+
 
 async def test_create_list_get_delete(env):
     c, srv, auth = env
@@ -33,6 +38,85 @@ async def test_create_list_get_delete(env):
     assert r.status_code == 404
 
 
+async def test_employee_account_lifecycle_persists_after_restart(tmp_octop_home):
+    username = "employee"
+    reset_password = "ResetPass34"
+    async with octop_client(tmp_octop_home) as (c, _srv):
+        await bootstrap_admin(c, tmp_octop_home)
+        admin_auth = await auth_header(c)
+        created = await c.post(
+            "/api/users",
+            headers=admin_auth,
+            json={"username": username, "password": TEST_PASSWORD, "role": "user"},
+        )
+        assert created.status_code == 201, created.text
+        uid = created.json()["id"]
+        original_auth = await auth_header(c, username=username)
+        me = await c.get("/api/auth/me", headers=original_auth)
+        assert me.status_code == 200, me.text
+        assert me.json()["username"] == username
+        assert me.json()["role"] == "user"
+        assert (await c.get("/api/agents", headers=original_auth)).status_code == 200
+
+        reset = await c.post(
+            f"/api/users/{uid}/reset-password",
+            headers=admin_auth,
+            json={"new_password": reset_password},
+        )
+        assert reset.status_code == 204, reset.text
+        old_login = await c.post(
+            "/api/auth/login", json={"username": username, "password": TEST_PASSWORD}
+        )
+        assert old_login.status_code == 401, old_login.text
+        for path in ("/api/auth/me", "/api/agents"):
+            stale = await c.get(path, headers=original_auth)
+            assert stale.status_code == 401, stale.text
+            assert stale.json()["error"]["code"] == "AUTH_FAILED"
+
+        current_auth = await auth_header(c, username=username, password=reset_password)
+        assert (await c.get("/api/agents", headers=current_auth)).status_code == 200
+        disabled = await c.patch(f"/api/users/{uid}", headers=admin_auth, json={"disabled": True})
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["disabled"] is True
+        disabled_login = await c.post(
+            "/api/auth/login", json={"username": username, "password": reset_password}
+        )
+        assert disabled_login.status_code == 401, disabled_login.text
+        for path in ("/api/auth/me", "/api/agents"):
+            denied = await c.get(path, headers=current_auth)
+            assert denied.status_code == 403, denied.text
+            assert denied.json()["error"]["code"] == "USER_DISABLED"
+
+    async with octop_client(tmp_octop_home) as (c, _srv):
+        admin_auth = await auth_header(c)
+        saved = await c.get(f"/api/users/{uid}", headers=admin_auth)
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["username"] == username
+        assert saved.json()["disabled"] is True
+        disabled_login = await c.post(
+            "/api/auth/login", json={"username": username, "password": reset_password}
+        )
+        assert disabled_login.status_code == 401, disabled_login.text
+        denied = await c.get("/api/agents", headers=current_auth)
+        assert denied.status_code == 403, denied.text
+        assert denied.json()["error"]["code"] == "USER_DISABLED"
+
+        enabled = await c.patch(f"/api/users/{uid}", headers=admin_auth, json={"disabled": False})
+        assert enabled.status_code == 200, enabled.text
+        old_login = await c.post(
+            "/api/auth/login", json={"username": username, "password": TEST_PASSWORD}
+        )
+        assert old_login.status_code == 401, old_login.text
+        current_auth = await auth_header(c, username=username, password=reset_password)
+        me = await c.get("/api/auth/me", headers=current_auth)
+        assert me.status_code == 200, me.text
+        assert me.json()["id"] == uid
+        assert (await c.get("/api/agents", headers=current_auth)).status_code == 200
+        stale = await c.get("/api/agents", headers=original_auth)
+        assert stale.status_code == 401, stale.text
+        assert stale.json()["error"]["code"] == "AUTH_FAILED"
+
+
 async def test_admin_can_save_own_account_with_empty_permissions(env):
     """Admin accounts store permissions as []. Saving that list must not 403."""
     c, _srv, auth = env
@@ -51,20 +135,45 @@ async def test_admin_can_save_own_account_with_empty_permissions(env):
     assert saved.json()["role"] == "admin"
 
 
-async def test_non_admin_gets_403(env):
-    c, srv, _ = env
-    admin_auth = env[2]
-    await c.post(
+@pytest.mark.parametrize("authenticated", [False, True], ids=["anonymous", "employee"])
+async def test_account_management_requires_permission(env, authenticated):
+    c, _srv, admin_auth = env
+    created = await c.post(
         "/api/users",
         headers=admin_auth,
-        json={"username": "bob", "password": "TestPass12", "role": "user"},
+        json={"username": "managed", "password": TEST_PASSWORD, "role": "user"},
     )
-    tok = (
-        await c.post("/api/auth/login", json={"username": "bob", "password": "TestPass12"})
-    ).json()["access_token"]
-    user_auth = {"Authorization": f"Bearer {tok}"}
-    r = await c.get("/api/users", headers=user_auth)
-    assert r.status_code == 403
+    assert created.status_code == 201, created.text
+    uid = created.json()["id"]
+    caller_auth = await create_user(c, admin_auth, username="bob") if authenticated else {}
+    expected_status = 403 if authenticated else 401
+    expected_code = "FORBIDDEN" if authenticated else "AUTH_FAILED"
+    operations = (
+        ("GET", "/api/users", None),
+        ("GET", f"/api/users/{uid}", None),
+        (
+            "POST",
+            "/api/users",
+            {"username": "unapproved", "password": TEST_PASSWORD, "role": "user"},
+        ),
+        ("PATCH", f"/api/users/{uid}", {"disabled": True}),
+        ("POST", f"/api/users/{uid}/reset-password", {"new_password": "ResetPass34"}),
+        ("POST", f"/api/users/{uid}/unlock-login", None),
+        ("POST", "/api/users/batch", {"user_ids": [uid], "action": "disable"}),
+        ("DELETE", f"/api/users/{uid}", None),
+    )
+    for method, path, body in operations:
+        denied = await c.request(method, path, headers=caller_auth, json=body)
+        assert denied.status_code == expected_status, f"{method} {path}: {denied.text}"
+        assert denied.json()["error"]["code"] == expected_code
+
+    saved = await c.get(f"/api/users/{uid}", headers=admin_auth)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["disabled"] is False
+    managed_auth = await auth_header(c, username="managed")
+    assert (await c.get("/api/agents", headers=managed_auth)).status_code == 200
+    users = (await c.get("/api/users", headers=admin_auth)).json()
+    assert "unapproved" not in {user["username"] for user in users}
 
 
 async def test_admin_cannot_delete_self(env):

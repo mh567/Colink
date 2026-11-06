@@ -31,6 +31,7 @@ import cx from "classnames";
 import { authApi } from "../api/modules/auth";
 import { preferencesApi } from "../api/modules/preferences";
 import { clearAuthToken } from "../api/request";
+import { disconnectDesktopDevice } from "../utils/desktopDevice";
 import { applyGuestLocale, applyUserLocale } from "../utils/locale";
 import { apiErrorMessage } from "../utils/apiError";
 import { isSsoPopupMessage, openSsoPopup } from "../utils/ssoPopup";
@@ -110,6 +111,7 @@ export default function AvatarDropdown({
 
   const handleLogout = useCallback(async () => {
     setMenuOpen(false);
+    disconnectDesktopDevice();
     await authApi.logout();
     clearAuthToken();
     await applyGuestLocale();
