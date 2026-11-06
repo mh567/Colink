@@ -16,7 +16,6 @@
 #                    例如 FPK_NAME_PREFIX=Octop-fnos 会生成 Octop-fnos-docker-<ver>.fpk / Octop-fnos-native-amd64-<ver>.fpk
 #   FPK_ITER         迭代号，默认空
 #                    例如 FPK_ITER=01 会生成 ...-<ver>-01.fpk（通常不需要，按版本号发布）
-#   FPK_IMAGE        Docker 镜像仓库，默认 ghcr.io/mh567/colink；CI 传入已发布的镜像仓库
 #   FPK_ARCH         本地版架构。arm64 → Octop-fnos-native-arm64-<ver>.fpk，
 #                    并写入 manifest platform=arm（fnpack 只认 x86/arm/all）。
 #                    空或其它值 → Octop-fnos-native-amd64-<ver>.fpk，并写入 platform=x86。
@@ -135,12 +134,6 @@ build_one() {
   # 复制整个包目录（manifest / cmd / config / wizard / app / ICON* / LICENSE）
   cp -r "$PKG/." "$BUILD/"
 
-  if [ "$KIND" = "native" ]; then
-    local strip_python
-    strip_python="$(command -v python3 || command -v python)"
-    "$strip_python" "$ROOT/scripts/strip_restricted_skills.py" "$BUILD/app/site-packages"
-  fi
-
   # 注入共享函数库（find_python312 / fix_ownership_and_perms / free_octop_ports），
   # 仓库单一来源 scripts/fnos/common.sh，cmd/bin 脚本统一 source cmd/common.sh。
   if [ -f "$ROOT/scripts/fnos/common.sh" ]; then
@@ -183,17 +176,16 @@ build_one() {
   # Docker 版 compose 钉镜像标签。完整版 :<version>，精简版 :<version>-lite。
   # 测试包可用 FPK_IMAGE_TAG 覆盖。
   if [ "$KIND" = "docker" ] || [ "$KIND" = "docker-lite" ]; then
-    local compose="$BUILD/app/docker/docker-compose.yaml" image_tag image
-    image="${FPK_IMAGE:-ghcr.io/mh567/colink}"
+    local compose="$BUILD/app/docker/docker-compose.yaml" image_tag
     if [ "$KIND" = "docker-lite" ]; then
       image_tag="${FPK_IMAGE_TAG:-${VER}-lite}"
     else
       image_tag="${FPK_IMAGE_TAG:-$VER}"
     fi
     if [ -f "$compose" ]; then
-      sed -i.bak -E "s#^([[:space:]]*image:[[:space:]]*).*#\1${image}:${image_tag}#" "$compose"
+      sed -i.bak -E "s#ghcr.io/tencentcloud/octop:[^[:space:]]+#ghcr.io/tencentcloud/octop:${image_tag}#" "$compose"
       rm -f "${compose}.bak"
-      echo "[build-fpk] compose 镜像: ${image}:${image_tag}"
+      echo "[build-fpk] compose 镜像: ghcr.io/tencentcloud/octop:${image_tag}"
     fi
   fi
 
