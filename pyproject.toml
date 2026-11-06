@@ -76,6 +76,11 @@ tos = ["tos>=2.9,<3"]
 desktop = ["mss>=9.0", "pynput>=1.7"]
 # Local ONNX / fastembed embedding models (Models admin local tab).
 local-embedding = ["fastembed>=0.4", "huggingface_hub>=0.20"]
+local-ocr = [
+    "rapidocr==3.9.2",
+    "onnxruntime==1.28.0",
+    "pypdfium2==5.15.0",
+]
 knowledge-ocr = [
     "rapidocr>=3.4,<4",
     "onnxruntime>=1.17",

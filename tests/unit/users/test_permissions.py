@@ -34,7 +34,14 @@ def test_user_has_permission_admin_bypass() -> None:
     admin = _FakeUser(is_admin=True, permissions=[])
     for key in PERMISSIONS:
         assert user_has_permission(admin, key) is (
-            key not in {"local_docx", "local_xlsx", "local_files_read", "local_files_create"}
+            key
+            not in {
+                "local_docx",
+                "local_xlsx",
+                "local_ocr",
+                "local_files_read",
+                "local_files_create",
+            }
         )
 
 
@@ -93,6 +100,7 @@ def test_categories_match_nav_groups() -> None:
         "mobile",
         "local_docx",
         "local_xlsx",
+        "local_ocr",
         "local_files_read",
         "local_files_create",
     }
@@ -125,7 +133,7 @@ def test_effective_permissions_admin_gets_catalog() -> None:
     admin = _FakeUser(is_admin=True, permissions=[])
     assert effective_permissions(admin) == sorted(
         ASSIGNABLE_PERMISSION_KEYS
-        - {"local_docx", "local_xlsx", "local_files_read", "local_files_create"}
+        - {"local_docx", "local_xlsx", "local_ocr", "local_files_read", "local_files_create"}
     )
     admin.permissions = ["local_docx", "local_files_read"]
     assert user_has_permission(admin, "local_docx") is True

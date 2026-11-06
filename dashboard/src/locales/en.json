@@ -7458,5 +7458,37 @@
     "outputExample": "Example: summary.xlsx",
     "instructionExample": "Summarize amounts by department, retain details and add total formulas.",
     "run": "Generate XLSX"
+  },
+  "localOcr": {
+    "format": "Scanned PDF (OCR)",
+    "privacy": "Original files and recognized text stay on this computer and are not sent to a model. Text is saved in the authorized directory without overwriting existing files.",
+    "limits": "Scanned PDFs directly inside an authorized directory only: up to 20 MB, 20 pages and 60,000 characters. Text is saved to TXT by page; check it against the original. Missing offline resources or recognition failures stop the task with an error.",
+    "sourceExample": "e.g. scan.pdf",
+    "outputExample": "e.g. recognized-text.txt",
+    "run": "Recognize scanned PDF",
+    "errors": {
+      "OCR_INVALID_PDF": "The file is not a valid PDF. Check the source file.",
+      "OCR_FILE_LIMIT": "The PDF exceeds 20 MB. Split it and try again.",
+      "OCR_MODELS_MISSING": "Offline recognition models are missing. Reinstall the complete client.",
+      "OCR_DEPS_MISSING": "Offline recognition components are missing. Reinstall the complete client.",
+      "OCR_PARSE_FAILED": "The PDF could not be read. Check whether it is damaged or encrypted.",
+      "OCR_PAGE_LIMIT": "The PDF must contain 1 to 20 pages. Check or split the file.",
+      "OCR_PAGE_SIZE": "A PDF page is too large. Reduce its size and try again.",
+      "OCR_PAGE_EMPTY": "No text was recognized on a page. Check the scan quality and content.",
+      "OCR_TEXT_LIMIT": "Recognized text exceeds 60,000 characters. Split the PDF and try again.",
+      "OCR_RECOGNITION_FAILED": "Text recognition failed. Check the scan quality or try another file.",
+      "OCR_NETWORK_DENIED": "Recognition attempted a network connection and was stopped. Reinstall the complete offline client.",
+      "OCR_INVALID_ARGS": "The recognition request is invalid. Refresh local tasks and try again.",
+      "OCR_INTERNAL": "Local recognition failed. Restart the client and try again.",
+      "OCR_CPU_CAPABILITIES_INVALID": "Local recognition cannot run on this system. Ask your administrator to check the virtual machine or system kernel.",
+      "OCR_UNSUPPORTED_PLATFORM": "Local scanned PDF recognition is not supported on this platform. Use a supported client.",
+      "OCR_INPUT_NAME": "Enter a PDF filename in the authorized directory, without subdirectories.",
+      "OCR_OUTPUT_NAME": "Enter a new TXT filename without subdirectories.",
+      "OCR_RESOURCES_MISSING": "Offline recognition resources are missing. Reinstall the complete client.",
+      "OCR_CANCELLED": "Recognition stopped. Check the device connection and permissions, then try again.",
+      "OCR_TIMEOUT": "Recognition timed out. Split the PDF and try again.",
+      "OCR_INVALID_RESULT": "The recognition result is invalid and no output was created. Try another file.",
+      "OCR_PROCESS_FAILED": "The recognition component failed. Restart or reinstall the client."
+    }
   }
 }

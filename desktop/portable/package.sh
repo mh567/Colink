@@ -104,9 +104,14 @@ assemble_one() {
   local octop_whl
   octop_whl="$(build_octop_wheel "$wheel_dir")"
 
+  local ocr_extra=()
+  if supports_local_ocr "$plat"; then
+    ocr_extra+=( --extra local-ocr )
+  fi
+
   local req_file="${GREEN_ROOT}/requirements-${plat}.txt"
   echo "[package] ${plat}: exporting frozen deps → ${req_file}" >&2
-  uv export --project "$REPO_ROOT" --frozen --no-dev --no-emit-project --no-hashes -o "$req_file" >/dev/null
+  uv export --project "$REPO_ROOT" --frozen --no-dev "${ocr_extra[@]+"${ocr_extra[@]}"}" --no-emit-project --no-hashes -o "$req_file" >/dev/null
   # Online --target upgrades need uv to reuse the bundled dependencies. pip
   # ignores installed packages with --target and resolves/downloads them again.
   echo "uv==${GREEN_UV_VERSION}" >> "$req_file"
@@ -126,7 +131,6 @@ assemble_one() {
 
   local common_args=(
     --target "${staging}/packages"
-    --python-platform "$pyplat"
     --python-version 3.12
     # Never compile cryptography from sdist: on Intel macOS that links
     # Homebrew OpenSSL and breaks portable zips on machines without brew.
@@ -151,6 +155,11 @@ assemble_one() {
     fi
   fi
 
+  # OCR must be exercised with the same native interpreter and resources we ship.
+  if supports_local_ocr "$plat" && [[ "$plat" != "$host" ]]; then
+    echo "[package] OCR verification requires a native ${plat} builder; cross-assembly is unsupported" >&2
+    exit 1
+  fi
   # uv pip resolves against the host interpreter. macOS /usr/bin/python3 is
   # often Xcode 3.9, which cannot satisfy octop's requires-python >=3.12.
   local install_python=3.12
@@ -171,7 +180,7 @@ assemble_one() {
   # Cross-platform: refuse compiling sdists on the host (wrong ABI). Prefer
   # binary wheels only; for Linux use desktop/portable/package-linux-docker.sh.
   if [[ "$plat" != "$host" ]]; then
-    common_args+=( --only-binary ":all:" )
+    common_args+=( --python-platform "$pyplat" --only-binary ":all:" )
     echo "[package] ${plat}: cross-assemble from ${host} (binary wheels only)" >&2
   fi
 
@@ -235,6 +244,10 @@ assemble_one() {
 
   uv run --no-project --python "$install_python" python \
     "${REPO_ROOT}/scripts/strip_restricted_skills.py" "${staging}/packages"
+
+  if supports_local_ocr "$plat"; then
+    "$install_python" "${REPO_ROOT}/desktop/ocr/prepare.py" "$staging" --python "$install_python"
+  fi
 
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"

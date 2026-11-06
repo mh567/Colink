@@ -18,7 +18,7 @@ interface Grant {
   mode: "ro" | "rw";
 }
 interface LocalTask {
-  format?: "docx" | "xlsx";
+  format?: "docx" | "xlsx" | "ocr";
   id: string;
   instruction: string;
   source: string;
@@ -56,8 +56,10 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     tasks: [],
     busy: false,
   });
-  const [format, setFormat] = useState<"docx" | "xlsx">("docx");
-  const contentKey = format === "xlsx" ? "localXlsx" : "localDocx";
+  const [format, setFormat] = useState<"docx" | "xlsx" | "ocr">("docx");
+  const contentKey = { docx: "localDocx", xlsx: "localXlsx", ocr: "localOcr" }[
+    format
+  ];
   const [sourceGrant, setSourceGrant] = useState("");
   const [outputGrant, setOutputGrant] = useState("");
   const [source, setSource] = useState("");
@@ -89,7 +91,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   const dispatch = (command: Record<string, string>) => {
     setState((previous) => ({ ...previous, busy: true, error: undefined }));
     try {
-      send(format === "xlsx" ? { ...command, format } : command);
+      send(format !== "docx" ? { ...command, format } : command);
     } catch (error) {
       setState((previous) => ({
         ...previous,
@@ -113,6 +115,10 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     failed: t("localDocx.failed", "失败"),
     interrupted: t("localDocx.interrupted", "已中断"),
   };
+  const errorMessage = (message: string) =>
+    /^OCR_[A-Z_]+$/.test(message)
+      ? t(`localOcr.errors.${message}`, t("localOcr.errors.OCR_INTERNAL"))
+      : message;
   const canRun =
     state.grants.some((grant) => grant.id === sourceGrant) &&
     state.grants.some(
@@ -120,7 +126,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     ) &&
     source.trim() &&
     output.trim() &&
-    instruction.trim();
+    (format === "ocr" || instruction.trim());
 
   return (
     <Card
@@ -142,7 +148,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             disabled={state.busy}
             style={selectStyle}
             onChange={(event) => {
-              setFormat(event.target.value as "docx" | "xlsx");
+              setFormat(event.target.value as "docx" | "xlsx" | "ocr");
               setSource("");
               setOutput("");
               setInstruction("");
@@ -150,18 +156,25 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           >
             <option value="docx">DOCX</option>
             <option value="xlsx">XLSX</option>
+            <option value="ocr">
+              {t("localOcr.format", "扫描 PDF（OCR）")}
+            </option>
           </select>
         </div>
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           {t(
             `${contentKey}.privacy`,
-            "原始文件保留在本机；所选文档的正文经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
+            format === "ocr"
+              ? "原件和识别文字均保留在本机，不发送到模型；文字成果写入授权目录，不覆盖已有文件。"
+              : "原始文件保留在本机；所选文档的正文经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
           )}
         </Typography.Paragraph>
         <Typography.Text type="secondary">
           {t(
             `${contentKey}.limits`,
-            "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。",
+            format === "ocr"
+              ? "支持授权目录直属的扫描 PDF，不超过 20 MB、20 页和 60,000 字符。识别结果按页写入 TXT，请对照原件核对；资源缺失或识别失败时停止并报错。"
+              : "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。",
           )}
         </Typography.Text>
         <Space wrap>
@@ -202,7 +215,9 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             ))}
           </Space>
         )}
-        {state.error && <Alert type="error" showIcon message={state.error} />}
+        {state.error && (
+          <Alert type="error" showIcon message={errorMessage(state.error)} />
+        )}
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -213,7 +228,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 source: source.trim(),
                 output_grant: outputGrant,
                 output: output.trim(),
-                instruction: instruction.trim(),
+                instruction: format === "ocr" ? "" : instruction.trim(),
               });
           }}
         >
@@ -283,7 +298,9 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   onChange={(event) => setSource(event.target.value)}
                   placeholder={t(
                     `${contentKey}.sourceExample`,
-                    "例如：会议记录.docx",
+                    format === "ocr"
+                      ? "例如：扫描资料.pdf"
+                      : "例如：会议记录.docx",
                   )}
                   maxLength={240}
                   required
@@ -299,31 +316,36 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   onChange={(event) => setOutput(event.target.value)}
                   placeholder={t(
                     `${contentKey}.outputExample`,
-                    "例如：会议纪要.docx",
+                    format === "ocr"
+                      ? "例如：识别文字.txt"
+                      : "例如：会议纪要.docx",
                   )}
                   maxLength={240}
                   required
                 />
               </div>
             </div>
-            <div style={{ marginTop: 16, marginBottom: 16 }}>
-              <label htmlFor={`${id}-instruction`}>
-                {t("localDocx.instruction", "任务描述")}
-              </label>
-              <Input.TextArea
-                id={`${id}-instruction`}
-                value={instruction}
-                onChange={(event) => setInstruction(event.target.value)}
-                autoSize={{ minRows: 3, maxRows: 8 }}
-                maxLength={8000}
-                required
-                placeholder={t(
-                  `${contentKey}.instructionExample`,
-                  "整理所选文档，列出结论、待办和负责人。",
-                )}
-              />
-            </div>
+            {format !== "ocr" && (
+              <div style={{ marginTop: 16, marginBottom: 16 }}>
+                <label htmlFor={`${id}-instruction`}>
+                  {t("localDocx.instruction", "任务描述")}
+                </label>
+                <Input.TextArea
+                  id={`${id}-instruction`}
+                  value={instruction}
+                  onChange={(event) => setInstruction(event.target.value)}
+                  autoSize={{ minRows: 3, maxRows: 8 }}
+                  maxLength={8000}
+                  required
+                  placeholder={t(
+                    `${contentKey}.instructionExample`,
+                    "整理所选文档，列出结论、待办和负责人。",
+                  )}
+                />
+              </div>
+            )}
             <Button
+              style={{ marginTop: format === "ocr" ? 16 : 0 }}
               type="primary"
               htmlType="submit"
               loading={state.busy}
@@ -331,7 +353,11 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             >
               {t(
                 `${contentKey}.run`,
-                format === "xlsx" ? "生成 XLSX" : "生成 DOCX",
+                format === "ocr"
+                  ? "识别扫描 PDF"
+                  : format === "xlsx"
+                  ? "生成 XLSX"
+                  : "生成 DOCX",
               )}
             </Button>
           </fieldset>
@@ -374,7 +400,9 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   <Typography.Text style={{ overflowWrap: "anywhere" }}>
                     {task.output}
                   </Typography.Text>
-                  {task.error && <Alert type="error" message={task.error} />}
+                  {task.error && (
+                    <Alert type="error" message={errorMessage(task.error)} />
+                  )}
                 </div>
               ))}
             </Space>

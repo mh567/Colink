@@ -7458,5 +7458,37 @@
     "outputExample": "例如：汇总.xlsx",
     "instructionExample": "按部门汇总台账金额，保留明细并增加合计公式。",
     "run": "生成 XLSX"
+  },
+  "localOcr": {
+    "format": "扫描 PDF（OCR）",
+    "privacy": "原件和识别文字均保留在本机，不发送到模型；文字成果写入授权目录，不覆盖已有文件。",
+    "limits": "支持授权目录直属的扫描 PDF，不超过 20 MB、20 页和 60,000 字符。识别结果按页写入 TXT，请对照原件核对；资源缺失或识别失败时停止并报错。",
+    "sourceExample": "例如：扫描资料.pdf",
+    "outputExample": "例如：识别文字.txt",
+    "run": "识别扫描 PDF",
+    "errors": {
+      "OCR_INVALID_PDF": "文件不是有效的 PDF，请检查源文件。",
+      "OCR_FILE_LIMIT": "PDF 超过 20 MB，请拆分后重试。",
+      "OCR_MODELS_MISSING": "离线识别模型缺失，请重新安装完整客户端。",
+      "OCR_DEPS_MISSING": "离线识别组件缺失，请重新安装完整客户端。",
+      "OCR_PARSE_FAILED": "PDF 解析失败，请检查文件是否损坏或加密。",
+      "OCR_PAGE_LIMIT": "PDF 页数须为 1 至 20 页，请检查或拆分文件。",
+      "OCR_PAGE_SIZE": "PDF 页面尺寸过大，请缩小页面后重试。",
+      "OCR_PAGE_EMPTY": "有页面未识别出文字，请检查扫描清晰度和内容。",
+      "OCR_TEXT_LIMIT": "识别文字超过 60,000 字符，请拆分 PDF 后重试。",
+      "OCR_RECOGNITION_FAILED": "文字识别失败，请检查扫描清晰度或更换文件。",
+      "OCR_NETWORK_DENIED": "识别组件尝试联网，任务已停止；请重新安装完整离线客户端。",
+      "OCR_INVALID_ARGS": "识别请求无效，请刷新本机任务后重试。",
+      "OCR_INTERNAL": "本机识别失败，请重启客户端后重试。",
+      "OCR_CPU_CAPABILITIES_INVALID": "本机识别无法在当前系统运行，请联系管理员检查虚拟机或系统内核。",
+      "OCR_UNSUPPORTED_PLATFORM": "当前平台不支持本机扫描 PDF 识别，请使用受支持的客户端。",
+      "OCR_INPUT_NAME": "请输入授权目录内的 PDF 文件名，不含子目录。",
+      "OCR_OUTPUT_NAME": "请输入新的 TXT 文件名，不含子目录。",
+      "OCR_RESOURCES_MISSING": "离线识别资源缺失，请重新安装完整客户端。",
+      "OCR_CANCELLED": "识别已停止，请确认设备连接和授权后重试。",
+      "OCR_TIMEOUT": "识别超时，请拆分 PDF 后重试。",
+      "OCR_INVALID_RESULT": "识别结果无效，未生成成果；请更换文件重试。",
+      "OCR_PROCESS_FAILED": "识别组件运行失败，请重启或重新安装客户端。"
+    }
   }
 }

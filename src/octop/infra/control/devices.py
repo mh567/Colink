@@ -119,7 +119,7 @@ class DeviceManager:
         session_token: str,
         action: Literal["read", "create"],
         *,
-        format: Literal["docx", "xlsx"] = "docx",
+        format: Literal["docx", "xlsx", "ocr"] = "docx",
     ) -> None:
         """Require native possession and explicit grants, including for administrators."""
         connection = self._connections.get(device_id)

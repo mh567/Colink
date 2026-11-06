@@ -149,6 +149,7 @@ PERMISSIONS: dict[str, PermissionDef] = {
     "desktop": _p("desktop", "control", "远程桌面", "Remote Desktop"),
     "mobile": _p("mobile", "control", "远程手机", "Remote Phone"),
     "local_xlsx": _p("local_xlsx", "control", "本机 XLSX 任务", "Local XLSX tasks"),
+    "local_ocr": _p("local_ocr", "control", "本机扫描 PDF 识别", "Local scanned PDF OCR"),
     "local_docx": _p("local_docx", "control", "本机 DOCX 任务", "Local DOCX tasks"),
     "local_files_read": _p(
         "local_files_read", "control", "读取本机授权文件", "Read authorized local files"
@@ -452,7 +453,7 @@ PERMISSIONS: dict[str, PermissionDef] = {
 
 ALL_PERMISSION_KEYS: set[str] = set(PERMISSIONS)
 LOCAL_EXECUTION_PERMISSIONS: frozenset[str] = frozenset(
-    {"local_docx", "local_xlsx", "local_files_read", "local_files_create"}
+    {"local_docx", "local_xlsx", "local_ocr", "local_files_read", "local_files_create"}
 )
 
 ASSIGNABLE_PERMISSION_KEYS: set[str] = {key for key, perm in PERMISSIONS.items() if perm.assignable}

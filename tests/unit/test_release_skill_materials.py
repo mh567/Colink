@@ -142,6 +142,21 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
     for name in ("package.sh", "_common.sh"):
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
     shutil.copytree(repo / "desktop" / "portable" / "templates", portable / "templates")
+    ocr = checkout / "desktop" / "ocr"
+    ocr.mkdir()
+    # The model boundary is stubbed here; real OCR is exercised by test_local_ocr_runner.
+    (ocr / "prepare.py").write_text(
+        """import os
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+assert sys.argv[2:] == ["--python", str(root / "runtime/bin/python3")]
+assert os.environ.get("TEST_BUNDLED_PYTHON") == "1"
+(root / "ocr").mkdir()
+(root / "ocr/fixture-marker.txt").write_text("bundled-python", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     (checkout / "scripts").mkdir()
     shutil.copyfile(SCRIPT, checkout / "scripts" / SCRIPT.name)
     (checkout / "pyproject.toml").write_text('version = "1.0.3b3"\n', encoding="utf-8")
@@ -150,7 +165,9 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
     runtime = green / "runtimes" / "linux-amd64" / "bin"
     runtime.mkdir(parents=True)
     python = runtime / "python3"
-    python.write_text('#!/bin/sh\nexec "$TEST_PYTHON" "$@"\n', encoding="utf-8")
+    python.write_text(
+        '#!/bin/sh\nTEST_BUNDLED_PYTHON=1 exec "$TEST_PYTHON" "$@"\n', encoding="utf-8"
+    )
     python.chmod(0o755)
     wheels = green / "wheels" / "linux-amd64"
     wheels.mkdir(parents=True)
@@ -219,6 +236,7 @@ PY
     assert result.returncode == 0, result.stdout + result.stderr
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
+        assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
         assert not any("/powerpoint/" in name for name in packed.namelist())
         assert packed.read(f"Octop-linux-amd64/packages/{DIST_INFO}/licenses/LICENSE") == (
             b"MIT license must remain\n"
