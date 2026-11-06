@@ -379,16 +379,7 @@ export default function ModelsPage() {
       ) : modelCategory === "search" ? (
         <SearchSettingsPanel />
       ) : modelCategory === "decision" ? (
-        <DecisionSettingsPanel
-          openRouterKey={
-            providers.find(
-              (provider) =>
-                provider.api_key &&
-                (provider.name === "openrouter" ||
-                  (provider.base_url ?? "").includes("openrouter.ai")),
-            )?.api_key
-          }
-        />
+        <DecisionSettingsPanel />
       ) : modelCategory === "embedding" ? (
         loading ? (
           <LoadingState message={t("models.loadingProviders")} />

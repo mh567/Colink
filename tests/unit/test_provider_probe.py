@@ -124,7 +124,9 @@ def _mock_async_client(*, post: AsyncMock) -> AsyncMock:
 @pytest.mark.asyncio
 async def test_embedding_probe_posts_embeddings_endpoint() -> None:
     request = httpx.Request("POST", "https://api.example.com/v1/embeddings")
-    response = httpx.Response(200, json={"data": [{"embedding": [0.1, 0.2]}]}, request=request)
+    response = httpx.Response(
+        200, json={"data": [{"index": 0, "embedding": [0.1, 0.2]}]}, request=request
+    )
     post = AsyncMock(return_value=response)
     with (
         patch(
@@ -145,9 +147,11 @@ async def test_embedding_probe_posts_embeddings_endpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_embedding_probe_honors_explicit_flag_without_saved_model() -> None:
+async def test_embedding_probe_rejects_missing_address() -> None:
     request = httpx.Request("POST", "https://api.openai.com/v1/embeddings")
-    response = httpx.Response(200, json={"data": [{"embedding": [1.0]}]}, request=request)
+    response = httpx.Response(
+        200, json={"data": [{"index": 0, "embedding": [1.0]}]}, request=request
+    )
     post = AsyncMock(return_value=response)
     row = SimpleNamespace(
         name="draft",
@@ -163,8 +167,9 @@ async def test_embedding_probe_honors_explicit_flag_without_saved_model() -> Non
     ):
         result = await probe_provider_row(row, model_id="embed-1", embedding=True)
 
-    assert result["ok"] is True
-    assert post.await_args.args[0] == "https://api.openai.com/v1/embeddings"
+    assert result["ok"] is False
+    assert result["error_type"] == "invalid_config"
+    post.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -207,7 +212,7 @@ async def test_chat_probe_maps_insufficient_balance() -> None:
         result = await probe_provider_row(row, model_id="gpt-4o-mini", locale="zh")
 
     assert result["ok"] is False
-    assert "余额" in result["error"] or "额度" in result["error"]
+    assert result["error_type"] == "quota_exceeded"
     assert "402" not in result["error"]
     assert "Insufficient Balance" not in result["error"]
 
@@ -229,7 +234,8 @@ async def test_embedding_probe_reports_empty_404_with_url() -> None:
         result = await probe_provider_row(row, model_id="bge-large-zh-v1.5")
 
     assert result["ok"] is False
-    assert result["error"] == "HTTP 404 POST https://api.model.haihub.cn/v1/embeddings"
+    assert result["error_type"] == "invalid_model"
+    assert "https://" not in result["error"]
 
 
 @pytest.mark.asyncio
@@ -320,11 +326,9 @@ async def test_chat_probe_empty_exception_message_returns_type_name(
         result = await probe_provider_row(row, model_id="gpt-4o-mini", locale="zh")
 
     assert result["ok"] is False
-    assert result["error"] == "TimeoutError"
-    assert any(
-        "provider probe failed for Agnes AI" in r.message and "TimeoutError" in r.message
-        for r in caplog.records
-    )
+    assert result["error_type"] == "timeout"
+    assert result["error"]
+    assert any("provider probe failed (timeout)" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -348,7 +352,8 @@ async def test_chat_probe_empty_exception_with_cause_includes_root_type() -> Non
         result = await probe_provider_row(row, model_id="gpt-4o-mini")
 
     assert result["ok"] is False
-    assert result["error"] == "RuntimeError <- ConnectionError"
+    assert result["error_type"] == "call_failed"
+    assert result["error"]
 
 
 @pytest.mark.asyncio
@@ -361,11 +366,14 @@ async def test_embedding_probe_empty_exception_message_returns_type_name() -> No
         result = await probe_provider_row(_embedding_row(), locale="en")
 
     assert result["ok"] is False
-    assert result["error"] == "OSError"
+    assert result["error_type"] == "network_error"
 
 
 def test_friendly_probe_error_empty_string_passthrough() -> None:
     from octop.infra.agents.providers.probe import _friendly_probe_error
 
-    assert _friendly_probe_error("", locale="en") == "unknown error"
-    assert _friendly_probe_error(TimeoutError(), locale="zh") == "TimeoutError"
+    assert (
+        _friendly_probe_error("", locale="en")
+        == "Service call failed. Ask an administrator to check the service."
+    )
+    assert "超时" in _friendly_probe_error(TimeoutError(), locale="zh")

@@ -113,3 +113,35 @@ def set_advanced_settings(
                 f"{_MIN_CONTEXT_CHAR_BUDGET} and {_MAX_CONTEXT_CHAR_BUDGET}"
             )
         settings_set(_CONTEXT_CHAR_BUDGET_KEY, str(value))
+
+
+def get_embedding_limits(settings_get: SettingsGet) -> dict[str, int]:
+    """Read remote-request limits; zero characters means no local length cap."""
+    batch_size = int(settings_get("knowledge_embedding_batch_size") or "20")
+    max_input_chars = int(settings_get("knowledge_embedding_max_input_chars") or "0")
+    _validate_embedding_limits(batch_size, max_input_chars)
+    return {
+        "embedding_batch_size": batch_size,
+        "embedding_max_input_chars": max_input_chars,
+    }
+
+
+def _validate_embedding_limits(batch_size: int | None, max_input_chars: int | None) -> None:
+    if batch_size is not None and batch_size < 1:
+        raise ValueError("embedding_batch_size must be positive")
+    if max_input_chars is not None and max_input_chars < 0:
+        raise ValueError("embedding_max_input_chars must be non-negative")
+
+
+def set_embedding_limits(
+    settings_set: SettingsSet,
+    *,
+    batch_size: int | None = None,
+    max_input_chars: int | None = None,
+) -> None:
+    """Persist supplied limits after validating the complete update."""
+    _validate_embedding_limits(batch_size, max_input_chars)
+    if batch_size is not None:
+        settings_set("knowledge_embedding_batch_size", str(batch_size))
+    if max_input_chars is not None:
+        settings_set("knowledge_embedding_max_input_chars", str(max_input_chars))

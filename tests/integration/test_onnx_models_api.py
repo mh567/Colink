@@ -25,6 +25,7 @@ async def test_enable_without_weights_is_rejected(
     from octop.infra.agents.providers import onnx_service
 
     monkeypatch.setattr(onnx_service, "ensure_local_embedding_deps_async", _ready)
+    monkeypatch.setattr(onnx_service, "local_embedding_deps_available", lambda: True)
 
     resp = await client.put(
         "/api/onnx-models/config",

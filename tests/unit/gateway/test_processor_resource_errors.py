@@ -223,3 +223,35 @@ async def test_iter_turn_chunks_persists_partial_when_cancelled() -> None:
     texts = [_wire_text(item) for item in appended[0]]
     assert any("continue this" in text for text in texts)
     assert "partial answer" in texts
+
+
+@pytest.mark.parametrize("entry", ["dashboard", "im"])
+@pytest.mark.parametrize("prefix", ["HTTP 429 ", "upstream rejected "])
+async def test_upstream_credentials_do_not_escape_chat_errors(
+    entry: str, prefix: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret = "enterprise-key-and-header-secret"
+
+    async def stream(*_args: object, **_kwargs: object) -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "token", "content": "safe partial answer"}
+        raise RuntimeError(prefix + secret)
+
+    processor, msg, appended = _processor_with_stream(stream)
+    del processor._record_stream_error  # Exercise the real logging and audit path.
+    processor._thread_registry.get_or_create_by_key = AsyncMock(return_value="thread-1")
+    processor._agent_manager.get_thread_model.return_value = None
+    processor._user_repo.get.return_value = MagicMock(locale="zh")
+    if entry == "im":
+        msg.channel_id, msg.channel_type = "feishu-test", "feishu"
+    events = [
+        event
+        async for event in (
+            processor.iter_turn_chunks(msg) if entry == "dashboard" else processor(msg)
+        )
+    ]
+    audit = processor._audit_repo.write.call_args_list
+    assert audit
+    assert secret not in str(events) + str(audit) + caplog.text + str(appended)
+    assert "safe partial answer" in str(events)
+    assert any("stream" in str(call) for call in audit)
+    assert all(record.exc_info is None for record in caplog.records)

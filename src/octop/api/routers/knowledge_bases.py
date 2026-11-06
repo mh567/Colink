@@ -15,6 +15,7 @@ from octop.api.common.content_disposition import content_disposition
 from octop.api.common.upload_limit import read_upload_capped
 from octop.api.deps import current_user, get_server, require_permission
 from octop.config import DEFAULT_MAX_UPLOAD_MB, MAX_MAX_UPLOAD_MB, upload_mb_to_bytes
+from octop.i18n import tr
 from octop.infra.agents.providers.model_flags import (
     is_chat_eligible_model,
     is_embedding_model,
@@ -49,6 +50,7 @@ from octop.infra.knowledge.ocr import (
     set_ocr_settings,
     validate_ocr_settings,
 )
+from octop.infra.knowledge.params import set_embedding_limits
 from octop.infra.knowledge.service import (
     MAX_BASES_PER_OWNER,
     MAX_DOCS_PER_KB,
@@ -80,6 +82,18 @@ class FeatureBody(BaseModel):
     )
     backend: str | None = Field(default=None, pattern="^(onnx|remote)$")
     provider_id: str | None = None
+    embedding_batch_size: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+        description="Maximum inputs in one remote embedding request.",
+    )
+    embedding_max_input_chars: int | None = Field(
+        default=None,
+        ge=0,
+        strict=True,
+        description="Maximum Unicode characters per remote embedding input; 0 disables the local cap.",
+    )
     ocr_enabled: bool | None = Field(
         default=None,
         description="Whether OCR is enabled for images and scanned PDFs.",
@@ -162,10 +176,13 @@ def _row_payload(
     row: Any,
     *,
     has_original: bool | None = None,
+    locale: str = "en",
     server: OctopServer | None = None,
 ) -> dict[str, Any]:
     payload = asdict(row)
     payload["document_id"] = row.id
+    if payload.get("error_message") == "knowledge.indexing_failed":
+        payload["error_message"] = tr("knowledge.indexing_failed", locale)
     if has_original is None:
         if getattr(row, "is_dir", False):
             has_original = False
@@ -307,12 +324,8 @@ def _map_knowledge_error(
         return OctopError.localized(ErrorCode.KNOWLEDGE_NAME_INVALID, locale)
     if "prerequisite" in text or "embedding model" in text or "embedding_model" in text:
         return OctopError.localized(ErrorCode.KNOWLEDGE_PREREQUISITES_FAILED, locale)
-    logger.exception("unhandled error in knowledge base router: %s", exc)
-    return OctopError.localized(
-        ErrorCode.INTERNAL_ERROR,
-        locale,
-        details={"cause": str(exc)},
-    )
+    logger.error("knowledge base operation failed (%s)", type(exc).__name__)
+    return OctopError.localized(ErrorCode.INTERNAL_ERROR, locale)
 
 
 def _onnx_options_for_knowledge(*, include_all: bool = False) -> list[dict[str, Any]]:
@@ -491,6 +504,11 @@ async def put_feature(
             model=body.model,
             provider_id=body.provider_id,
             provider_repo=server.services.provider_repo,
+        )
+        set_embedding_limits(
+            server.services.settings_repo.set,
+            batch_size=body.embedding_batch_size,
+            max_input_chars=body.embedding_max_input_chars,
         )
         if body.ocr_enabled is not None:
             set_ocr_settings(
@@ -840,7 +858,7 @@ async def list_documents(
 ) -> list[dict[str, Any]]:
     try:
         return [
-            _row_payload(document, server=server)
+            _row_payload(document, server=server, locale=resolve_request_locale(request))
             for document in _knowledge_service(server).list_documents(
                 kb_id, actor_user_id=user.id, is_admin=_is_admin(user), prefix=prefix
             )
@@ -867,7 +885,7 @@ async def create_folder(
         folder = _knowledge_service(server).create_folder(
             kb_id, actor_user_id=user.id, path=body.path, is_admin=_is_admin(user)
         )
-        return _row_payload(folder, server=server)
+        return _row_payload(folder, server=server, locale=resolve_request_locale(request))
     except Exception as exc:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
@@ -900,7 +918,7 @@ async def create_text_document(
         )
         assert server.services is not None
         enqueue_index_document(server.services, kb_id, document.id)
-        return _row_payload(document, server=server)
+        return _row_payload(document, server=server, locale=resolve_request_locale(request))
     except Exception as exc:
         raise _map_knowledge_error(exc, locale=locale, server=server) from exc
 
@@ -941,7 +959,7 @@ async def upload_document(
         )
         assert server.services is not None
         enqueue_index_document(server.services, kb_id, document.id)
-        return _row_payload(document, server=server)
+        return _row_payload(document, server=server, locale=resolve_request_locale(request))
     except Exception as exc:
         raise _map_knowledge_error(exc, locale=locale, server=server) from exc
 
@@ -1065,7 +1083,7 @@ async def update_text_document(
         )
         assert server.services is not None
         enqueue_index_document(server.services, kb_id, doc_id)
-        return _row_payload(document, server=server)
+        return _row_payload(document, server=server, locale=resolve_request_locale(request))
     except Exception as exc:
         raise _map_knowledge_error(exc, locale=locale, server=server) from exc
 
@@ -1090,7 +1108,7 @@ async def rename_document(
             new_name=body.new_name.strip(),
             is_admin=_is_admin(user),
         )
-        return _row_payload(document, server=server)
+        return _row_payload(document, server=server, locale=resolve_request_locale(request))
     except Exception as exc:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
@@ -1137,7 +1155,7 @@ async def reindex_document(
         )
         assert server.services is not None
         enqueue_index_document(server.services, kb_id, doc_id)
-        return _row_payload(document, server=server)
+        return _row_payload(document, server=server, locale=resolve_request_locale(request))
     except Exception as exc:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server

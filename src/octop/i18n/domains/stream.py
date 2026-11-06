@@ -78,11 +78,6 @@ def _format_template(key: str, locale: str | Locale, **kwargs: object) -> str:
     return tr(key, locale, **escaped)
 
 
-def _looks_like_send_file_tool_error(message: str) -> bool:
-    """True for ``send_file_to_user`` path failures that should not look like a model outage."""
-    return "send_file_to_user:" in _normalize_message(message).lower()
-
-
 def unwrap_model_retry_message(message: str) -> str:
     """Strip retry-wrapper / recovery-prompt chrome so the inner error can be classified."""
     msg = _normalize_message(message)
@@ -241,11 +236,7 @@ def stream_error_message(error: str | None, locale: str | Locale = "en") -> str:
 
 
 def format_stream_error(exc: BaseException | str, locale: str | Locale = "en") -> str:
-    """Classify an exception or raw message; keep the actual cause when unknown.
-
-    Tool / path failures (e.g. ``send_file_to_user`` missing file) pass through so
-    the UI does not mislabel them as a model-call outage.
-    """
+    """Return fixed guidance; upstream error bodies may contain credentials."""
     current = exc if isinstance(exc, BaseException) else None
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
@@ -262,10 +253,6 @@ def format_stream_error(exc: BaseException | str, locale: str | Locale = "en") -
     classified = classify_stream_error_message(inner)
     if classified is not None and classified != MODEL_CALL_FAILED:
         return tr(classified.removeprefix(_PREFIX), locale)
-    if _looks_like_send_file_tool_error(message) or _looks_like_send_file_tool_error(inner):
-        return message if _looks_like_send_file_tool_error(message) else inner
-    if inner:
-        return _format_template("stream_errors.model_call_failed_detail", locale, detail=inner)
     return tr(MODEL_CALL_FAILED.removeprefix(_PREFIX), locale)
 
 
@@ -275,16 +262,11 @@ def model_retry_failure_prompt(exc: Exception, locale: str | Locale = "en") -> s
     Retained for explicit legacy recovery-prompt callers. Active agents use
     ``on_failure="error"`` and display failures outside model messages.
     """
-    detail = unwrap_model_retry_message(exception_display_message(exc))
-    classified = classify_stream_error_message(detail)
-    if classified is not None:
-        guidance = tr(classified.removeprefix(_PREFIX), locale)
-    else:
-        guidance = _format_template("stream_errors.model_call_failed_detail", locale, detail=detail)
+    guidance = format_stream_error(exc, locale)
     body = _format_template(
         "stream_errors.model_retry_prompt",
         locale,
         guidance=guidance,
-        detail=detail,
+        detail=guidance,
     )
     return f"{MODEL_RETRY_FAILURE_MARK}\n{body}"

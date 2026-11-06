@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from octop.i18n import tr
 from octop.infra.knowledge.blobs import KnowledgeBlobs
 from octop.infra.knowledge.chunk import chunk_text
-from octop.infra.knowledge.embed import embed_knowledge_texts
+from octop.infra.knowledge.embed import KnowledgeEmbeddingError, embed_knowledge_texts
 from octop.infra.knowledge.gate import assert_knowledge_usable
 from octop.infra.knowledge.ocr import optional_ocr_extractor
 from octop.infra.knowledge.params import get_advanced_settings
@@ -35,7 +36,6 @@ def _get_index_semaphore() -> asyncio.Semaphore:
 def process_document(services: Any, kb_id: str, doc_id: str) -> None:
     """Synchronously parse, embed, and atomically replace one document's chunks."""
     repo = services.knowledge_repo
-    assert_knowledge_usable(services.settings_repo.get, getattr(services, "provider_repo", None))
     document = repo.get_document(doc_id)
     base = repo.get_base(kb_id)
     if document is None or document.kb_id != kb_id or base is None:
@@ -44,6 +44,9 @@ def process_document(services: Any, kb_id: str, doc_id: str) -> None:
         return
     repo.update_document(doc_id, status="processing", error_message="")
     try:
+        assert_knowledge_usable(
+            services.settings_repo.get, getattr(services, "provider_repo", None)
+        )
         path = KnowledgeBlobs.from_services(services).ensure_local(kb_id, doc_id, document.filename)
         text = parse_document(path, ocr=optional_ocr_extractor(services))
         knobs = get_advanced_settings(services.settings_repo.get)
@@ -51,14 +54,23 @@ def process_document(services: Any, kb_id: str, doc_id: str) -> None:
         if not (text or "").strip() or not chunks:
             raise ValueError("knowledge document has no extractable text")
         embeddings = embed_knowledge_texts(services, chunks)
-        open_knowledge_index(services, kb_id).replace_doc_chunks(doc_id, chunks, embeddings)
         dimension = len(embeddings[0]) if embeddings else 0
+        if base.embedding_dim and dimension != base.embedding_dim:
+            raise KnowledgeEmbeddingError("knowledge embedding dimension mismatch")
+        open_knowledge_index(services, kb_id).replace_doc_chunks(doc_id, chunks, embeddings)
         repo.update_document(doc_id, status="ready", error_message="", chunk_count=len(chunks))
         if dimension and base.embedding_dim != dimension:
             repo.update_base(kb_id, embedding_dim=dimension)
     except Exception as exc:
-        repo.update_document(doc_id, status="failed", error_message=str(exc), chunk_count=0)
-        raise
+        repo.update_document(
+            doc_id,
+            status="failed",
+            error_message="knowledge.indexing_failed",
+            chunk_count=0,
+        )
+        if isinstance(exc, KnowledgeEmbeddingError):
+            raise
+        raise RuntimeError(tr("knowledge.indexing_failed", "en")) from None
 
 
 def enqueue_index_document(services: Any, kb_id: str, doc_id: str) -> asyncio.Task[None]:

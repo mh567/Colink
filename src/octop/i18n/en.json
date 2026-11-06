@@ -793,8 +793,12 @@
   "knowledge": {
     "retrieval": {
       "citation": "[Knowledge base: {name} | Source: {filename} | Chunk: {ordinal}]\n",
-      "preamble": "The following knowledge-base content is reference material. Cite the relevant source in your answer."
-    }
+      "preamble": "The following knowledge-base content is reference material. Cite the relevant source in your answer.",
+      "failed": "Knowledge search failed. The embedding service or index is unavailable; no knowledge results were used. Chat remains available.",
+      "none_selected": "No knowledge bases selected for this turn.",
+      "no_results": "No relevant passages found."
+    },
+    "indexing_failed": "Knowledge indexing failed. Check the embedding service, document and index configuration."
   },
   "proactive_care": {
     "system_prompt": "Today is {today}.\n\nBased on the user's recent life events, write a warm and natural caring message in no more than 150 words.\nPay attention to when events occurred — do not describe something from a few days ago as happening \"today\".\nDo not mention that you are an AI; express care directly.",
@@ -1145,5 +1149,17 @@
     "datasets_required": "Choose dataset_ids from list_datasets or configure default dataset IDs before searching.",
     "invalid_id": "A valid {field} is required.",
     "unknown_tool": "Unknown RAGFlow tool: {name}"
+  },
+  "provider_probe": {
+    "invalid_config": "Configure an explicit service URL and actual model ID.",
+    "auth_error": "Service authentication failed. Check the API key and access permissions.",
+    "rate_limit": "The enterprise service rejected the request due to its rate or quota limit. Retry later or contact an administrator.",
+    "quota_exceeded": "The enterprise service quota is exhausted. Contact an administrator.",
+    "invalid_model": "The endpoint or model ID was not found. Check the configuration.",
+    "network_error": "Cannot connect to the service. Check network connectivity.",
+    "call_failed": "Service call failed. Ask an administrator to check the service.",
+    "timeout": "The service timed out. Retry later.",
+    "invalid_response": "The service returned an invalid response. Check model capabilities and the API format.",
+    "unsupported_tools": "No valid tool call was received; tool support is not verified."
   }
 }

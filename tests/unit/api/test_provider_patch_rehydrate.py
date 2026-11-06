@@ -59,6 +59,7 @@ def test_patch_note_and_api_key_requires_rehydrate() -> None:
 async def test_admin_patch_note_only_skips_on_provider_changed() -> None:
     on_changed = AsyncMock()
     row = MagicMock()
+    row.extra_json = None
     row.id = 1
     row.name = "test-openai"
     server = MagicMock()
@@ -77,6 +78,7 @@ async def test_admin_patch_note_only_skips_on_provider_changed() -> None:
 async def test_admin_patch_api_key_calls_on_provider_changed() -> None:
     on_changed = AsyncMock()
     row = MagicMock()
+    row.extra_json = None
     row.id = 1
     row.name = "test-openai"
     server = MagicMock()
@@ -95,6 +97,7 @@ async def test_admin_patch_api_key_calls_on_provider_changed() -> None:
 async def test_admin_patch_null_api_key_clears_stored_key() -> None:
     on_changed = AsyncMock()
     row = MagicMock()
+    row.extra_json = None
     row.id = 1
     row.name = "DeepSeek"
     server = MagicMock()
@@ -113,6 +116,7 @@ async def test_admin_patch_null_api_key_clears_stored_key() -> None:
 async def test_admin_patch_models_clears_stale_agent_default_and_active() -> None:
     on_changed = AsyncMock()
     row = MagicMock()
+    row.extra_json = None
     row.id = 1
     row.name = "hai"
     server = MagicMock()

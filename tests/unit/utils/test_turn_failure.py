@@ -28,7 +28,7 @@ def test_log_turn_failure_includes_kind_and_ids(caplog: logging.LogCaptureFixtur
     assert "agent=ag_1" in caplog.text
     assert "thread=th_9" in caplog.text
     assert "model=qwen" in caplog.text
-    assert "Check open ai req parameter error" in caplog.text
+    assert "Check open ai req parameter error" not in caplog.text
 
 
 def test_iter_failed_tool_results_reads_status_error() -> None:
@@ -73,7 +73,7 @@ def test_log_failed_tool_results_is_warning(caplog: logging.LogCaptureFixture) -
     assert "turn failure kind=tool" in caplog.text
     assert "agent=ag_2" in caplog.text
     assert "tool=ls" in caplog.text
-    assert "permission denied" in caplog.text
+    assert "permission denied" not in caplog.text
     assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
 

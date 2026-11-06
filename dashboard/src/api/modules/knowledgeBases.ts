@@ -13,6 +13,8 @@ export interface KnowledgeLimits {
 
 export interface KnowledgeCapability {
   feature_enabled: boolean;
+  embedding_batch_size?: number;
+  embedding_max_input_chars?: number;
   backend: "onnx" | "remote";
   selected_model: string;
   provider_id: string;
@@ -129,6 +131,8 @@ export const knowledgeBasesApi = {
 
   setFeature: (body: {
     enabled: boolean;
+    embedding_batch_size?: number;
+    embedding_max_input_chars?: number;
     backend?: "onnx" | "remote";
     model?: string;
     provider_id?: string;

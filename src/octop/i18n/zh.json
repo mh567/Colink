@@ -793,8 +793,12 @@
   "knowledge": {
     "retrieval": {
       "citation": "[知识库：{name}｜来源：{filename}｜片段：{ordinal}]\n",
-      "preamble": "以下知识库内容仅供参考；回答时请引用对应来源。"
-    }
+      "preamble": "以下知识库内容仅供参考；回答时请引用对应来源。",
+      "failed": "知识检索失败：向量服务或索引不可用，本次未使用知识库结果。聊天仍可继续。",
+      "none_selected": "本轮未选择知识库。",
+      "no_results": "未找到相关资料。"
+    },
+    "indexing_failed": "知识库索引失败，请检查向量服务、文档和索引配置。"
   },
   "proactive_care": {
     "system_prompt": "今天是 {today}。\n\n请根据用户近期的生活事件，用温暖自然的语气写一段关心的话，不超过 150 字。\n注意事件发生的时间，不要把几天前的事说成「今天」。\n不要提及你是 AI，直接表达关心即可。",
@@ -1145,5 +1149,17 @@
     "datasets_required": "请先通过 list_datasets 选择 dataset_ids，或配置默认知识库 ID，再进行检索。",
     "invalid_id": "请提供有效的 {field}。",
     "unknown_tool": "未知的 RAGFlow 工具：{name}"
+  },
+  "provider_probe": {
+    "invalid_config": "请配置有效的服务地址和实际模型 ID。",
+    "auth_error": "服务鉴权失败，请检查 API key 和访问权限。",
+    "rate_limit": "已达到企业服务调用频率或配额限制，请稍后重试或联系管理员。",
+    "quota_exceeded": "企业服务配额不足，请联系管理员。",
+    "invalid_model": "服务地址或模型 ID 不存在，请核对配置。",
+    "network_error": "无法连接服务，请检查内网连通性。",
+    "call_failed": "服务调用失败，请联系管理员检查服务状态。",
+    "timeout": "服务响应超时，请稍后重试。",
+    "invalid_response": "服务未返回有效响应，请检查模型能力与接口格式。",
+    "unsupported_tools": "本次测试未收到有效工具调用，不能确认该模型支持工具。"
   }
 }

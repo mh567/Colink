@@ -38,6 +38,8 @@ import { expandOllamaDownloadedIds } from "../../ollamaNames";
 import { ModelListEditor } from "./ModelListEditor";
 import { StreamUsageAdvanced } from "../StreamUsageAdvanced";
 import { TestStreamHint } from "../TestStreamHint";
+import { useServerTimezone } from "../../../../../hooks/useServerTimezone";
+import { formatServerDateTime } from "../../../../../utils/formatMessageTime";
 import styles from "../../index.module.less";
 
 const POLL_INTERVAL_MS = 3000;
@@ -90,15 +92,29 @@ export function ProviderConfigModal({
   apiPrefix = "/providers",
 }: ProviderConfigModalProps) {
   const { t } = useTranslation();
+  const timezone = useServerTimezone();
   const { modal, message } = App.useApp();
   const [saving, setSaving] = useState(false);
   const [formDirty, setFormDirty] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [capability, setCapability] = useState<"chat" | "stream" | "tools">(
+    "chat",
+  );
+  const [lastTest, setLastTest] = useState<{
+    ok: boolean;
+    error?: string;
+    dimension?: number;
+  } | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const testRevision = useRef(0);
+  const clearTestResult = () => {
+    testRevision.current += 1;
+    setLastTest(null);
+  };
   const [form] = Form.useForm<ProviderConfigForm>();
   const [draftModels, setDraftModels] = useState<ProviderModel[]>([]);
 
-  const hasApiKey = !!provider.api_key && provider.api_key.length > 0;
+  const hasApiKey = !!provider.api_key_set;
   const isOllama = looksLikeOllamaProvider(provider);
   const isOnnx = isOnnxProviderRow(provider);
   const [downloadedIds, setDownloadedIds] = useState<string[]>([]);
@@ -654,6 +670,7 @@ export function ProviderConfigModal({
   }, [hasApiKey, t]);
 
   useEffect(() => {
+    clearTestResult();
     if (!open) return;
     // Only hydrate when the modal opens (or provider id changes), so
     // background refreshes / local model toggles do not reset the form.
@@ -678,6 +695,7 @@ export function ProviderConfigModal({
   }, [open, provider.id, form]);
 
   const handleModelsChange = (models: ProviderModel[]) => {
+    clearTestResult();
     setDraftModels(models);
     setFormDirty(true);
   };
@@ -781,10 +799,33 @@ export function ProviderConfigModal({
     });
   };
 
+  const probeNeedsSave = (values: ProviderConfigForm) =>
+    (values.base_url ?? "").trim() !== (provider.base_url ?? "").trim() ||
+    values.kind !== provider.kind ||
+    values.stream_usage !== (provider.stream_usage !== false) ||
+    JSON.stringify(
+      draftModels.map((model) => ({
+        ...model,
+        enabled: model.enabled !== false,
+      })),
+    ) !==
+      JSON.stringify(
+        (provider.models ?? []).map((model) => ({
+          ...model,
+          enabled: model.enabled !== false,
+        })),
+      );
+
   const handleTest = async () => {
+    clearTestResult();
+    const revision = testRevision.current;
     setTesting(true);
     try {
       const values = form.getFieldsValue();
+      if (probeNeedsSave(values)) {
+        message.warning(t("models.probeSaveChanges"));
+        return;
+      }
       const modelId =
         (values.model as string | undefined)?.trim() ||
         draftModels.find((m) => m.enabled !== false)?.id ||
@@ -825,14 +866,7 @@ export function ProviderConfigModal({
 
       const draftApiKey = (values.api_key as string | undefined)?.trim();
       const draftBaseUrl = (values.base_url as string | undefined)?.trim();
-      const useDraft =
-        !!draftApiKey ||
-        (!!draftBaseUrl && draftBaseUrl !== (provider.base_url ?? ""));
-
-      if (useDraft && !draftApiKey && !hasApiKey) {
-        message.warning(t("models.pleaseEnterApiKey"));
-        return;
-      }
+      const useDraft = !!draftApiKey;
 
       const embedding =
         provider.purpose === "embedding" ||
@@ -846,16 +880,19 @@ export function ProviderConfigModal({
           ? await testProviderDraft({
               name: provider.name,
               kind: provider.kind,
-              api_key: draftApiKey || provider.api_key || undefined,
+              api_key: draftApiKey,
+              provider_id: provider.id,
               base_url: draftBaseUrl || provider.base_url,
               model_id: modelId,
               api_mode: apiMode,
               api_fallback: apiFallback,
               embedding,
+              capability,
             })
           : await request<{
               ok: boolean;
               latency_ms?: number;
+              dimension?: number;
               error?: string;
               fallback_used?: boolean;
               api_mode_used?: ProviderModel["api_mode"];
@@ -866,9 +903,12 @@ export function ProviderConfigModal({
                 api_mode: apiMode,
                 api_fallback: apiFallback,
                 embedding,
+                capability,
               }),
             });
 
+      if (revision === testRevision.current) setLastTest(result);
+      if (!useDraft) await onSaved();
       if (result.ok) {
         if (result.fallback_used) {
           message.warning(t("models.apiFallbackTestUsed"));
@@ -901,6 +941,7 @@ export function ProviderConfigModal({
   };
 
   const handleFetchModels = async () => {
+    clearTestResult();
     try {
       if (isOnnx) {
         setFetchingModels(true);
@@ -934,6 +975,10 @@ export function ProviderConfigModal({
       }
 
       const values = form.getFieldsValue();
+      if (probeNeedsSave(values)) {
+        message.warning(t("models.probeSaveChanges"));
+        return;
+      }
       const kind = (values.kind as string | undefined) ?? provider.kind;
       if (kind !== "openai") {
         message.warning(t("models.fetchModelsUnsupportedKind"));
@@ -941,8 +986,8 @@ export function ProviderConfigModal({
       }
       const draftApiKey = (values.api_key as string | undefined)?.trim();
       const draftBaseUrl = (values.base_url as string | undefined)?.trim();
-      const apiKey = draftApiKey || provider.api_key || "";
-      if (!apiKey) {
+      const apiKey = draftApiKey || "";
+      if (!apiKey && !hasApiKey) {
         message.warning(t("models.pleaseEnterApiKey"));
         return;
       }
@@ -950,6 +995,7 @@ export function ProviderConfigModal({
       setFetchingModels(true);
       const result = await fetchProviderModels({
         kind: "openai",
+        provider_id: provider.id,
         api_key: apiKey,
         base_url: draftBaseUrl || provider.base_url,
         name: provider.name,
@@ -1036,7 +1082,10 @@ export function ProviderConfigModal({
       <Form
         form={form}
         layout="vertical"
-        onValuesChange={() => setFormDirty(true)}
+        onValuesChange={() => {
+          clearTestResult();
+          setFormDirty(true);
+        }}
       >
         <Form.Item
           name="kind"
@@ -1105,7 +1154,11 @@ export function ProviderConfigModal({
           )}
         </Form.Item>
 
-        <Form.Item name="note" label={t("models.noteLabel")}>
+        <Form.Item
+          name="note"
+          label={t("models.serviceQuotaNotes")}
+          extra={t("models.serviceQuotaNotesHint")}
+        >
           <Input.TextArea rows={2} placeholder={t("models.notePlaceholder")} />
         </Form.Item>
 
@@ -1113,11 +1166,25 @@ export function ProviderConfigModal({
       </Form>
 
       <div style={{ marginBottom: 16 }}>
+        {provider.purpose !== "embedding" && !isOnnx && (
+          <Select
+            value={capability}
+            onChange={(value) => {
+              clearTestResult();
+              setCapability(value);
+            }}
+            style={{ width: 150, marginRight: 8 }}
+            options={["chat", "stream", "tools"].map((value) => ({
+              value,
+              label: t(`models.probeCapability.${value}`),
+            }))}
+          />
+        )}
         <Button
           size="small"
           icon={<Zap size={12} />}
           loading={testing}
-          onClick={handleTest}
+          onClick={() => void handleTest()}
         >
           {t("models.testConnection")}
         </Button>
@@ -1130,7 +1197,45 @@ export function ProviderConfigModal({
         >
           {t("models.fetchModels")}
         </Button>
-        {!isOnnx && provider.kind === "openai" ? <TestStreamHint /> : null}
+        {!isOnnx &&
+        provider.kind === "openai" &&
+        provider.purpose !== "embedding" &&
+        capability === "chat" ? (
+          <TestStreamHint />
+        ) : null}
+        {lastTest && (
+          <div role="status">
+            {lastTest.ok ? t("models.probePassed") : lastTest.error}
+            {lastTest.dimension != null
+              ? ` · ${t("models.probeDimension", {
+                  count: lastTest.dimension,
+                })}`
+              : ""}
+          </div>
+        )}
+        {Object.entries(provider.probe_results ?? {}).map(
+          ([model, results]) => (
+            <div key={model}>
+              {model}:{" "}
+              {Object.entries(results).map(([kind, result]) => (
+                <span key={kind} style={{ marginRight: 12 }}>
+                  {t(`models.probeCapability.${kind}`)}:{" "}
+                  {result.ok
+                    ? t("models.probePassed")
+                    : t("models.probeFailed")}
+                  {result.tested_at
+                    ? ` · ${formatServerDateTime(result.tested_at, timezone)}`
+                    : ""}
+                  {result.dimension != null
+                    ? ` · ${t("models.probeDimension", {
+                        count: result.dimension,
+                      })}`
+                    : ""}
+                </span>
+              ))}
+            </div>
+          ),
+        )}
       </div>
 
       {/* ===== Models section ===== */}

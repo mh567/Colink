@@ -8,6 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 async def test_provider_test_ok(env_with_provider_record: Any) -> None:
     c, _srv, auth, pid = env_with_provider_record
+    await c.patch(
+        f"/api/admin/providers/{pid}",
+        headers=auth,
+        json={"base_url": "http://models.internal/v1", "models": [{"id": "chat"}]},
+    )
 
     fake_model = MagicMock()
     fake_model.ainvoke = AsyncMock(return_value=MagicMock(content="pong"))
@@ -24,6 +29,11 @@ async def test_provider_test_ok(env_with_provider_record: Any) -> None:
 
 async def test_provider_test_failure(env_with_provider_record: Any) -> None:
     c, _srv, auth, pid = env_with_provider_record
+    await c.patch(
+        f"/api/admin/providers/{pid}",
+        headers=auth,
+        json={"base_url": "http://models.internal/v1", "models": [{"id": "chat"}]},
+    )
 
     def boom(*_a: Any, **_kw: Any) -> Any:
         raise RuntimeError("auth failed")
@@ -33,7 +43,8 @@ async def test_provider_test_failure(env_with_provider_record: Any) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is False
-    assert "auth failed" in body["error"]
+    assert body["error_type"] == "call_failed"
+    assert "auth failed" not in body["error"]
 
 
 async def test_provider_test_missing_provider(env_with_provider_record: Any) -> None:
@@ -54,6 +65,7 @@ async def test_provider_test_embedding_skips_chat_probe(
         api_mode: str | None = None,
         api_fallback: str | None = None,
         embedding: bool | None = None,
+        capability: str = "chat",
         locale: str = "en",
     ) -> dict[str, Any]:
         assert embedding is True

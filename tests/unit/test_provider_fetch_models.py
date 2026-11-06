@@ -45,7 +45,7 @@ async def test_fetch_models_parses_openai_list() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_models_defaults_openai_base_url() -> None:
+async def test_fetch_models_requires_explicit_base_url() -> None:
     response = _mock_response(200, {"data": []})
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=response)
@@ -55,9 +55,9 @@ async def test_fetch_models_defaults_openai_base_url() -> None:
     with patch("octop.infra.agents.providers.probe.httpx.AsyncClient", return_value=mock_client):
         result = await fetch_openai_compatible_models(base_url=None, api_key="sk-test")
 
-    assert result["ok"] is True
-    assert result["models"] == []
-    assert mock_client.get.await_args.args[0] == "https://api.openai.com/v1/models"
+    assert result["ok"] is False
+    assert result["error_type"] == "invalid_config"
+    mock_client.get.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -113,7 +113,7 @@ async def test_fetch_models_insufficient_balance_zh() -> None:
         )
 
     assert result["ok"] is False
-    assert "余额" in result["error"] or "额度" in result["error"]
+    assert result["error_type"] == "quota_exceeded"
     assert "402" not in result["error"]
 
 
@@ -172,5 +172,5 @@ async def test_fetch_models_server_error_friendly() -> None:
         )
 
     assert result["ok"] is False
-    assert "temporarily unavailable" in result["error"].lower()
+    assert result["error_type"] == "call_failed"
     assert "503" not in result["error"]

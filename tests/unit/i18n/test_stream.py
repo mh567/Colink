@@ -199,22 +199,16 @@ def test_stream_error_message_octop_key() -> None:
     assert "重试" in stream_error_message(STREAM_STALL, "zh")
 
 
-def test_format_stream_error_unknown_keeps_actual_cause() -> None:
+def test_format_stream_error_unknown_hides_actual_cause() -> None:
     text = format_stream_error("disk full", "en")
-    assert "disk full" in text
-    assert "several retries" not in text
+    assert "disk full" not in text
+    assert text == stream_error_message(MODEL_CALL_FAILED, "en")
 
 
-def test_format_stream_error_passes_through_send_file_failures() -> None:
-    msg = (
-        "send_file_to_user: no such file: "
-        "/home/octop/.octop/agents/CS6ZRF/.octop/generated/expense_stats/x.xlsx"
-    )
-    assert format_stream_error(msg, "zh") == msg
-    assert format_stream_error(FileNotFoundError(msg), "en") == msg
-    assert "模型调用" not in format_stream_error(msg, "zh")
-    # Unknown file errors keep the concrete cause instead of a generic retry line.
-    assert "config.json" in format_stream_error("FileNotFoundError: config.json", "en")
+def test_format_stream_error_hides_unknown_file_details() -> None:
+    msg = "send_file_to_user: no such file: secret-header-value"
+    assert "secret-header-value" not in format_stream_error(msg, "zh")
+    assert "secret-header-value" not in format_stream_error(FileNotFoundError(msg), "en")
 
 
 def test_model_retry_failure_prompt_is_specific_and_model_visible() -> None:
@@ -224,7 +218,7 @@ def test_model_retry_failure_prompt_is_specific_and_model_visible() -> None:
     )
     assert prompt.startswith(MODEL_RETRY_FAILURE_MARK)
     assert "context" in prompt.lower()
-    assert "128000" in prompt
+    assert "128000" not in prompt
     assert "Do not pretend the task succeeded" in prompt
 
 
@@ -261,12 +255,12 @@ def test_model_retry_on_failure_writes_server_log(caplog: logging.LogCaptureFixt
     assert "agent=ag_mindie" in caplog.text
     assert "thread=th_mindie" in caplog.text
     assert "model=mindie/qwen" in caplog.text
-    assert "Check open ai req parameter error" in caplog.text
+    assert "Check open ai req parameter error" not in caplog.text
     assert prompt.startswith(MODEL_RETRY_FAILURE_MARK)
 
 
 def test_format_stream_error_empty_exception_still_localized() -> None:
     text = format_stream_error(TimeoutError(), "zh")
     assert text
-    assert "模型调用失败" in text
-    assert "TimeoutError" in text
+    assert text == stream_error_message(MODEL_CALL_FAILED, "zh")
+    assert "TimeoutError" not in text

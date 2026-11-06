@@ -1,6 +1,8 @@
 import { request } from "../../../api/request";
 
 export interface TestProviderDraftParams {
+  provider_id?: number;
+  capability?: "chat" | "stream" | "tools";
   name: string;
   kind: string;
   api_key?: string;
@@ -15,6 +17,7 @@ export interface TestProviderDraftParams {
 export interface TestProviderResult {
   ok: boolean;
   latency_ms?: number;
+  dimension?: number;
   error?: string;
   fallback_used?: boolean;
   api_mode_used?: "chat_completions" | "responses";
@@ -27,6 +30,7 @@ export async function testProviderDraft(
     method: "POST",
     body: JSON.stringify({
       name: params.name,
+      provider_id: params.provider_id,
       kind: params.kind,
       api_key: params.api_key?.trim() || null,
       base_url: params.base_url?.trim() || null,
@@ -35,11 +39,13 @@ export async function testProviderDraft(
       api_fallback: params.api_fallback ?? "none",
       extra_json: params.extra_json ?? null,
       embedding: params.embedding === true,
+      capability: params.capability,
     }),
   });
 }
 
 export interface FetchProviderModelsParams {
+  provider_id?: number;
   kind: string;
   api_key?: string;
   base_url?: string | null;
@@ -64,6 +70,7 @@ export async function fetchProviderModels(
   return request<FetchProviderModelsResult>("/admin/providers/fetch-models", {
     method: "POST",
     body: JSON.stringify({
+      provider_id: params.provider_id,
       kind: params.kind,
       api_key: params.api_key?.trim() || null,
       base_url: params.base_url?.trim() || null,

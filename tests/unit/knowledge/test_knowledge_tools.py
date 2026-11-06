@@ -120,3 +120,23 @@ async def test_search_knowledge_empty_hits_message() -> None:
     ):
         out = await tool.ainvoke({"query": "nothing"})
     assert "No relevant passages found" in out
+
+
+@pytest.mark.asyncio
+async def test_search_failure_is_explicit_and_does_not_expose_upstream_error(monkeypatch) -> None:
+    from octop.infra.knowledge import retrieve
+
+    services = SimpleNamespace(settings_repo=SimpleNamespace(get=lambda _key: None))
+    monkeypatch.setattr(retrieve, "assert_knowledge_usable", lambda *_args: None)
+
+    def fail(*_args):
+        raise RuntimeError("upstream echoed secret-token and private document")
+
+    monkeypatch.setattr(retrieve, "embed_knowledge_texts", fail)
+    tool = _tool_by_name(build_knowledge_tools(services), "search_knowledge")
+    with _configurable(user="1", knowledge_base_ids=["kb-1"], locale="en"):
+        out = await tool.ainvoke({"query": "policy"})
+    assert "Knowledge search failed" in out
+    assert "No relevant passages" not in out
+    assert "secret-token" not in out
+    assert "private document" not in out
