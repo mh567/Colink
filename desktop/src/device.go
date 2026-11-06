@@ -23,12 +23,14 @@ import (
 )
 
 type deviceMessage struct {
-	Type     string `json:"type"`
-	DeviceID string `json:"device_id,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Online   bool   `json:"online"`
-	Code     string `json:"code,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Type         string `json:"type"`
+	DeviceID     string `json:"device_id,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Online       bool   `json:"online"`
+	Code         string `json:"code,omitempty"`
+	Message      string `json:"message,omitempty"`
+	SessionToken string `json:"session_token,omitempty"`
+	UserID       int    `json:"-"`
 }
 
 type deviceServerError struct{ message deviceMessage }
@@ -89,6 +91,7 @@ type deviceClient struct {
 	cancel     context.CancelFunc
 	renewals   chan string
 	emit       func(deviceMessage)
+	docx       docxSession
 }
 
 func (c *deviceClient) setBase(raw string) error {
@@ -99,6 +102,7 @@ func (c *deviceClient) setBase(raw string) error {
 		c.cancel()
 		c.cancel = nil
 	}
+	c.docx = docxSession{}
 	c.generation++
 	c.renewals = nil
 	c.base = base
@@ -112,6 +116,7 @@ func (c *deviceClient) disconnect() {
 		c.cancel()
 		c.cancel = nil
 	}
+	c.docx = docxSession{}
 	c.generation++
 	c.renewals = nil
 	if c.emit != nil {
@@ -122,8 +127,17 @@ func (c *deviceClient) disconnect() {
 func (c *deviceClient) publish(generation uint64, message deviceMessage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.generation == generation && c.emit != nil {
-		c.emit(message)
+	if c.generation == generation {
+		if message.Type == "status" && message.Status == "approved" && message.Online {
+			c.docx.DeviceID, c.docx.Secret, c.docx.UserID = message.DeviceID, message.SessionToken, message.UserID
+		} else {
+			c.docx.Secret = ""
+		}
+		message.SessionToken = ""
+		message.UserID = 0
+		if c.emit != nil {
+			c.emit(message)
+		}
 	}
 }
 
@@ -138,6 +152,7 @@ func (c *deviceClient) refresh(token string) {
 	default:
 	}
 	c.renewals <- token
+	c.docx.Token = token
 }
 
 func (c *deviceClient) connect(token, apiPath string) {
@@ -145,10 +160,12 @@ func (c *deviceClient) connect(token, apiPath string) {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	c.docx = docxSession{}
 	c.generation++
 	generation, base := c.generation, c.base
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
+	c.docx = docxSession{Base: base, APIPath: apiPath, Token: token, Generation: generation, Context: ctx}
 	renewals := make(chan string, 1)
 	c.renewals = renewals
 	c.mu.Unlock()
@@ -160,6 +177,7 @@ func (c *deviceClient) connect(token, apiPath string) {
 			if c.generation == generation {
 				c.cancel = nil
 				c.renewals = nil
+				c.docx = docxSession{}
 			}
 		}()
 		var err error
@@ -288,9 +306,31 @@ func runDeviceSession(ctx context.Context, base, token, apiPath string, key ed25
 		if message.Type != "status" || message.DeviceID == "" || (message.Status != "pending" && message.Status != "approved" && message.Status != "revoked") {
 			return errors.New("invalid device status response")
 		}
+		message.UserID = userID
 		emit(message)
 		if message.Status == "revoked" {
 			return nil
 		}
 	}
+}
+
+func (c *deviceClient) docxSession() (docxSession, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.docx.Secret == "" || c.docx.Context == nil || c.docx.Context.Err() != nil {
+		return docxSession{}, errors.New("请先接入已获批准的本人设备")
+	}
+	snapshot := c.docx
+	snapshot.Refresh = c.docxSession
+	return snapshot, nil
+}
+func (c *deviceClient) currentDOCX(s docxSession) error {
+	current, err := c.docxSession()
+	if err != nil {
+		return err
+	}
+	if current.Generation != s.Generation || current.scope() != s.scope() || current.Secret != s.Secret {
+		return errors.New("设备会话已改变，任务已停止")
+	}
+	return nil
 }

@@ -2,7 +2,8 @@
 
 A permission is a module key (e.g. ``"browser"``, ``"users"``). Possessing a
 key grants access to that module's management page and write/configure actions.
-Read access and agent use in chat are never gated. ``admin`` bypasses all.
+Read access and agent use in chat are never gated. Local execution permissions
+always require explicit grants; ``admin`` bypasses the other module checks.
 
 Categories mirror dashboard nav groups: ``settings`` / ``control`` / ``admin``.
 ``nav`` is the ungrouped pages that can be granted (chat stays ungated).
@@ -147,6 +148,11 @@ PERMISSIONS: dict[str, PermissionDef] = {
     "browser": _p("browser", "control", "工作台/浏览器", "Workbench / Browser"),
     "desktop": _p("desktop", "control", "远程桌面", "Remote Desktop"),
     "mobile": _p("mobile", "control", "远程手机", "Remote Phone"),
+    "local_docx": _p("local_docx", "control", "本机 DOCX 任务", "Local DOCX tasks"),
+    "local_files_read": _p(
+        "local_files_read", "control", "读取本机授权文件", "Read authorized local files"
+    ),
+    "local_files_create": _p("local_files_create", "control", "新建本机文件", "Create local files"),
     # --- admin: grouped by page, chip = tab title ---
     "users": _p(
         "users",
@@ -444,6 +450,9 @@ PERMISSIONS: dict[str, PermissionDef] = {
 }
 
 ALL_PERMISSION_KEYS: set[str] = set(PERMISSIONS)
+LOCAL_EXECUTION_PERMISSIONS: frozenset[str] = frozenset(
+    {"local_docx", "local_files_read", "local_files_create"}
+)
 
 ASSIGNABLE_PERMISSION_KEYS: set[str] = {key for key, perm in PERMISSIONS.items() if perm.assignable}
 
@@ -504,11 +513,13 @@ def expand_permission_grants(keys: list[str]) -> list[str]:
 def user_has_permission(user: PermissionUser, key: str) -> bool:
     """Return True if ``user`` may access the module ``key``.
 
-    Unknown keys are denied. ``admin`` bypasses everything. A retired umbrella
+    Unknown keys are denied. Local execution requires explicit grants. A retired umbrella
     still grants its tabs, and any tab satisfies the umbrella.
     """
     if key not in PERMISSIONS:
         return False
+    if key in LOCAL_EXECUTION_PERMISSIONS:
+        return key in (user.permissions or [])
     if user.is_admin:
         return True
     held = set(user.permissions or [])
@@ -534,7 +545,10 @@ def validate_permission_keys(keys: list[str]) -> list[str]:
 
 
 def effective_permissions(user: PermissionUser) -> list[str]:
-    """Permissions to expose on ``/auth/me`` / login (admin gets the picker catalog)."""
+    """Expose actual grants; management roles do not imply local execution."""
     if user.is_admin:
-        return sorted(ASSIGNABLE_PERMISSION_KEYS)
+        return sorted(
+            (ASSIGNABLE_PERMISSION_KEYS - LOCAL_EXECUTION_PERMISSIONS)
+            | (set(user.permissions or []) & LOCAL_EXECUTION_PERMISSIONS)
+        )
     return expand_permission_grants(list(user.permissions or []))

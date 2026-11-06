@@ -39,6 +39,7 @@ type App struct {
 	trayClickTimer *time.Timer
 	drops          dropServer
 	device         *deviceClient
+	docx           *localDOCX
 	ownsListenPort bool
 }
 
@@ -368,6 +369,7 @@ func main() {
 		sleep: &sleepGuard{},
 	}
 	api.device = &deviceClient{emit: api.emitDeviceStatus}
+	api.docx = newLocalDOCX(octopHome())
 
 	app := application.New(application.Options{
 		Name:        "Octop",
@@ -392,6 +394,7 @@ func main() {
 	attachOpenURLEventListener(app, api.OpenExternal)
 	attachFileDropEventListener(app, api)
 	appendWailsEventListener(app, &deviceEventListener{client: api.device})
+	appendWailsEventListener(app, &docxEventListener{app: api})
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 		applyAppIcon(app)
 	})

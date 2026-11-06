@@ -300,7 +300,8 @@
     "MFA_LAST_FACTOR": "无法移除最后一个二次验证方式。",
     "WEBAUTHN_CONFIG_INVALID": "还不能使用通行密钥。请管理员在「应用设置 → 通行密钥」填写本站域名和完整网址。如果已经填过，请改用登记的那个网址打开。用 localhost 打开则不用填。",
     "WEBAUTHN_INVALID_DOMAIN": "通行密钥需要有效域名。请通过 http://localhost 打开（不要用 127.0.0.1 等 IP 地址）。",
-    "WEBAUTHN_LOGIN_DISABLED": "登录页的通行密钥登录已关闭。管理员可在「应用设置 → 通行密钥」中开启。"
+    "WEBAUTHN_LOGIN_DISABLED": "登录页的通行密钥登录已关闭。管理员可在「应用设置 → 通行密钥」中开启。",
+    "LOCAL_DOCX_GENERATION_FAILED": "文档生成失败，未写入文件。请检查已启用的内网 OpenAI 兼容模型、关闭 API 回退，并核对网络与模型输出。"
   },
   "nav": {
     "chat": "对话",
@@ -7422,5 +7423,30 @@
     "nameRequired": "请先填写名称",
     "failed": "润色失败，请稍后重试",
     "emptyResult": "模型未返回结果"
+  },
+  "localDocx": {
+    "title": "本机 DOCX 任务",
+    "privacy": "原始文件保留在本机；所选文档的正文经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
+    "grantRead": "选择只读目录",
+    "grantWrite": "选择读写目录",
+    "refresh": "刷新本机记录",
+    "rw": "读写",
+    "ro": "只读",
+    "sourceGrant": "资料目录",
+    "outputGrant": "成果目录",
+    "select": "请选择授权目录",
+    "source": "源文件名",
+    "output": "新文件名",
+    "sourceExample": "例如：会议记录.docx",
+    "outputExample": "例如：会议纪要.docx",
+    "instruction": "任务描述",
+    "instructionExample": "整理所选文档，列出结论、待办和负责人。",
+    "run": "生成 DOCX",
+    "history": "本机任务记录",
+    "running": "处理中",
+    "completed": "已完成",
+    "failed": "失败",
+    "interrupted": "已中断",
+    "limits": "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。"
   }
 }

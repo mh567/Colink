@@ -33,7 +33,9 @@ def test_catalog_has_no_empty_keys_and_no_deferred_dead_keys() -> None:
 def test_user_has_permission_admin_bypass() -> None:
     admin = _FakeUser(is_admin=True, permissions=[])
     for key in PERMISSIONS:
-        assert user_has_permission(admin, key) is True
+        assert user_has_permission(admin, key) is (
+            key not in {"local_docx", "local_files_read", "local_files_create"}
+        )
 
 
 def test_user_has_permission_normal_hit_and_miss() -> None:
@@ -89,6 +91,9 @@ def test_categories_match_nav_groups() -> None:
         "browser",
         "desktop",
         "mobile",
+        "local_docx",
+        "local_files_read",
+        "local_files_create",
     }
     assert PERMISSIONS["envs"].page == "advanced"
     assert PERMISSIONS["voice"].page == "models"
@@ -117,7 +122,13 @@ def test_validate_permission_keys_rejects_unknown() -> None:
 
 def test_effective_permissions_admin_gets_catalog() -> None:
     admin = _FakeUser(is_admin=True, permissions=[])
-    assert effective_permissions(admin) == sorted(ASSIGNABLE_PERMISSION_KEYS)
+    assert effective_permissions(admin) == sorted(
+        ASSIGNABLE_PERMISSION_KEYS - {"local_docx", "local_files_read", "local_files_create"}
+    )
+    admin.permissions = ["local_docx", "local_files_read"]
+    assert user_has_permission(admin, "local_docx") is True
+    assert "local_files_read" in effective_permissions(admin)
+    assert "local_files_create" not in effective_permissions(admin)
 
 
 def test_legacy_umbrella_expands_to_tabs() -> None:

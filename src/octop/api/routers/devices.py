@@ -7,7 +7,7 @@ import secrets
 from dataclasses import asdict
 from typing import Literal
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Header, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from octop.api.deps import current_user, get_server, require_admin, resolve_user_from_token
@@ -56,6 +56,72 @@ class DeviceHeartbeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["heartbeat"]
     access_token: str | None = Field(default=None, min_length=1, max_length=8192)
+
+
+class DocxAuthorizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["read", "create"]
+
+
+class DocxAuthorization(BaseModel):
+    allowed: Literal[True] = True
+
+
+class DocxGenerateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instruction: str = Field(min_length=1, max_length=8000, description="Employee's document task.")
+    text: str = Field(
+        max_length=60000,
+        description="Necessary text extracted on the native client; no original file.",
+    )
+
+
+class DocxGeneratedText(BaseModel):
+    text: str = Field(min_length=1, max_length=60000)
+
+
+@router.post(
+    "/{device_id}/docx/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize a local DOCX operation on the current native device",
+    description="Requires an approved live native session and explicit feature/action grants. "
+    "Administrators have no implicit execution rights. The client also checks directory grants.",
+)
+async def authorize_docx(
+    device_id: str,
+    body: DocxAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    server.device_manager.authorize_docx(user, device_id, x_colink_device_session, body.action)
+    return DocxAuthorization()
+
+
+@router.post(
+    "/{device_id}/docx/generate",
+    response_model=DocxGeneratedText,
+    summary="Generate document text for an authorized native DOCX task",
+    description="Uses the explicitly configured active enterprise model without tools. "
+    "Requires read and create rights, checked again after generation. Original files stay local.",
+)
+async def generate_docx(
+    device_id: str,
+    body: DocxGenerateBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxGeneratedText:
+    assert server.app_runtime is not None
+    text = await server.device_manager.generate_docx_text(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        text=body.text,
+        models=server.app_runtime.agent_registry.host_models,
+    )
+    return DocxGeneratedText(text=text)
 
 
 def _view(manager: DeviceManager, row: DeviceRow) -> DeviceView:
@@ -154,6 +220,11 @@ async def connect_device(ws: WebSocket) -> None:
                     "device_id": row.device_id,
                     "status": row.status,
                     "online": manager.is_online(row),
+                    **(
+                        {"session_token": connection.session_token}
+                        if row.status == "approved"
+                        else {}
+                    ),
                 }
             )
             heartbeat = DeviceHeartbeat.model_validate_json(await _receive(ws))

@@ -1,3 +1,4 @@
+import LocalDocxPanel from "./LocalDocxPanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -300,6 +301,15 @@ export default function DevicesPage() {
             )}
           />
         )}
+        {native.available &&
+          native.event?.type === "status" &&
+          native.event.status === "approved" &&
+          native.event.online && (
+            <LocalDocxPanel
+              key={native.event.device_id}
+              deviceId={native.event.device_id}
+            />
+          )}
         {loadError != null && (
           <Alert
             type="error"
