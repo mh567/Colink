@@ -1,0 +1,178 @@
+"""Employee native device enrollment and administrator trust management."""
+
+from __future__ import annotations
+
+import asyncio
+import secrets
+from dataclasses import asdict
+from typing import Literal
+
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from octop.api.deps import current_user, get_server, require_admin, resolve_user_from_token
+from octop.infra.control.devices import (
+    DEVICE_TIMEOUT_SECONDS,
+    DeviceConnection,
+    DeviceManager,
+    DeviceRow,
+    DeviceStatus,
+)
+from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.server import OctopServer
+from octop.infra.users.identity import User
+
+router = APIRouter()
+
+
+class DeviceView(BaseModel):
+    device_id: str
+    owner_user_id: int
+    owner_username: str
+    name: str
+    platform: str
+    status: DeviceStatus
+    online: bool = Field(description="True only for an approved, live native connection.")
+    created_at: int
+    last_seen: int | None
+
+
+class DeviceHello(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    type: Literal["hello"]
+    access_token: str = Field(min_length=1, max_length=8192)
+    public_key: str = Field(min_length=44, max_length=44)
+    name: str = Field(min_length=1, max_length=128)
+    platform: str = Field(min_length=1, max_length=64)
+
+
+class DeviceProof(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["proof"]
+    signature: str = Field(min_length=88, max_length=88)
+
+
+class DeviceHeartbeat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["heartbeat"]
+    access_token: str | None = Field(default=None, min_length=1, max_length=8192)
+
+
+def _view(manager: DeviceManager, row: DeviceRow) -> DeviceView:
+    fields = asdict(row)
+    fields.pop("public_key")
+    return DeviceView(**fields, online=manager.is_online(row))
+
+
+@router.get("", response_model=list[DeviceView], summary="List the signed-in employee's devices")
+async def list_devices(
+    user: User = Depends(current_user), server: OctopServer = Depends(get_server)
+) -> list[DeviceView]:
+    manager = server.device_manager
+    return [_view(manager, row) for row in manager.list(user)]
+
+
+@router.get(
+    "/manage",
+    response_model=list[DeviceView],
+    summary="List device enrollment requests and trust decisions",
+    description="Administrators may manage trust; this grants no connection or execution rights.",
+)
+async def manage_devices(
+    user: User = Depends(require_admin()), server: OctopServer = Depends(get_server)
+) -> list[DeviceView]:
+    manager = server.device_manager
+    return [_view(manager, row) for row in manager.list(user, managed=True)]
+
+
+@router.post(
+    "/{device_id}/approve", response_model=DeviceView, summary="Approve an employee's device"
+)
+async def approve_device(
+    device_id: str,
+    user: User = Depends(require_admin()),
+    server: OctopServer = Depends(get_server),
+) -> DeviceView:
+    manager = server.device_manager
+    return _view(manager, manager.set_status(user, device_id, "approved"))
+
+
+@router.post(
+    "/{device_id}/revoke",
+    response_model=DeviceView,
+    summary="Revoke an employee's device",
+    description="Immediately invalidates the live device session; reconnecting requires approval.",
+)
+async def revoke_device(
+    device_id: str,
+    user: User = Depends(require_admin()),
+    server: OctopServer = Depends(get_server),
+) -> DeviceView:
+    manager = server.device_manager
+    return _view(manager, manager.set_status(user, device_id, "revoked"))
+
+
+async def _receive(ws: WebSocket) -> str:
+    frame = await asyncio.wait_for(ws.receive(), timeout=DEVICE_TIMEOUT_SECONDS)
+    if frame["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect(frame.get("code", 1000))
+    raw = frame.get("text")
+    if not isinstance(raw, str) or len(raw) > 16384:
+        raise OctopError(ErrorCode.AUTH_FAILED, "invalid device text frame")
+    return raw
+
+
+@router.websocket("/connect")
+async def connect_device(ws: WebSocket) -> None:
+    await ws.accept()
+    connection: DeviceConnection | None = None
+    manager: DeviceManager | None = None
+    locale = "en"
+    try:
+        server: OctopServer = ws.app.state.octop_server
+        if not server.database_bound:
+            raise OctopError(ErrorCode.SETUP_REQUIRED, "setup required")
+        hello = DeviceHello.model_validate_json(await _receive(ws))
+        user = resolve_user_from_token(server, hello.access_token)
+        locale = user.locale
+        message = f"colink-device-v1:{user.id}:{secrets.token_urlsafe(32)}"
+        await ws.send_json({"type": "challenge", "message": message})
+        proof = DeviceProof.model_validate_json(await _receive(ws))
+        manager = server.device_manager
+        manager.verify_proof(hello.public_key, message, proof.signature)
+        # Password reset or disable during the challenge must invalidate this handshake.
+        user = resolve_user_from_token(server, hello.access_token)
+        connection = manager.connect(
+            user, public_key=hello.public_key, name=hello.name, platform=hello.platform
+        )
+        access_token = hello.access_token
+        while True:
+            row = manager.heartbeat(connection)
+            await ws.send_json(
+                {
+                    "type": "status",
+                    "device_id": row.device_id,
+                    "status": row.status,
+                    "online": manager.is_online(row),
+                }
+            )
+            heartbeat = DeviceHeartbeat.model_validate_json(await _receive(ws))
+            access_token = heartbeat.access_token or access_token
+            user = resolve_user_from_token(server, access_token)
+            if user.id != connection.user_id:
+                raise OctopError(ErrorCode.FORBIDDEN, "device token belongs to another employee")
+            if manager is not server.device_manager:
+                raise OctopError(ErrorCode.FORBIDDEN, "device database changed")
+    except WebSocketDisconnect:
+        pass
+    except (OctopError, ValidationError, TimeoutError) as exc:
+        err = (
+            exc
+            if isinstance(exc, OctopError)
+            else OctopError(ErrorCode.AUTH_FAILED, "invalid device message")
+        )
+        await ws.send_json({"type": "error", **err.to_envelope(locale=locale)["error"]})
+        await ws.close(code=4403 if err.status == 403 else 4401)
+    finally:
+        if connection is not None and manager is not None:
+            manager.disconnect(connection)

@@ -12,7 +12,8 @@ vi.mock("../api/modules/auth", () => ({
   },
 }));
 
-vi.mock("../api/request", () => ({
+vi.mock("../api/request", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/request")>()),
   getAuthToken: vi.fn(() => null),
   clearAuthToken: vi.fn(),
 }));

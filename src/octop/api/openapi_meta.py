@@ -66,6 +66,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {"name": "health", "description": "Liveness probe for load balancers and monitoring."},
     {"name": "users", "description": "Admin user management, roles, and user groups."},
     {
+        "name": "devices",
+        "description": "Employee-owned native devices and administrator trust decisions. Management does not grant possession or execution rights.",
+    },
+    {
         "name": "agents",
         "description": "Create and configure AI agents; start, stop, and inspect runtime status.",
     },

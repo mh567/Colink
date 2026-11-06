@@ -6,6 +6,7 @@ import { authApi, type OctopUser } from "../api/modules/auth";
 import { applyUserLocale } from "../utils/locale";
 import { isNetworkFetchError } from "../utils/networkError";
 import { CurrentUserProvider } from "../hooks/useCurrentUser";
+import { DesktopDeviceProvider } from "../context/DesktopDeviceContext";
 import BootOfflinePanel from "./BootOfflinePanel";
 
 interface AuthGuardProps {
@@ -144,7 +145,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   return (
     <CurrentUserProvider user={user} setUser={setUser}>
-      {children}
+      <DesktopDeviceProvider>{children}</DesktopDeviceProvider>
     </CurrentUserProvider>
   );
 }

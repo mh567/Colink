@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -8,6 +8,8 @@ import { EXPAND_CHAT_RAIL_EVENT } from "../pages/Chat/components/ChatSidebarPane
 import { useChatSidebarOpen } from "../pages/Chat/hooks/useChatSidebarState";
 import { LAYOUT_MODE_KEY } from "./layoutModeStorage";
 import Sidebar from "./Sidebar";
+import { CurrentUserProvider } from "../hooks/useCurrentUser";
+import { preferencesApi } from "../api/modules/preferences";
 
 vi.mock("../components/AvatarDropdown", () => ({
   default: () => null,
@@ -56,6 +58,45 @@ describe("classic chat rail toggle", () => {
     const hook = renderHookOpen();
     act(() => hook.setOpen(false));
     hook.unmount();
+  });
+
+  it("opens devices from normal navigation for a user with no module permissions and an older layout", async () => {
+    const prefs = vi.spyOn(preferencesApi, "get").mockResolvedValueOnce({
+      locale: "zh",
+      remote_browser_bookmarks: [],
+      preferred_model: null,
+      model_reasoning: {},
+      sidebar_nav: { groups: [], items: [{ key: "chat" }] },
+    });
+    render(
+      <CurrentUserProvider
+        user={{
+          id: 2,
+          username: "ada",
+          role: "user",
+          display_name: "Ada",
+          locale: "zh",
+          permissions: [],
+        }}
+        setUser={vi.fn()}
+      >
+        <MemoryRouter initialEntries={["/chat"]}>
+          <LocationProbe />
+          <Sidebar
+            selectedKey="chat"
+            collapsed={false}
+            onToggle={() => undefined}
+            isMobile={false}
+          />
+        </MemoryRouter>
+      </CurrentUserProvider>,
+    );
+    await waitFor(() => expect(prefs).toHaveBeenCalled());
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "nav.devices" }));
+    expect(screen.getByTestId("path")).toHaveTextContent("/devices");
+    prefs.mockRestore();
   });
 
   it("stays beside Chat and collapses an open history rail", async () => {

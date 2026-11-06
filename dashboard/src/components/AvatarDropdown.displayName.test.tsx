@@ -1,13 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { language: "zh" },
-  }),
-}));
+vi.mock("react-i18next", () => {
+  const t = (key: string) => key;
+  return { useTranslation: () => ({ t, i18n: { language: "zh" } }) };
+});
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => vi.fn(),
@@ -60,6 +58,7 @@ vi.mock("../pages/Admin/Users/ProfileAvatar", () => ({
 }));
 
 import AvatarDropdown from "./AvatarDropdown";
+import { authApi } from "../api/modules/auth";
 
 const user = {
   id: 1,
@@ -68,6 +67,10 @@ const user = {
   display_name: "Ada",
   locale: "zh",
 };
+
+afterEach(() => {
+  delete (window as Window & { _wails?: unknown })._wails;
+});
 
 async function openSettings() {
   const view = userEvent.setup();
@@ -78,6 +81,22 @@ async function openSettings() {
 }
 
 describe("AvatarDropdown personal settings", () => {
+  it("disconnects the native device immediately when the user logs out", async () => {
+    const invoke = vi.fn();
+    Object.defineProperty(window, "_wails", {
+      configurable: true,
+      value: { invoke },
+    });
+    vi.mocked(authApi.logout).mockReturnValueOnce(new Promise(() => undefined));
+    const view = userEvent.setup();
+    render(<AvatarDropdown user={user} placement="sidebar" />);
+    await view.click(screen.getByRole("button", { name: /Ada/ }));
+    await view.click(screen.getByRole("button", { name: "auth.logout" }));
+    expect(invoke).toHaveBeenCalledWith(
+      "wails:event:emit:desktop:device-disconnect",
+    );
+  });
+
   it("puts save and cancel in the drawer footer", async () => {
     await openSettings();
 

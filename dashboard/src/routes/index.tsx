@@ -13,6 +13,7 @@ const PersonalizationPage = lazy(
 );
 const ACPPage = lazy(() => import("../pages/Agent/ACP"));
 const TokenUsagePage = lazy(() => import("../pages/Control/TokenUsage"));
+const DevicesPage = lazy(() => import("../pages/Devices"));
 
 // Lazy-loaded pages — Control
 const RemoteDesktopPage = lazy(() => import("../pages/Control/RemoteDesktop"));
@@ -48,6 +49,7 @@ export interface RouteConfig {
 
 export const pathToKey: Record<string, string> = {
   "/chat": "chat",
+  "/devices": "devices",
   // Common
   "/experts": "experts",
   "/tasks": "tasks",
@@ -166,6 +168,7 @@ export const routeConfigs: RouteConfig[] = [
     element: <RedirectPreserveSearch to="/personalization/skills" />,
   },
   { path: "/token-usage", element: <TokenUsagePage /> },
+  { path: "/devices", element: <DevicesPage /> },
 
   // Control (RequirePermission via pathPermissionKeys in MainLayout)
   { path: "/acp", element: <ACPPage /> },

@@ -54,13 +54,6 @@ vi.mock("../hooks/useChatAttachments", () => ({
   }),
 }));
 
-vi.mock("../hooks/chatStore", () => ({
-  consumePendingPrefillAttachments: () => [],
-  readInputDraft: (agentId: string) =>
-    agentId === "agent-2" ? "target expert draft" : "",
-  writeInputDraft: vi.fn(),
-}));
-
 vi.mock("./ChatInputPreviewBar", () => ({
   default: () => null,
 }));
@@ -131,9 +124,11 @@ vi.mock("../hooks/useSlashMentionInput", () => ({
 }));
 
 import ChatInput, { type ChatInputHandle } from "./ChatInput";
+import { writeInputDraft } from "../hooks/chatStore";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
 });
 
 describe("ChatInput prefill clear-on-send", () => {
@@ -250,6 +245,7 @@ describe("ChatInput prefill clear-on-send", () => {
   });
 
   it("restores the target agent draft instead of carrying stale prefill", () => {
+    writeInputDraft("agent-2", null, "target expert draft");
     const props = {
       onSend: vi.fn(),
       onCancel: vi.fn(),

@@ -114,7 +114,10 @@ export function editorFromCatalog(
     }
   }
   for (const key of defaultKeyOrder(base)) {
-    if (!seen.has(key)) hidden.push(key);
+    if (!seen.has(key)) {
+      if (key === "devices") ungrouped.push(key);
+      else hidden.push(key);
+    }
   }
   return { groups, ungrouped, itemsByGroup, hidden };
 }

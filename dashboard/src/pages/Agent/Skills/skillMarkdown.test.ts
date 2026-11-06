@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildSkillMarkdown } from "./components/SkillDrawer";
 import {
   isSkillManifestPath,
@@ -6,6 +6,13 @@ import {
   skillDirectoryPath,
   skillManifestPath,
 } from "./skillMarkdown";
+
+// Skill text helpers do not render PDFs; jsdom lacks PDF.js's DOMMatrix.
+vi.mock("react-pdf", () => ({
+  Document: () => null,
+  Page: () => null,
+  pdfjs: { GlobalWorkerOptions: {} },
+}));
 
 describe("parseSkillPreviewFromMarkdown", () => {
   it("reads name, description, and octop emoji from SKILL.md", () => {
