@@ -301,7 +301,8 @@
     "WEBAUTHN_CONFIG_INVALID": "Passkeys are not available on this address yet. An administrator needs to enter this site’s domain and full URL under App settings → Passkeys. If that is already saved, open the exact URL that was registered. localhost does not need this setup.",
     "WEBAUTHN_INVALID_DOMAIN": "Passkeys need a hostname. Open Octop via http://localhost (not an IP address such as 127.0.0.1).",
     "WEBAUTHN_LOGIN_DISABLED": "Passkey sign-in on the login page is turned off. An administrator can enable it under App settings → Passkeys.",
-    "LOCAL_DOCX_GENERATION_FAILED": "Document generation failed; no file was written. Check the enabled intranet OpenAI-compatible model, disable API fallback, and verify the network and model output."
+    "LOCAL_DOCX_GENERATION_FAILED": "Document generation failed; no file was written. Check the enabled intranet OpenAI-compatible model, disable API fallback, and verify the network and model output.",
+    "LOCAL_XLSX_GENERATION_FAILED": "Spreadsheet generation failed; no file was written. Check the intranet model connection and output, then retry."
   },
   "nav": {
     "chat": "Conversation",
@@ -7425,7 +7426,7 @@
     "emptyResult": "The model returned an empty result"
   },
   "localDocx": {
-    "title": "Local DOCX task",
+    "title": "Local document tasks",
     "privacy": "Original files stay on this computer. Text from the selected document is sent through the server to the configured model. Results are saved in the authorized folder without overwriting existing files.",
     "grantRead": "Choose read-only folder",
     "grantWrite": "Choose read/write folder",
@@ -7447,6 +7448,15 @@
     "completed": "Completed",
     "failed": "Failed",
     "interrupted": "Interrupted",
-    "limits": "Supports DOCX files directly inside authorized folders (no subfolders), up to 20 MB and 60,000 text characters. Generates editable body text without preserving the original layout."
+    "limits": "Supports DOCX files directly inside authorized folders (no subfolders), up to 20 MB and 60,000 text characters. Generates editable body text without preserving the original layout.",
+    "format": "File type"
+  },
+  "localXlsx": {
+    "privacy": "Original files stay on this computer. Cell data is sent through the server to the configured model. Results are saved in an authorized directory without overwriting files.",
+    "limits": "XLSX files directly in authorized directories: up to 20 MB, 10 sheets, 10,000 cells and 60,000 extracted characters. Creates new data sheets without preserving styles, charts or macros. Formulas support same-sheet arithmetic and SUM, AVERAGE, MIN, MAX, COUNT. Unsupported or failed calculations stop generation.",
+    "sourceExample": "Example: ledger.xlsx",
+    "outputExample": "Example: summary.xlsx",
+    "instructionExample": "Summarize amounts by department, retain details and add total formulas.",
+    "run": "Generate XLSX"
   }
 }

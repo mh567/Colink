@@ -27,6 +27,7 @@ const docxFileLimit = 20 * 1024 * 1024
 // Native sessions and directory handles never enter the dashboard or the model.
 type docxSession struct {
 	Base, APIPath, DeviceID, Token, Secret string
+	Format                                 string
 	UserID                                 int
 	Generation                             uint64
 	Context                                context.Context
@@ -36,6 +37,7 @@ type docxSession struct {
 func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s.UserID, s.DeviceID) }
 
 type docxRequest struct {
+	Format      string `json:"format,omitempty"`
 	Action      string `json:"action"`
 	Mode        string `json:"mode,omitempty"`
 	SourceGrant string `json:"source_grant,omitempty"`
@@ -51,6 +53,7 @@ type directoryGrant struct {
 	Identity string `json:"identity"`
 }
 type docxTask struct {
+	Format      string `json:"format,omitempty"`
 	ID          string `json:"id"`
 	Instruction string `json:"instruction"`
 	Source      string `json:"source"`
@@ -386,7 +389,14 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	if err != nil || endpoint.IsAbs() || endpoint.Host != "" || endpoint.RawQuery != "" || endpoint.ForceQuery || !strings.HasPrefix(endpoint.Path, "/") || strings.HasPrefix(endpoint.Path, "//") || !strings.HasSuffix(endpoint.Path, "/api/devices/connect") {
 		return errors.New("无效设备任务接口地址")
 	}
-	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/docx/" + action
+	format := s.Format
+	if format == "" {
+		format = "docx"
+	}
+	if format != "docx" && format != "xlsx" {
+		return errors.New("不支持的文件类型")
+	}
+	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + format + "/" + action
 	u.RawPath = ""
 	u.RawQuery = ""
 	data, err := json.Marshal(body)
@@ -459,11 +469,23 @@ func (w *localDOCX) record(s docxSession, task docxTask) error {
 	return w.save(states)
 }
 func (w *localDOCX) run(s docxSession, request docxRequest, current func() error) (task docxTask, err error) {
-	task = docxTask{ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
-	if err = docxFilename(request.Source); err != nil {
+	format := request.Format
+	if format == "" {
+		format = "docx"
+	}
+	if format != "docx" && format != "xlsx" {
+		return task, errors.New("不支持的文件类型")
+	}
+	s.Format = format
+	filename := docxFilename
+	if format == "xlsx" {
+		filename = xlsxFilename
+	}
+	task = docxTask{Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
+	if err = filename(request.Source); err != nil {
 		return task, err
 	}
-	if err = docxFilename(request.Output); err != nil {
+	if err = filename(request.Output); err != nil {
 		return task, err
 	}
 	if strings.TrimSpace(request.Instruction) == "" || utf8.RuneCountInString(request.Instruction) > 8000 {
@@ -525,7 +547,11 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if !actual.Mode().IsRegular() || !os.SameFile(info, actual) || links != 1 {
 		return task, errors.New("文件已改变或存在硬链接，拒绝读取")
 	}
-	text, err := readDOCX(f, actual.Size())
+	read := readDOCX
+	if format == "xlsx" {
+		read = readXLSX
+	}
+	text, err := read(f, actual.Size())
 	if err != nil {
 		return task, err
 	}
@@ -535,7 +561,11 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = docxCall(s, "generate", map[string]string{"instruction": request.Instruction, "text": text}, &generated); err != nil {
 		return task, err
 	}
-	data, err := makeDOCX(generated.Text)
+	makeFile := makeDOCX
+	if format == "xlsx" {
+		makeFile = makeXLSX
+	}
+	data, err := makeFile(generated.Text)
 	if err != nil {
 		return task, err
 	}
@@ -544,6 +574,12 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	if err = current(); err != nil {
 		return task, err
+	}
+	if format == "xlsx" {
+		output, err = w.openGrant(s, request.OutputGrant, true)
+		if err != nil {
+			return task, err
+		}
 	}
 	target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

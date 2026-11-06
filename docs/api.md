@@ -167,6 +167,21 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 DOCX 客户端使用 Go 标准库 ZIP/XML，不需运行时下载或额外 Office 依赖；生成基础可编辑正文，不承诺原始复杂版式保真。真实企业模型联测和目标操作系统的断网安装、文件打开编辑验收按开发者确认留到最终验收，受控模型测试不能替代这些结果。
 
+### 本机 XLSX 任务
+
+沿用同一桌面任务面板、目录授权和本机记录，文件类型选择 XLSX。管理员须显式授予 `local_xlsx`、`local_files_read` 和 `local_files_create`；DOCX 权限不隐含 XLSX 权限。
+
+| 方法 | 路径 | 请求与结果 |
+| --- | --- | --- |
+| `POST` | `/devices/{device_id}/xlsx/authorize` | 原生会话头和员工令牌；`{action:"read"或"create"}`，返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/xlsx/generate` | 同上；`{instruction,text}`，`text` 是本机提取的工作表 JSON；返回 `{text}`，内含模型生成的 JSON，不代表文件已经成功生成 |
+
+数据结构为 `{"sheets":[{"name":"汇总","rows":[["金额",12.5],["总计",{"formula":"SUM(B1:B1)"}]]}]}`。输入另附 `display_rows` 保存日期、百分比和零填充编号的显示含义；原始数值仍在 `rows` 中供计算。日期成果使用可读文本，不保留 Excel 日期类型和原格式。模型仅接收数据，不接收原始 XLSX 或目录凭据；客户端验证结构并计算公式后才新建文件。字符串始终为文本，公式须使用显式对象。失败显示错误，不返回虚假完成状态。
+
+范围：授权目录直属 XLSX，原件与成果不超过 20 MB，解压数据不超过 40 MB；最多 10 张表、合计 10,000 单元格（含表内空白范围），输入与输出 JSON 各不超过 60,000 字符。新建数据表，不保留原样式、图表或宏。公式支持同表有界单元格引用、算术及 SUM/AVERAGE/MIN/MAX/COUNT；拒绝外部链接、跨表引用、循环、错误结果、总引用超过 100,000 或依赖超过 100 层。已有产物不会覆盖。
+
+本机任务记录包含文件类型、来源、产物完整路径、状态与失败原因。重启后仍显示记录；运行中断不标为完成。真实模型、目标平台打包运行和 Office 实机编辑须单独验收。
+
 ## Agents
 
 | Method | Path | Auth | Notes |

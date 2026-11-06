@@ -103,3 +103,82 @@ it("ignores another device and displays native rejection", async () => {
   });
   expect(screen.getByText("目录只读，拒绝写入")).toBeInTheDocument();
 });
+
+it.each(["completed", "failed"])(
+  "submits XLSX tasks and displays native %s",
+  async (status) => {
+    const invoke = vi.fn();
+    (window as Window & { _wails?: unknown })._wails = { invoke };
+    render(<LocalDocxPanel deviceId="mine" />);
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: {
+            device_id: "mine",
+            busy: false,
+            grants: [
+              { id: "ro", path: "/资料", mode: "ro" },
+              { id: "rw", path: "/成果", mode: "rw" },
+            ],
+            tasks: [],
+          },
+        }),
+      );
+    });
+    expect(screen.getByText(/原始文件保留在本机/)).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("文件类型"), "xlsx");
+    await user.selectOptions(screen.getByLabelText("资料目录"), "ro");
+    await user.selectOptions(screen.getByLabelText("成果目录"), "rw");
+    expect(
+      screen.getByLabelText("成果目录").querySelector('option[value="ro"]'),
+    ).toBeNull();
+    await user.type(screen.getByLabelText("源文件名"), "会议.xlsx");
+    await user.type(screen.getByLabelText("新文件名"), "纪要.xlsx");
+    await user.type(screen.getByLabelText("任务描述"), "整理会议待办");
+    await user.click(screen.getByRole("button", { name: "生成 XLSX" }));
+    const command = JSON.parse(
+      decodeURIComponent(
+        invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+      ),
+    );
+    expect(command).toEqual({
+      action: "run",
+      format: "xlsx",
+      source_grant: "ro",
+      source: "会议.xlsx",
+      output_grant: "rw",
+      output: "纪要.xlsx",
+      instruction: "整理会议待办",
+    });
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: {
+            device_id: "mine",
+            busy: false,
+            grants: [],
+            tasks: [
+              {
+                id: "1",
+                instruction: "整理会议待办",
+                source: "会议.xlsx",
+                output: "/成果/纪要.xlsx",
+                format: "xlsx",
+                status,
+                error: status === "failed" ? "公式计算失败" : undefined,
+              },
+            ],
+          },
+        }),
+      );
+    });
+    expect(screen.getByText("/成果/纪要.xlsx")).toBeInTheDocument();
+    if (status === "failed") {
+      expect(screen.getByText("公式计算失败")).toBeInTheDocument();
+      expect(screen.queryByText("已完成")).toBeNull();
+    } else {
+      expect(screen.getByText("已完成")).toBeInTheDocument();
+    }
+  },
+);

@@ -80,6 +80,26 @@ class DocxGeneratedText(BaseModel):
     text: str = Field(min_length=1, max_length=60000)
 
 
+class XlsxGenerateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instruction: str = Field(
+        min_length=1, max_length=8000, description="Employee's spreadsheet task."
+    )
+    text: str = Field(
+        min_length=1,
+        max_length=60000,
+        description="JSON sheets with names and rows extracted on the client; no original XLSX.",
+    )
+
+
+class XlsxGeneratedData(BaseModel):
+    text: str = Field(
+        min_length=1,
+        max_length=60000,
+        description="Model JSON sheets/rows. The native client validates and calculates before writing.",
+    )
+
+
 @router.post(
     "/{device_id}/docx/authorize",
     response_model=DocxAuthorization,
@@ -95,6 +115,26 @@ async def authorize_docx(
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(user, device_id, x_colink_device_session, body.action)
+    return DocxAuthorization()
+
+
+@router.post(
+    "/{device_id}/xlsx/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize a local XLSX operation on the current native device",
+    description="Requires an approved live native session and explicit feature/action grants. "
+    "Administrators have no implicit execution rights. The client also checks directory grants.",
+)
+async def authorize_xlsx(
+    device_id: str,
+    body: DocxAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    server.device_manager.authorize_docx(
+        user, device_id, x_colink_device_session, body.action, format="xlsx"
+    )
     return DocxAuthorization()
 
 
@@ -122,6 +162,33 @@ async def generate_docx(
         models=server.app_runtime.agent_registry.host_models,
     )
     return DocxGeneratedText(text=text)
+
+
+@router.post(
+    "/{device_id}/xlsx/generate",
+    response_model=XlsxGeneratedData,
+    summary="Generate structured spreadsheet data for an authorized native XLSX task",
+    description="Uses the explicitly configured active enterprise model without tools. "
+    "Requires read and create rights, checked again after generation. Original files stay local.",
+)
+async def generate_xlsx(
+    device_id: str,
+    body: XlsxGenerateBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> XlsxGeneratedData:
+    assert server.app_runtime is not None
+    text = await server.device_manager.generate_docx_text(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        text=body.text,
+        models=server.app_runtime.agent_registry.host_models,
+        format="xlsx",
+    )
+    return XlsxGeneratedData(text=text)
 
 
 def _view(manager: DeviceManager, row: DeviceRow) -> DeviceView:

@@ -18,6 +18,7 @@ interface Grant {
   mode: "ro" | "rw";
 }
 interface LocalTask {
+  format?: "docx" | "xlsx";
   id: string;
   instruction: string;
   source: string;
@@ -55,6 +56,8 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     tasks: [],
     busy: false,
   });
+  const [format, setFormat] = useState<"docx" | "xlsx">("docx");
+  const contentKey = format === "xlsx" ? "localXlsx" : "localDocx";
   const [sourceGrant, setSourceGrant] = useState("");
   const [outputGrant, setOutputGrant] = useState("");
   const [source, setSource] = useState("");
@@ -63,6 +66,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
 
   useEffect(() => {
     setState({ device_id: deviceId, grants: [], tasks: [], busy: false });
+    setFormat("docx");
     setSourceGrant("");
     setOutputGrant("");
     setSource("");
@@ -85,7 +89,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   const dispatch = (command: Record<string, string>) => {
     setState((previous) => ({ ...previous, busy: true, error: undefined }));
     try {
-      send(command);
+      send(format === "xlsx" ? { ...command, format } : command);
     } catch (error) {
       setState((previous) => ({
         ...previous,
@@ -123,20 +127,40 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
       title={
         <Space>
           <FileText size={18} />
-          {t("localDocx.title", "本机 DOCX 任务")}
+          {t("localDocx.title", "本机文档任务")}
         </Space>
       }
     >
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
+        <div>
+          <label htmlFor={`${id}-format`}>
+            {t("localDocx.format", "文件类型")}
+          </label>
+          <select
+            id={`${id}-format`}
+            value={format}
+            disabled={state.busy}
+            style={selectStyle}
+            onChange={(event) => {
+              setFormat(event.target.value as "docx" | "xlsx");
+              setSource("");
+              setOutput("");
+              setInstruction("");
+            }}
+          >
+            <option value="docx">DOCX</option>
+            <option value="xlsx">XLSX</option>
+          </select>
+        </div>
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           {t(
-            "localDocx.privacy",
+            `${contentKey}.privacy`,
             "原始文件保留在本机；所选文档的正文经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
           )}
         </Typography.Paragraph>
         <Typography.Text type="secondary">
           {t(
-            "localDocx.limits",
+            `${contentKey}.limits`,
             "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。",
           )}
         </Typography.Text>
@@ -258,7 +282,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   value={source}
                   onChange={(event) => setSource(event.target.value)}
                   placeholder={t(
-                    "localDocx.sourceExample",
+                    `${contentKey}.sourceExample`,
                     "例如：会议记录.docx",
                   )}
                   maxLength={240}
@@ -274,7 +298,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   value={output}
                   onChange={(event) => setOutput(event.target.value)}
                   placeholder={t(
-                    "localDocx.outputExample",
+                    `${contentKey}.outputExample`,
                     "例如：会议纪要.docx",
                   )}
                   maxLength={240}
@@ -294,7 +318,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 maxLength={8000}
                 required
                 placeholder={t(
-                  "localDocx.instructionExample",
+                  `${contentKey}.instructionExample`,
                   "整理所选文档，列出结论、待办和负责人。",
                 )}
               />
@@ -305,7 +329,10 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
               loading={state.busy}
               disabled={!canRun}
             >
-              {t("localDocx.run", "生成 DOCX")}
+              {t(
+                `${contentKey}.run`,
+                format === "xlsx" ? "生成 XLSX" : "生成 DOCX",
+              )}
             </Button>
           </fieldset>
         </form>
@@ -337,6 +364,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   >
                     {statuses[task.status] ?? task.status}
                   </Tag>
+                  <Tag>{(task.format ?? "docx").toUpperCase()}</Tag>
                   <Typography.Text strong>{task.instruction}</Typography.Text>
                   <div>
                     <Typography.Text type="secondary">

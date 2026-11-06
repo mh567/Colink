@@ -111,3 +111,9 @@ bar image to the full `NSStatusBar` thickness (22pt) where the glyph should be
 ~16pt. Full-bleed sources on either surface render a size bigger than every
 other app. On macOS the Dock icon comes from the bundle's `icons.icns` only —
 see `applyAppIcon` in `src/icons_darwin.go`.
+
+## 本机 XLSX 任务
+
+设备页的本机文档任务可选择 XLSX。Excelize v2.11.0 及其依赖编译进桌面程序，运行时不下载库、不启动 Python 或执行模型脚本；开发及构建仍须预取 `go.mod`/`go.sum` 的依赖。新库最低 Go 1.25，与当前桌面工具链一致。
+
+许可全文位于 [third-party-xlsx.txt](src/assets/third-party-xlsx.txt)，随 `assets/*` 嵌入桌面二进制，可由本地壳资源路径 `/third-party-xlsx.txt` 读取。实际目标平台离线安装与 Office 打开编辑仍需单独验收。支持范围及权限见[本机 XLSX 接口](../docs/api.md#本机-xlsx-任务)。
