@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="bash helpers")
 
@@ -45,6 +49,85 @@ def test_build_fpk_lite_pins_the_lite_image_tag() -> None:
     text = (REPO / "scripts" / "build-fpk.sh").read_text(encoding="utf-8")
     assert 'OUTNAME="${PREFIX}-docker-lite-${VER}${ITER_SUFFIX}.fpk"' in text
     assert 'image_tag="${FPK_IMAGE_TAG:-${VER}-lite}"' in text
+
+
+@posix_only
+@pytest.mark.parametrize(
+    ("mode", "prefix", "image"),
+    [
+        ("local", "octop", "ghcr.io/mh567/colink"),
+        ("workflow", "Octop-fnos", "ghcr.io/review/release"),
+    ],
+)
+def test_docker_fpk_uses_the_published_image(
+    tmp_path: Path, mode: str, prefix: str, image: str
+) -> None:
+    checkout = tmp_path / "checkout with spaces"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copyfile(REPO / "scripts" / "build-fpk.sh", scripts / "build-fpk.sh")
+    (scripts / "fnos").mkdir()
+    shutil.copyfile(
+        REPO / "scripts" / "fnos" / "store_version.sh", scripts / "fnos/store_version.sh"
+    )
+    shutil.copytree(FNOS_DOCKER, checkout / "fnos/docker")
+    (checkout / "pyproject.toml").write_text('version = "1.2.3b4"\n', encoding="utf-8")
+
+    verify = checkout / ".verify"
+    verify.mkdir()
+    fnpack = verify / "fnpack"
+    # Replace the external packer, retaining the actual generated compose in an archive.
+    fnpack.write_text(
+        "#!/bin/sh\ntar -czf octop.fpk app/docker/docker-compose.yaml\n", encoding="utf-8"
+    )
+    fnpack.chmod(0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stat = bin_dir / "stat"
+    stat.write_text(
+        "#!/bin/sh\n"
+        'exec "$TEST_PYTHON" -c \'import os, sys; print(os.path.getsize(sys.argv[-1]))\' "$@"\n',
+        encoding="utf-8",
+    )
+    stat.chmod(0o755)
+    env = dict(os.environ)
+    for key in ("FPK_IMAGE", "FPK_IMAGE_TAG", "FPK_NAME_PREFIX", "FPK_ITER"):
+        env.pop(key, None)
+    env.update(PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}", TEST_PYTHON=sys.executable)
+    command = "bash scripts/build-fpk.sh docker docker-lite"
+    if mode == "workflow":
+        workflow = yaml.safe_load((REPO / ".github/workflows/fnos-build-fpk.yml").read_text())
+        step = next(
+            step
+            for step in workflow["jobs"]["fpk"]["steps"]
+            if step.get("name") == "Build Docker FPKs"
+        )
+        env.update(
+            {
+                key: value.replace("${{ needs.version.outputs.image }}", image).replace(
+                    "${{ needs.ensure-image.outputs.lite }}", "true"
+                )
+                for key, value in step["env"].items()
+            }
+        )
+        command = step["run"]
+
+    result = subprocess.run(
+        ["bash", "-euc", command],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    for kind, tag in (("docker", "1.2.3b4"), ("docker-lite", "1.2.3b4-lite")):
+        with tarfile.open(checkout / "dist" / f"{prefix}-{kind}-1.2.3b4.fpk") as packed:
+            compose = packed.extractfile("app/docker/docker-compose.yaml")
+            assert compose is not None
+            assert yaml.safe_load(compose)["services"]["octop"]["image"] == f"{image}:{tag}"
 
 
 def test_publish_workflows_keep_full_when_lite_is_incomplete() -> None:
@@ -117,11 +200,9 @@ def test_fnos_docker_compose_uses_trim_data_share_paths() -> None:
     assert "users_loaded" in text
     assert "pull_policy: missing" in text
     assert "pull_policy: always" not in text
-    assert "ghcr.io/tencentcloud/octop:latest" not in text
-    assert "ghcr.io/tencentcloud/octop:0.0.0" in text
-    assert f"ghcr.io/tencentcloud/octop:{_pyproject_version()}" not in text
-    build = (REPO / "scripts" / "build-fpk.sh").read_text(encoding="utf-8")
-    assert "ghcr.io/tencentcloud/octop:${image_tag}" in build
+    assert "ghcr.io/mh567/colink:latest" not in text
+    assert "ghcr.io/mh567/colink:0.0.0" in text
+    assert f"ghcr.io/mh567/colink:{_pyproject_version()}" not in text
     assert "env_file:" not in text
     volume_lines = [
         line

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -127,3 +128,98 @@ def test_cli_rejects_incomplete_or_ambiguous_installations(
     assert {
         path: path.read_bytes() for path in site_packages.rglob("*") if path.is_file()
     } == before
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX-only packaging shell script")
+def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is required for interpreter discovery")
+    repo = SCRIPT.parent.parent
+    checkout = tmp_path / "checkout with spaces"
+    portable = checkout / "desktop" / "portable"
+    portable.mkdir(parents=True)
+    for name in ("package.sh", "_common.sh"):
+        shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
+    shutil.copytree(repo / "desktop" / "portable" / "templates", portable / "templates")
+    (checkout / "scripts").mkdir()
+    shutil.copyfile(SCRIPT, checkout / "scripts" / SCRIPT.name)
+    (checkout / "pyproject.toml").write_text('version = "1.0.3b3"\n', encoding="utf-8")
+
+    green = tmp_path / "green"
+    runtime = green / "runtimes" / "linux-amd64" / "bin"
+    runtime.mkdir(parents=True)
+    python = runtime / "python3"
+    python.write_text('#!/bin/sh\nexec "$TEST_PYTHON" "$@"\n', encoding="utf-8")
+    python.chmod(0o755)
+    wheels = green / "wheels" / "linux-amd64"
+    wheels.mkdir(parents=True)
+    for name in [*(f"cached-{index}.whl" for index in range(10)), "uv-0.12.22-test.whl"]:
+        (wheels / name).touch()
+    site_packages, _ = _installation(tmp_path)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installer = bin_dir / "uv"
+    # Keep Python discovery real; only replace downloads and dependency installation.
+    installer.write_text(
+        """#!/bin/sh
+exec "$TEST_PYTHON" - "$@" <<'PY'
+import os
+from pathlib import Path
+import shutil
+import sys
+args = sys.argv[1:]
+if args[0] == "build":
+    output = Path(args[args.index("--out-dir") + 1])
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "octop-1.0.3b3-py3-none-any.whl").touch()
+elif args[0] == "export":
+    Path(args[args.index("-o") + 1]).touch()
+elif args[:2] == ["pip", "install"]:
+    target = Path(args[args.index("--target") + 1])
+    shutil.copytree(os.environ["TEST_PACKAGES"], target, dirs_exist_ok=True)
+elif args[0] == "run":
+    os.execv(os.environ["REAL_UV"], [os.environ["REAL_UV"], *args])
+else:
+    raise SystemExit("Unexpected uv command: " + str(args))
+PY
+""",
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+    env = dict(os.environ)
+    for key in ("VIRTUAL_ENV", "CONDA_PREFIX"):
+        env.pop(key, None)
+    env.update(
+        PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+        TEST_PYTHON=sys.executable,
+        TEST_PACKAGES=str(site_packages),
+        REAL_UV=uv,
+        GREEN_ROOT=str(green),
+        GREEN_HOST_PLAT="linux-amd64",
+        OCTOP_GREEN_OFFLINE="1",
+        UV_CACHE_DIR=str(tmp_path / "uv-cache"),
+        UV_PYTHON=sys.executable,
+        UV_PYTHON_INSTALL_DIR=str(tmp_path / "no-managed-python"),
+        UV_PYTHON_PREFERENCE="only-managed",
+        UV_PYTHON_DOWNLOADS="never",
+    )
+
+    result = subprocess.run(
+        ["bash", str(portable / "package.sh"), "linux-amd64"],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
+    with zipfile.ZipFile(archive) as packed:
+        assert not any("/powerpoint/" in name for name in packed.namelist())
+        assert packed.read(f"Octop-linux-amd64/packages/{DIST_INFO}/licenses/LICENSE") == (
+            b"MIT license must remain\n"
+        )

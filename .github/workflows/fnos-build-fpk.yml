@@ -8,7 +8,7 @@ name: Build Octop FPK
 #
 # 制品复用：
 #   - Docker 镜像：不再重建，等待 docker-publish 推送的
-#     ghcr.io/tencentcloud/octop:{version|latest}
+#     ghcr.io/<owner>/<repo>:{version|latest}
 #   - Native wheel：优先从同版本 GitHub Release（v*）下载；
 #     缺失时再回退到本仓源码构建
 #   - fnpack：fpk / native 用 Actions cache 复用 .verify/fnpack（key 含 FNPACK_VERSION）
@@ -151,6 +151,7 @@ jobs:
       - name: Build Docker FPKs
         env:
           FPK_NAME_PREFIX: Octop-fnos
+          FPK_IMAGE: ${{ needs.version.outputs.image }}
           LITE: ${{ needs.ensure-image.outputs.lite }}
         run: |
           bash scripts/build-fpk.sh docker
