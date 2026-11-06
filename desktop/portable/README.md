@@ -129,10 +129,12 @@ Actions 使用 GitHub 上游 PBS（`PBS_BASE_URL`），本机构建默认 npmmir
 
 本流程的文字结果不保留排版。限制为 20 MB、20 页、每页渲染不超过 1600 万像素和 60000 字符；空页、损坏、加密、超限或缺资源均明确失败，不静默截断。
 
-本机 OCR 现已在 macOS ARM64 的临时便携资源目录验证；这不等于完整安装包或目标平台验收通过。锁定 ONNX Runtime wheel 要求 macOS ARM64 14+，且不提供 macOS Intel wheel。`darwin-amd64`、`windows-arm64` 保留原有无 OCR 打包流程；这两个平台的扫描 PDF 任务会明确提示不支持当前平台，不宣称支持。macOS ARM64 包的 OCR 要求 14+，原桌面壳 macOS 12+ 不代表 OCR 也支持。Windows x86_64、Linux x86_64 和麒麟 ARM64 仍须用相同交付包在目标系统断公网实测；本次没有这些环境的通过证据。
+本机 OCR 已在 macOS ARM64 和麒麟 ARM64 的临时便携资源目录验证，这不等于完整 Wails 安装包验收。锁定 ONNX Runtime wheel 要求 macOS ARM64 14+，且不提供 macOS Intel wheel。`darwin-amd64`、`windows-arm64` 保留原有无 OCR 打包流程，扫描 PDF 任务明确提示不支持。Windows x86_64、Linux x86_64 仍缺少目标系统断公网实测证据。
 
-2026-11-06 开发验证：macOS ARM64 上，按 `uv.lock` 完整约束安装的 OCR 组件与模型完成两页中文扫描样本识别，单号、金额、负责人、完整日期和页码可核对；原生任务测试确认 TXT 落盘、只发送授权动作、防覆盖、撤销写入后拒绝产物及重启状态保留。桌面测试 156 项通过，OCR 解析、资源与 CPU 系统边界测试 16 项通过。浏览器表单与错误提示使用模拟桌面事件核查，不能代替 Wails 安装包联调。
+Linux ARM64 的 `local-ocr` 使用官方 OpenCV 4.11.0.86 wheel，其他平台保留 5.0.0.93。此兼容约束用于麒麟旧内核可能报告 SVE2、却未报告 SVE 的情况；NumPy 保持 2.5.1。后续调整此版本必须重新执行目标机断网样本验证，不能用新版可安装代替可运行。
 
-同日麒麟实测：已有 UTM 虚拟机为 V10 SP1/2403、ARM64、内核 5.4.18-110、glibc 2.31，使用固定 CPython 3.12.12 和本次完整锁定 OCR 依赖。在 `bwrap --unshare-net` 隔离中，原候选在导入 OpenCV 5.0.0.93 时触发 SIGILL；独立临时副本试用官方 OpenCV 4.14.0.94 仍失败，未改变正式版本。两者实际非法指令均为 `cntb x0`（SVE）；系统 `getauxval` 报告 `AT_HWCAP=0x2fb3ffff`、`AT_HWCAP2=0x183`，即没有 SVE 却宣称 SVE2。官方 [OpenCV CPU 优化开关](https://github.com/opencv/opencv/wiki/CPU-optimizations-build-options)未能阻止该导入故障；[同类上游修复记录](https://github.com/oven-sh/bun/commit/110efa0bc7)描述了旧 Linux 内核在 Apple ARM 虚拟机中的这一能力误报。
+2026-11-07 麒麟实测：UTM 中的 V10 SP1/2403、ARM64、内核 5.4.18-110、glibc 2.31、CPython 3.12.12。原 OpenCV 5.0.0.93（两种 manylinux wheel）及 4.14.0.94 在加载时触发 SIGILL；实际出错的是内嵌 KleidiCV 的 `cntb x0`。其 [26.03 官方分发逻辑](https://gitlab.arm.com/kleidi/kleidicv/-/blob/26.03/kleidicv/include/kleidicv/dispatch.h)仅检查 `HWCAP2_SVE2` 后便探测 SVE 向量长度；`OPENCV_CPU_DISABLE` 不控制这段初始化。4.12.0.88 能识别样本，但其 NumPy 上限与完整客户端依赖冲突，因此未采用。4.11.0.86 的 Linux ARM64 wheel 不含该 KleidiCV 路径，既能识别，也能通过完整依赖锁定。
 
-客户端现在在加载识别库前拒绝此已观察到的能力矛盾，不降级、不改变 CPU 或系统。同份 runner 在上述麒麟断网环境复验返回 `OCR_CPU_CAPABILITIES_INVALID`、退出码 1；无效 PDF 和缺模型也分别明确失败。这证明错误可解释，**不代表麒麟 OCR 成功**；该环境仍需修复 CPU 能力报告或取得经实测的兼容上游构建，再验证实际文字产物。没有在现有虚拟机上升级内核、修改 CPU、安装系统调试包或更改服务。
+按更新后的 `uv.lock` 在全新目录安装识别组件，由正式 `prepare.py` 复制模型并验证，再在 `bwrap --unshare-net` 中运行正式 worker：11 项 OCR 测试通过，损坏、加密、空页、超限、缺资源及坏模型均明确失败；固定两页样本成功输出 TXT，标题、单号、金额、负责人、完整日期和两个页码共 7 项核对通过。断网探测返回 `ENETUNREACH`；测试前后 CPU 能力仍为 `AT_HWCAP=0x2fb3ffff`、`AT_HWCAP2=0x183`。本次只调整客户端依赖，没有升级内核或修改虚拟机配置，也不改写系统 CPU 能力报告。
+
+macOS ARM64 的原生任务测试另确认 TXT 落盘、只发送授权动作、防覆盖、撤销写入后拒绝产物及重启状态保留。浏览器表单与错误提示使用模拟桌面事件核查，完整 Wails 安装包联调及其他目标系统验收仍须分别完成。

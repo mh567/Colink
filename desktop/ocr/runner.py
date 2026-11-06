@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-import ctypes
 import json
 import math
-import platform
 import sys
 from pathlib import Path
 
@@ -30,18 +28,6 @@ def deny_network(event: str, args: tuple[object, ...]) -> None:
         raise OcrError("OCR_NETWORK_DENIED")
 
 
-def check_cpu_capabilities() -> None:
-    if sys.platform != "linux" or platform.machine() != "aarch64":
-        return
-    getauxval = ctypes.CDLL(None).getauxval
-    getauxval.argtypes = [ctypes.c_ulong]
-    getauxval.restype = ctypes.c_ulong
-    hwcap, hwcap2 = getauxval(16), getauxval(26)
-    # Some old kernels advertise SVE2 without SVE; OpenCV then traps on cntb.
-    if hwcap2 & (1 << 1) and not hwcap & (1 << 22):
-        raise OcrError("OCR_CPU_CAPABILITIES_INVALID")
-
-
 def extract(data: bytes, models: Path) -> str:
     if len(data) > FILE_LIMIT:
         raise OcrError("OCR_FILE_LIMIT")
@@ -50,7 +36,6 @@ def extract(data: bytes, models: Path) -> str:
     for name in MODELS.values():
         if not (models / name).is_file():
             raise OcrError("OCR_MODELS_MISSING")
-    check_cpu_capabilities()
     try:
         import pypdfium2 as pdfium
         from rapidocr import RapidOCR

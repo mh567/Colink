@@ -7,8 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 RUNNER = Path(__file__).resolve().parents[2] / "desktop" / "ocr" / "runner.py"
 
 
@@ -182,49 +180,3 @@ def test_corrupt_model_is_reported_without_downloading(tmp_path):
     assert result.returncode != 0
     assert "OCR_RECOGNITION_FAILED" in result.stderr.decode("utf-8")
     assert not result.stdout
-
-
-@pytest.mark.parametrize(
-    ("hwcap", "hwcap2", "invalid"),
-    [
-        (0x2FB3FFFF, 0x183, True),
-        (0x2FB3FFFF | (1 << 22), 0x183, False),
-        (0x2FB3FFFF, 0x181, False),
-    ],
-)
-def test_linux_arm_cpu_capabilities(monkeypatch, hwcap, hwcap2, invalid):
-    import ctypes
-    import platform
-    import runpy
-    from types import SimpleNamespace
-
-    runner = runpy.run_path(str(RUNNER))
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
-
-    def getauxval(key):
-        return {16: hwcap, 26: hwcap2}[key]
-
-    monkeypatch.setattr(ctypes, "CDLL", lambda _: SimpleNamespace(getauxval=getauxval))
-    if invalid:
-        with pytest.raises(runner["OcrError"], match="^OCR_CPU_CAPABILITIES_INVALID$"):
-            runner["check_cpu_capabilities"]()
-    else:
-        runner["check_cpu_capabilities"]()
-
-
-@pytest.mark.parametrize(("system", "machine"), [("darwin", "arm64"), ("linux", "x86_64")])
-def test_other_platforms_do_not_use_arm_auxv(monkeypatch, system, machine):
-    import ctypes
-    import platform
-    import runpy
-
-    runner = runpy.run_path(str(RUNNER))
-    monkeypatch.setattr(sys, "platform", system)
-    monkeypatch.setattr(platform, "machine", lambda: machine)
-
-    def unexpected(*args):
-        raise AssertionError("ARM capability check ran on another platform")
-
-    monkeypatch.setattr(ctypes, "CDLL", unexpected)
-    runner["check_cpu_capabilities"]()

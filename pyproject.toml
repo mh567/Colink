@@ -80,6 +80,9 @@ local-ocr = [
     "rapidocr==3.9.2",
     "onnxruntime==1.28.0",
     "pypdfium2==5.15.0",
+    # Avoid KleidiCV's SVE2 probe on old Kylin kernels; retain NumPy 2.3+ support.
+    "opencv-python==4.11.0.86; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "opencv-python==5.0.0.93; sys_platform != 'linux' or platform_machine != 'aarch64'",
 ]
 knowledge-ocr = [
     "rapidocr>=3.4,<4",
