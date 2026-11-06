@@ -348,13 +348,9 @@ async def test_ws_subscribe_turn_status_idle(env: Any) -> None:
 
 
 async def test_ws_subscribe_rejects_another_users_thread(env: Any) -> None:
-    c, _srv, _fake, alice_auth, bob_auth, aid = env
-    response = await c.patch(
-        f"/api/agents/{aid}",
-        headers=alice_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
+    c, srv, _fake, alice_auth, bob_auth, aid = env
+    # Retained shared rows must still isolate per-user threads.
+    srv.services.agent_repo.set_shared(aid, True)
 
     response = await c.post(f"/api/agents/{aid}/threads", headers=bob_auth)
     assert response.status_code == 201, response.text

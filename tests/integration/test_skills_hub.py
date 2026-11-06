@@ -4,6 +4,7 @@ and POST /api/agents/{id}/skills/hub/install."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -31,251 +32,59 @@ async def test_hub_install_requires_auth(env: Any) -> None:
     assert r.status_code not in (200, 201), f"Expected auth failure, got {r.status_code}"
 
 
-# --- authenticated search tests ---------------------------------------------
-
-
-async def test_hub_search_returns_list(
+@pytest.mark.parametrize(
+    ("endpoint", "params", "network_function"),
+    [
+        ("search", {}, "search_skillhub"),
+        ("search", {"q": "file-reader"}, "search_skillhub"),
+        ("rankings", {"type": "hot"}, "fetch_skillhub_rankings"),
+    ],
+)
+async def test_hub_market_rejected_before_network(
     env: Any,
     monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    params: dict[str, str],
+    network_function: str,
 ) -> None:
-    """Authenticated GET returns direct HTTP search results."""
     from octop.infra.skills import skillhub_market
 
-    async def fake_search(
-        query: str,
-        *,
-        limit: int = 50,
-        host: str | None = None,
-        timeout: float = 10.0,
-    ) -> list[dict[str, Any]]:
-        assert query == "a"
-        assert limit == 50
-        assert host is None
-        assert timeout == 10.0
-        return []
-
-    monkeypatch.setattr(skillhub_market, "search_skillhub", fake_search)
-
+    network = Mock(side_effect=AssertionError("Online market must not run"))
+    monkeypatch.setattr(skillhub_market, network_function, network)
     c, _srv, auth, aid = env
-    r = await c.get(f"/api/agents/{aid}/skills/hub/search", headers=auth)
-    assert r.status_code == 200
-    assert r.json() == []
+    r = await c.get(f"/api/agents/{aid}/skills/hub/{endpoint}", headers=auth, params=params)
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "LOCAL_EXPERT_REVIEW_REQUIRED"
+    network.assert_not_called()
 
 
-async def test_hub_search_with_query(
+@pytest.mark.parametrize(
+    "skill_name",
+    ["nonexistent-xyz-skill-abc123", "stable-english-slug", "fallback-skill", "unsafe-package"],
+)
+async def test_hub_install_rejected_before_network(
     env: Any,
     monkeypatch: pytest.MonkeyPatch,
+    skill_name: str,
 ) -> None:
-    """Authenticated GET passes its query to the HTTP client."""
-    from octop.infra.skills import skillhub_market
+    from octop.infra.skills import install, skillhub_market
 
-    async def fake_search(
-        query: str,
-        *,
-        limit: int = 50,
-        host: str | None = None,
-        timeout: float = 10.0,
-    ) -> list[dict[str, Any]]:
-        assert query == "file-reader"
-        return [
-            {
-                "slug": "file-reader",
-                "name": "文件读取",
-                "description": "读取文件",
-                "version": "1.0.0",
-            }
-        ]
-
-    monkeypatch.setattr(skillhub_market, "search_skillhub", fake_search)
-
+    network = Mock(side_effect=AssertionError("Online download must not run"))
+    installer = Mock(side_effect=AssertionError("Online installer must not run"))
+    monkeypatch.setattr(skillhub_market, "download_skillhub_package", network)
+    monkeypatch.setattr(install, "install_skill_from_skillhub", installer)
     c, _srv, auth, aid = env
-    r = await c.get(
-        f"/api/agents/{aid}/skills/hub/search",
-        headers=auth,
-        params={"q": "file-reader"},
-    )
-    assert r.status_code == 200
-    assert r.json()[0]["name"] == "文件读取"
-
-
-async def test_hub_rankings_returns_dict(
-    env: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Authenticated GET rankings returns the direct HTTP client payload."""
-    from octop.infra.skills import skillhub_market
-
-    async def fake_fetch_rankings(
-        ranking_type: str,
-        *,
-        host: str | None = None,
-        timeout: float = 10.0,
-    ) -> dict[str, Any]:
-        assert ranking_type == "hot"
-        assert host is None
-        assert timeout == 10.0
-        return {"section": "hot_downloads", "skills": [], "total": 0}
-
-    monkeypatch.setattr(
-        skillhub_market,
-        "fetch_skillhub_rankings",
-        fake_fetch_rankings,
-    )
-
-    c, _srv, auth, aid = env
-    r = await c.get(
-        f"/api/agents/{aid}/skills/hub/rankings",
-        headers=auth,
-        params={"type": "hot"},
-    )
-    assert r.status_code == 200
-    assert r.json() == {"section": "hot_downloads", "skills": [], "total": 0}
-
-
-# --- authenticated install tests --------------------------------------------
-
-
-async def test_hub_install_unknown_skill(env: Any) -> None:
-    """POST with a nonexistent skill → client/upstream error (not success)."""
-    c, _srv, auth, aid = env
-    r = await c.post(
-        f"/api/agents/{aid}/skills/hub/install",
-        headers=auth,
-        json={"skill_name": "nonexistent-xyz-skill-abc123", "enable": True},
-    )
-    # 400 bad name; 404 skill/agent not found; 409 agent not running;
-    # 500 agent failed to start (no models in bare setup); 502/504 CLI/network.
-    assert r.status_code != 200, f"Expected non-200, got {r.status_code}"
-    assert r.status_code in (400, 404, 409, 500, 502, 504), (
-        f"Unexpected status {r.status_code}: {r.text}"
-    )
-
-
-async def test_hub_install_persists_market_name_and_icon(
-    env: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from octop.infra.skills import skillhub_market
-    from tests.support.auth import create_agent, seed_openai_provider
-
-    async def fake_download(
-        slug: str,
-        *,
-        host: str | None = None,
-        timeout: float = 30.0,
-    ) -> list[tuple[str, bytes]]:
-        assert slug == "stable-english-slug"
-        return [
-            (
-                "SKILL.md",
-                (
-                    "---\n"
-                    "name: english-package-name\n"
-                    "description: English description\n"
-                    "metadata:\n"
-                    "  openclaw:\n"
-                    "    emoji: '📦'\n"
-                    "---\n\n"
-                    "# Body\n"
-                ).encode(),
-            )
-        ]
-
-    monkeypatch.setattr(skillhub_market, "download_skillhub_package", fake_download)
-
-    c, _srv, auth, _main_aid = env
-    await seed_openai_provider(c, auth)
-    aid = await create_agent(c, auth)
-    icon_url = "https://cdn.example.com/skill.png"
     r = await c.post(
         f"/api/agents/{aid}/skills/hub/install",
         headers=auth,
         json={
-            "skill_name": "stable-english-slug",
+            "skill_name": skill_name,
             "enable": True,
             "display_name": "中文展示名称",
-            "icon_url": icon_url,
-            "label": {"zh": "中文展示名称", "en": "Friendly Name"},
-            "summary": {"zh": "中文短描述", "en": "Short description"},
+            "icon_url": "https://cdn.example.com/skill.png",
         },
     )
-    assert r.status_code == 201, r.text
-    assert r.json()["transport"] == "http"
-
-    detail = await c.get(
-        f"/api/agents/{aid}/skills/stable-english-slug",
-        headers=auth,
-    )
-    assert detail.status_code == 200, detail.text
-    payload = detail.json()
-    assert payload["slug"] == "stable-english-slug"
-    assert payload["name"] == "中文展示名称"
-    assert payload["icon_url"] == icon_url
-    assert payload["emoji"] == "📦"
-    assert payload["frontmatter"]["name"] == "english-package-name"
-    assert payload["frontmatter"]["metadata"]["octop"] == {
-        "source": "skillhub",
-        "icon_url": icon_url,
-        "label": {"zh": "中文展示名称", "en": "Friendly Name"},
-        "summary": {"zh": "中文短描述", "en": "Short description"},
-    }
-
-
-async def test_hub_install_reports_http_failure(
-    env: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from octop.infra.skills import skillhub_market
-    from tests.support.auth import create_agent, seed_openai_provider
-
-    async def failed_download(
-        _slug: str,
-        *,
-        host: str | None = None,
-        timeout: float = 30.0,
-    ) -> list[tuple[str, bytes]]:
-        raise skillhub_market.SkillHubMarketError("upstream unavailable")
-
-    monkeypatch.setattr(skillhub_market, "download_skillhub_package", failed_download)
-
-    c, _srv, auth, _main_aid = env
-    await seed_openai_provider(c, auth)
-    aid = await create_agent(c, auth)
-    r = await c.post(
-        f"/api/agents/{aid}/skills/hub/install",
-        headers=auth,
-        json={"skill_name": "fallback-skill", "enable": True},
-    )
-
-    assert r.status_code == 502, r.text
-    assert r.json()["detail"] == "upstream unavailable"
-
-
-async def test_hub_install_reports_package_validation_failure(
-    env: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from octop.infra.skills import skillhub_market
-    from tests.support.auth import create_agent, seed_openai_provider
-
-    async def invalid_download(
-        _slug: str,
-        *,
-        host: str | None = None,
-        timeout: float = 30.0,
-    ) -> list[tuple[str, bytes]]:
-        raise skillhub_market.SkillHubPackageError("unsafe zip path entry")
-
-    monkeypatch.setattr(skillhub_market, "download_skillhub_package", invalid_download)
-
-    c, _srv, auth, _main_aid = env
-    await seed_openai_provider(c, auth)
-    aid = await create_agent(c, auth)
-    r = await c.post(
-        f"/api/agents/{aid}/skills/hub/install",
-        headers=auth,
-        json={"skill_name": "unsafe-package", "enable": True},
-    )
-
-    assert r.status_code == 502
-    assert r.json()["detail"] == "unsafe zip path entry"
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "LOCAL_EXPERT_REVIEW_REQUIRED"
+    network.assert_not_called()
+    installer.assert_not_called()

@@ -383,7 +383,12 @@ async def test_create_user_bootstraps_selected_expert(env):
     assert agents.status_code == 200, agents.text
     owned = [row for row in agents.json() if row["user_id"] == user_id]
     assert len(owned) == 1
-    assert owned[0]["template_name"] == "general-assistant"
+    assert "template_name" not in owned[0]
+    employee_auth = bearer(await login(c, username="with_expert", password=TEST_PASSWORD))
+    personal = await c.get("/api/agents", headers=employee_auth)
+    assert personal.status_code == 200, personal.text
+    assert len(personal.json()) == 1
+    assert personal.json()[0]["template_name"] == "general-assistant"
 
 
 async def test_create_user_keeps_user_when_expert_template_missing(env):

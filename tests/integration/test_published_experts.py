@@ -1,430 +1,310 @@
-"""Published expert HTTP API integration coverage."""
+"""Approved offline editions replace owner-published workspace snapshots.
+
+Workspace snapshot serialization retains its unit coverage; HTTP callers may no
+longer publish or install those snapshots to bypass administrator review.
+"""
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pytest
 
-from tests.support.auth import create_user
+from octop.infra.users.groups import RESOURCE_MODEL, RESOURCE_SKILL_PACKAGE, GroupAccess
+from tests.support.auth import create_user, seed_openai_provider
 
-posix_only = pytest.mark.skipif(
-    os.name != "posix", reason="local_shell backend workspace file ops unsupported on Windows"
-)
+ROOT = "/api/experts/local"
 
 
-async def _owner_and_peer(
-    env: tuple[Any, Any, dict[str, str]],
-) -> tuple[Any, Any, dict[str, str], dict[str, str], str]:
-    client, server, admin_auth = env
-    owner_auth = await create_user(client, admin_auth, username="publish_owner")
-    peer_auth = await create_user(client, admin_auth, username="publish_peer")
-    created = await client.post(
-        "/api/agents/from-expert/default",
-        headers=owner_auth,
-        json={"name": "publish-source"},
+def _package(version: str = "1.0", **changes: Any) -> dict[str, Any]:
+    return {
+        "name": "Report helper",
+        "description": "Approved report instructions",
+        "version": version,
+        "source": "Enterprise editorial team",
+        "license": "Internal redistribution permitted",
+        "system_prompt": f"Approved instructions {version}",
+        "actions": ["local_docx"],
+        "skills": [],
+        **changes,
+    }
+
+
+def _config(**changes: Any) -> dict[str, Any]:
+    return {
+        "name": "Private installed expert",
+        "description": "My report helper",
+        "default_model": "openai/gpt-4o",
+        "actions": ["local_docx"],
+        "system_prompt": "Untrusted installer replacement",
+        "skill_package_ids": [],
+        "knowledge_base_ids": [],
+        **changes,
+    }
+
+
+async def _publish(client: Any, admin: dict[str, str], **changes: Any) -> dict[str, Any]:
+    response = await client.post(
+        f"{ROOT}/releases",
+        headers=admin,
+        json={"package": _package(**changes), "reviewed": True},
     )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _users(env: tuple[Any, Any, dict[str, str]]) -> tuple[dict[str, str], dict[str, str]]:
+    client, _server, admin = env
+    await seed_openai_provider(client, admin)
+    owner = await create_user(
+        client, admin, username="publish_owner", permissions=["experts", "local_docx"]
+    )
+    peer = await create_user(
+        client, admin, username="publish_peer", permissions=["experts", "local_docx"]
+    )
+    return owner, peer
+
+
+@pytest.mark.parametrize("actor", ["owner", "admin"])
+async def test_legacy_publish_refresh_and_install_cannot_bypass_review(env, actor):
+    client, _server, admin = env
+    owner, _peer = await _users(env)
+    created = await client.post(ROOT, headers=owner, json=_config())
     assert created.status_code == 201, created.text
-    return client, server, owner_auth, peer_auth, created.json()["agent_id"]
+    edition = await _publish(client, admin)
+    headers = owner if actor == "owner" else admin
+    for path, body in (
+        (f"/api/agents/{created.json()['agent_id']}/publish-expert", {"name": "Bypass"}),
+        (f"/api/experts/published/{edition['id']}/refresh", {"name": "Mutated edition"}),
+        (f"/api/experts/published/{edition['id']}/install", {"name": "Uncontrolled runtime"}),
+    ):
+        denied = await client.post(path, headers=headers, json=body)
+        assert denied.status_code == 403, denied.text
+    listed = await client.get(f"{ROOT}/releases", headers=owner)
+    assert listed.json() == [edition]
 
 
-async def test_publish_list_install_and_unpublish_preserves_installed_fork(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, owner_auth, peer_auth, source_agent_id = await _owner_and_peer(env)
+@pytest.mark.parametrize("actor", ["employee", "admin"])
+async def test_public_market_cannot_bypass_offline_review(env, actor):
+    client, _server, admin = env
+    employee = await create_user(client, admin, username="market_employee")
+    headers = employee if actor == "employee" else admin
+    for method, path in (
+        ("GET", "/api/experts/hub"),
+        ("GET", "/api/experts/hub/remote-template"),
+        ("POST", "/api/experts/hub/remote-template/install"),
+    ):
+        denied = await client.request(
+            method, path, headers=headers, json={"name": "Remote template"}
+        )
+        assert denied.status_code == 403, denied.text
 
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Published default", "description": "A private forkable expert"},
-    )
-    assert published.status_code == 201, published.text
-    expert = published.json()
-    expert_id = expert["id"]
-    assert expert["creator_username"] == "publish_owner"
-    assert isinstance(expert["skill_count"], int)
 
-    listed = await client.get("/api/experts/published", headers=peer_auth)
-    assert listed.status_code == 200, listed.text
-    assert [row["id"] for row in listed.json()] == [expert_id]
-
-    detail = await client.get(f"/api/experts/published/{expert_id}", headers=peer_auth)
-    assert detail.status_code == 200, detail.text
-    assert "manifest.json" in detail.json()["files"]
-
+async def test_admin_unpublish_preserves_installed_private_fork(env):
+    client, _server, admin = env
+    owner, peer = await _users(env)
+    edition = await _publish(client, admin)
     installed = await client.post(
-        f"/api/experts/published/{expert_id}/install",
-        headers=peer_auth,
-        json={"name": "Peer installed expert", "description": "Peer copy"},
+        f"{ROOT}/releases/{edition['id']}/install", headers=peer, json=_config()
     )
     assert installed.status_code == 201, installed.text
-    assert installed.json()["state"] == "starting"
-    assert installed.json()["bootstrap_pending"] is True
-    installed_agent_id = installed.json()["agent_id"]
-    assert installed.json()["user_id"] != expert["created_by"]
+    fork = installed.json()
+    assert fork["published_expert_id"] == edition["id"]
+    assert fork["system_prompt"] == edition["system_prompt"]
+    for employee in (owner, peer):
+        denied = await client.delete(f"/api/experts/published/{edition['id']}", headers=employee)
+        assert denied.status_code == 403, denied.text
+    removed = await client.delete(f"/api/experts/published/{edition['id']}", headers=admin)
+    assert removed.status_code == 204, removed.text
+    assert (await client.get(f"{ROOT}/releases", headers=peer)).json() == []
+    own = await client.get(ROOT, headers=peer)
+    assert own.status_code == 200
+    assert own.json()[0]["agent_id"] == fork["agent_id"]
+    assert own.json()[0]["system_prompt"] == edition["system_prompt"]
+    for other in (owner, admin):
+        assert (await client.get(ROOT, headers=other)).json() == []
+        denied = await client.get(f"/api/agents/{fork['agent_id']}", headers=other)
+        assert denied.status_code == 403, denied.text
 
-    denied = await client.delete(f"/api/experts/published/{expert_id}", headers=peer_auth)
-    assert denied.status_code == 403, denied.text
 
-    unpublished = await client.delete(f"/api/experts/published/{expert_id}", headers=owner_auth)
-    assert unpublished.status_code == 204, unpublished.text
-    assert (await client.get("/api/experts/published", headers=peer_auth)).json() == []
-
-    fork = await client.get(f"/api/agents/{installed_agent_id}", headers=peer_auth)
-    assert fork.status_code == 200, fork.text
-    assert fork.json()["name"] == "Peer installed expert"
-
-
-@posix_only
-async def test_install_published_expert_accepts_create_options(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, owner_auth, peer_auth, source_agent_id = await _owner_and_peer(env)
-
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Parametric published", "description": "source"},
-    )
-    assert published.status_code == 201, published.text
-    expert_id = published.json()["id"]
-
+async def test_new_edition_keeps_old_version_and_existing_installs(env):
+    client, _server, admin = env
+    owner, peer = await _users(env)
+    first = await _publish(client, admin)
     installed = await client.post(
-        f"/api/experts/published/{expert_id}/install",
-        headers=peer_auth,
-        json={
-            "name": "Installed with options",
-            "description": "fork with options",
-            "default_model": "openai/gpt-4o-mini",
-            "max_iters": 12,
-            "backend": {"type": "local_shell"},
-        },
+        f"{ROOT}/releases/{first['id']}/install", headers=owner, json=_config()
     )
     assert installed.status_code == 201, installed.text
-    agent_id = installed.json()["agent_id"]
-
-    detail = await client.get(f"/api/agents/{agent_id}", headers=peer_auth)
-    assert detail.status_code == 200, detail.text
-    body = detail.json()
-    assert body["name"] == "Installed with options"
-    assert body["default_model"] == "openai/gpt-4o-mini"
-    assert body.get("max_iters") == 12
-    config = body.get("config") or {}
-    assert (config.get("backend") or {}).get("type") == "local_shell"
-
-
-async def test_install_published_expert_does_not_copy_source_composer_defaults(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, server, owner_auth, peer_auth, source_agent_id = await _owner_and_peer(env)
-    source = (await client.get(f"/api/agents/{source_agent_id}", headers=owner_auth)).json()
-    owner_kb = server.services.knowledge_repo.create_base(
-        owner_user_id=source["user_id"], name="Publisher KB"
+    second = await _publish(client, admin, version="2.0")
+    editions = (await client.get(f"{ROOT}/releases", headers=peer)).json()
+    assert {item["version"] for item in editions} == {"1.0", "2.0"}
+    for edition in (first, second):
+        response = await client.post(
+            f"{ROOT}/releases/{edition['id']}/install",
+            headers=peer,
+            json=_config(name=f"Version {edition['version']}"),
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["system_prompt"] == edition["system_prompt"]
+    old = (await client.get(ROOT, headers=owner)).json()[0]
+    assert old["system_prompt"] == first["system_prompt"]
+    assert old["published_expert_id"] == first["id"]
+    duplicate = await client.post(
+        f"{ROOT}/releases", headers=admin, json={"package": _package("2.0"), "reviewed": True}
     )
-    owner_connector = await client.post(
-        "/api/connector-instances",
-        headers=owner_auth,
-        json={
-            "kind": "tencent-docs",
-            "display_name": "Publisher docs",
-            "credentials": {"token": "owner-token"},
-        },
-    )
-    assert owner_connector.status_code == 201, owner_connector.text
-    patched = await client.patch(
-        f"/api/agents/{source_agent_id}",
-        headers=owner_auth,
-        json={
-            "knowledge_base_ids": [owner_kb.id],
-            "mcp_servers": [owner_connector.json()["mcp_server_name"]],
-        },
-    )
-    assert patched.status_code == 200, patched.text
-    assert patched.json()["knowledge_base_ids"] == [owner_kb.id]
+    assert duplicate.status_code == 409, duplicate.text
 
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Published without composer defaults"},
-    )
-    assert published.status_code == 201, published.text
-    expert_id = published.json()["id"]
-    listed = await client.get("/api/experts/published", headers=peer_auth)
-    assert listed.status_code == 200, listed.text
-    card = next(row for row in listed.json() if row["id"] == expert_id)
-    assert "knowledge_base_ids" not in card
-    assert "mcp_servers" not in card
-    detail = await client.get(f"/api/experts/published/{expert_id}", headers=peer_auth)
-    assert detail.status_code == 200, detail.text
-    assert "knowledge_base_ids" not in detail.json()
-    assert "mcp_servers" not in detail.json()
 
-    installed = await client.post(
-        f"/api/experts/published/{expert_id}/install",
-        headers=peer_auth,
-        json={"name": "Fork without inherited defaults"},
+async def test_export_rejects_private_knowledge_and_install_uses_only_installers_choices(env):
+    client, server, admin = env
+    owner, peer = await _users(env)
+    owner_id = (await client.get("/api/auth/me", headers=owner)).json()["id"]
+    peer_id = (await client.get("/api/auth/me", headers=peer)).json()["id"]
+    private_kb = server.services.knowledge_repo.create_base(
+        owner_user_id=owner_id, name="Private source"
     )
-    assert installed.status_code == 201, installed.text
-    fork = (
-        await client.get(f"/api/agents/{installed.json()['agent_id']}", headers=peer_auth)
-    ).json()
-    assert fork["knowledge_base_ids"] == []
-    assert fork["mcp_servers"] == []
-
     peer_kb = server.services.knowledge_repo.create_base(
-        owner_user_id=fork["user_id"], name="Installer KB"
+        owner_user_id=peer_id, name="Installer source"
     )
-    peer_connector = await client.post(
-        "/api/connector-instances",
-        headers=peer_auth,
-        json={
-            "kind": "tencent-docs",
-            "display_name": "Installer docs",
-            "credentials": {"token": "peer-token"},
-        },
-    )
-    assert peer_connector.status_code == 201, peer_connector.text
-    mcp_name = peer_connector.json()["mcp_server_name"]
-    picked = await client.post(
-        f"/api/experts/published/{expert_id}/install",
-        headers=peer_auth,
-        json={
-            "name": "Fork with installer picks",
-            "knowledge_base_ids": [peer_kb.id],
-            "mcp_servers": [mcp_name],
-        },
-    )
-    assert picked.status_code == 201, picked.text
-    chosen = (
-        await client.get(f"/api/agents/{picked.json()['agent_id']}", headers=peer_auth)
-    ).json()
-    assert chosen["knowledge_base_ids"] == [peer_kb.id]
-    assert chosen["mcp_servers"] == [mcp_name]
-    assert owner_kb.id not in chosen["knowledge_base_ids"]
-    assert owner_connector.json()["mcp_server_name"] not in chosen["mcp_servers"]
-
-
-@posix_only
-async def test_install_keeps_source_quick_prompts_when_publish_body_omits_them(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, admin_auth = env
-    owner_auth = await create_user(client, admin_auth, username="quickcard_owner")
-    peer_auth = await create_user(client, admin_auth, username="quickcard_peer")
     created = await client.post(
-        "/api/agents/from-expert/default",
-        headers=owner_auth,
-        json={"name": "quickcard-source"},
+        ROOT, headers=owner, json=_config(knowledge_base_ids=[private_kb.id])
     )
     assert created.status_code == 201, created.text
-    source_agent_id = created.json()["agent_id"]
-
-    source_welcome = await client.get(
-        f"/api/agents/{source_agent_id}/chat/welcome",
-        headers=owner_auth,
+    export_path = f"{ROOT}/{created.json()['agent_id']}/export"
+    metadata = {"version": "1.0", "source": "Editorial team", "license": "Internal"}
+    rejected = await client.post(export_path, headers=owner, json=metadata)
+    assert rejected.status_code == 403, rejected.text
+    updated = await client.put(
+        f"{ROOT}/{created.json()['agent_id']}", headers=owner, json=_config()
     )
-    assert source_welcome.status_code == 200, source_welcome.text
-    source_prompts = source_welcome.json()["quick_prompts"]
-    assert source_prompts
-
+    assert updated.status_code == 200, updated.text
+    exported = await client.post(export_path, headers=owner, json=metadata)
+    assert exported.status_code == 200, exported.text
+    for field in (
+        "knowledge_base_ids",
+        "mcp_servers",
+        "default_model",
+        "files",
+        "credentials",
+        "memory",
+    ):
+        assert field not in exported.json()
     published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={
-            "name": "Quick card expert",
-            "welcome_message": {"zh": "开始写代码吧", "en": "Let's write code"},
-        },
+        f"{ROOT}/releases", headers=admin, json={"package": exported.json(), "reviewed": True}
     )
     assert published.status_code == 201, published.text
-
+    install_path = f"{ROOT}/releases/{published.json()['id']}/install"
+    denied = await client.post(
+        install_path, headers=peer, json=_config(knowledge_base_ids=[private_kb.id])
+    )
+    assert denied.status_code == 403, denied.text
     installed = await client.post(
-        f"/api/experts/published/{published.json()['id']}/install",
-        headers=peer_auth,
-        json={"name": "Quick card fork"},
+        install_path, headers=peer, json=_config(knowledge_base_ids=[peer_kb.id])
     )
     assert installed.status_code == 201, installed.text
+    assert installed.json()["knowledge_base_ids"] == [peer_kb.id]
 
-    unpublished = await client.delete(
-        f"/api/experts/published/{published.json()['id']}",
-        headers=owner_auth,
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("backend", {"type": "local_shell"}),
+        ("mcp_servers", ["publisher-secret"]),
+        ("quick_prompts", [{"prompt": "Private memory"}]),
+        ("task_examples", {"zh": ["Private cron notes"]}),
+        ("icon_url", "https://public.example/avatar.png"),
+        ("files", {"USER.md": "Private user profile"}),
+    ],
+)
+async def test_offline_package_rejects_legacy_workspace_and_runtime_fields(env, field, value):
+    client, _server, admin = env
+    response = await client.post(
+        f"{ROOT}/releases",
+        headers=admin,
+        json={"package": _package(**{field: value}), "reviewed": True},
     )
-    assert unpublished.status_code == 204, unpublished.text
+    assert response.status_code == 422, response.text
+    assert (await client.get(f"{ROOT}/releases", headers=admin)).json() == []
 
-    fork_welcome = await client.get(
-        f"/api/agents/{installed.json()['agent_id']}/chat/welcome",
-        headers=peer_auth,
+
+async def test_install_rechecks_model_grants_and_cannot_add_actions(env):
+    client, server, admin = env
+    owner, peer = await _users(env)
+    edition = await _publish(client, admin)
+    group = server.services.repos.user_group_repo.create(name="Model users", description=None)
+    owner_id = (await client.get("/api/auth/me", headers=owner)).json()["id"]
+    server.services.repos.user_group_member_repo.add(group.user_group_id, owner_id)
+    GroupAccess(server.services.repos).set_visibility(
+        RESOURCE_MODEL, "openai/gpt-4o", "groups", [group.user_group_id]
     )
-    assert fork_welcome.status_code == 200, fork_welcome.text
-    assert fork_welcome.json()["quick_prompts"] == source_prompts
-
-
-@posix_only
-async def test_install_keeps_source_task_examples_when_publish_body_omits_them(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, admin_auth = env
-    owner_auth = await create_user(client, admin_auth, username="taskex_owner")
-    peer_auth = await create_user(client, admin_auth, username="taskex_peer")
-    created = await client.post(
-        "/api/agents/from-expert/default",
-        headers=owner_auth,
-        json={"name": "taskex-source"},
-    )
-    assert created.status_code == 201, created.text
-    source_agent_id = created.json()["agent_id"]
-
-    source_examples = await client.get(
-        f"/api/agents/{source_agent_id}/cron/examples",
-        headers=owner_auth,
-    )
-    assert source_examples.status_code == 200, source_examples.text
-    source_payload = source_examples.json()["task_examples"]
-    assert source_payload and source_payload["zh"] and source_payload["en"]
-
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Task example expert"},
-    )
-    assert published.status_code == 201, published.text
-
-    installed = await client.post(
-        f"/api/experts/published/{published.json()['id']}/install",
-        headers=peer_auth,
-        json={"name": "Task example fork"},
-    )
+    path = f"{ROOT}/releases/{edition['id']}/install"
+    denied = await client.post(path, headers=peer, json=_config())
+    assert denied.status_code == 403, denied.text
+    denied = await client.post(path, headers=owner, json=_config(actions=["local_xlsx"]))
+    assert denied.status_code == 403, denied.text
+    installed = await client.post(path, headers=owner, json=_config())
     assert installed.status_code == 201, installed.text
+    assert (await client.get(ROOT, headers=peer)).json() == []
 
-    unpublished = await client.delete(
-        f"/api/experts/published/{published.json()['id']}",
-        headers=owner_auth,
+
+async def test_new_edition_does_not_grant_added_actions(env):
+    client, _server, admin = env
+    owner, peer = await _users(env)
+    first = await _publish(client, admin)
+    second = await _publish(client, admin, version="2.0", actions=["local_docx", "local_xlsx"])
+    denied = await client.post(
+        f"{ROOT}/releases/{second['id']}/install",
+        headers=peer,
+        json=_config(actions=["local_docx", "local_xlsx"]),
     )
-    assert unpublished.status_code == 204, unpublished.text
+    assert denied.status_code == 403, denied.text
+    for edition in (first, second):
+        installed = await client.post(
+            f"{ROOT}/releases/{edition['id']}/install",
+            headers=owner,
+            json=_config(name=f"Edition {edition['version']}"),
+        )
+        assert installed.status_code == 201, installed.text
+        assert installed.json()["actions"] == ["local_docx"]
 
-    fork_examples = await client.get(
-        f"/api/agents/{installed.json()['agent_id']}/cron/examples",
-        headers=peer_auth,
+
+async def test_approved_skills_are_selectable_but_install_rechecks_group_grants(env):
+    client, server, admin = env
+    owner, peer = await _users(env)
+    edition = await _publish(
+        client,
+        admin,
+        skills=[
+            {
+                "name": "Fact checking",
+                "content": "Preserve exact dates and amounts.",
+                "source": "Editorial team",
+                "license": "Internal",
+            }
+        ],
     )
-    assert fork_examples.status_code == 200, fork_examples.text
-    assert fork_examples.json()["task_examples"] == source_payload
-
-
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-
-
-async def test_published_list_exposes_snapshot_avatar(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, owner_auth, peer_auth, source_agent_id = await _owner_and_peer(env)
-
-    uploaded = await client.post(
-        f"/api/agents/{source_agent_id}/avatar",
-        headers=owner_auth,
-        files={"file": ("face.png", PNG, "image/png")},
+    resources = (await client.get(f"{ROOT}/resources", headers=owner)).json()
+    assert len(resources["skills"]) == 1
+    skill_id = resources["skills"][0]["id"]
+    group = server.services.repos.user_group_repo.create(
+        name="Approved skill users", description=None
     )
-    assert uploaded.status_code == 201, uploaded.text
-
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Avatar published"},
+    owner_id = (await client.get("/api/auth/me", headers=owner)).json()["id"]
+    server.services.repos.user_group_member_repo.add(group.user_group_id, owner_id)
+    GroupAccess(server.services.repos).set_visibility(
+        RESOURCE_SKILL_PACKAGE, skill_id, "groups", [group.user_group_id]
     )
-    assert published.status_code == 201, published.text
-    expert_id = published.json()["id"]
-    icon_url = published.json().get("icon_url")
-    assert isinstance(icon_url, str)
-    assert icon_url.startswith(f"/api/experts/published/{expert_id}/avatar")
-    assert "v=" in icon_url
-
-    listed = await client.get("/api/experts/published", headers=peer_auth)
-    assert listed.status_code == 200, listed.text
-    row = next(item for item in listed.json() if item["id"] == expert_id)
-    assert row["icon_url"] == icon_url
-
-    got = await client.get(icon_url, headers=peer_auth)
-    assert got.status_code == 200, got.text
-    assert got.content == PNG
-    assert got.headers["content-type"].startswith("image/png")
-
-
-async def test_published_list_keeps_public_portrait_without_upload(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, server, owner_auth, peer_auth, source_agent_id = await _owner_and_peer(env)
-    portrait = "/experts/avatars/scene-healthcare.svg"
-    server.services.agent_repo.update_config(source_agent_id, icon_url=portrait)
-
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Portrait published"},
+    path = f"{ROOT}/releases/{edition['id']}/install"
+    denied = await client.post(path, headers=peer, json=_config())
+    assert denied.status_code == 403, denied.text
+    assert (await client.get(f"{ROOT}/resources", headers=peer)).json()["skills"] == []
+    installed = await client.post(path, headers=owner, json=_config())
+    assert installed.status_code == 201, installed.text
+    assert installed.json()["skill_package_ids"] == [skill_id]
+    server.services.repos.user_group_member_repo.remove(group.user_group_id, owner_id)
+    changed = await client.put(
+        f"{ROOT}/{installed.json()['agent_id']}",
+        headers=owner,
+        json=_config(skill_package_ids=[skill_id]),
     )
-    assert published.status_code == 201, published.text
-    assert published.json()["icon_url"] == portrait
-
-    listed = await client.get("/api/experts/published", headers=peer_auth)
-    assert listed.status_code == 200, listed.text
-    row = next(item for item in listed.json() if item["id"] == published.json()["id"])
-    assert row["icon_url"] == portrait
-
-
-async def test_creator_can_refresh_published_expert(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, owner_auth, _peer_auth, source_agent_id = await _owner_and_peer(env)
-    published = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Refreshable expert"},
-    )
-    assert published.status_code == 201, published.text
-    before = published.json()["updated_at"]
-
-    refreshed = await client.post(
-        f"/api/experts/published/{published.json()['id']}/refresh",
-        headers=owner_auth,
-    )
-    assert refreshed.status_code == 200, refreshed.text
-    assert refreshed.json()["id"] == published.json()["id"]
-    assert refreshed.json()["updated_at"] >= before
-
-
-async def test_second_publish_of_same_source_is_rejected(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, owner_auth, _peer_auth, source_agent_id = await _owner_and_peer(env)
-    first = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "First publish"},
-    )
-    assert first.status_code == 201, first.text
-
-    second = await client.post(
-        f"/api/agents/{source_agent_id}/publish-expert",
-        headers=owner_auth,
-        json={"name": "Duplicate publish"},
-    )
-    assert second.status_code == 409, second.text
-    assert second.json()["error"]["code"] == "PUBLISHED_EXPERT_ALREADY_EXISTS"
-
-
-async def test_admin_cannot_publish_another_users_agent(
-    env: tuple[Any, Any, dict[str, str]],
-) -> None:
-    client, _server, admin_auth = env
-    owner_auth = await create_user(client, admin_auth, username="private_agent_owner")
-    created = await client.post(
-        "/api/agents/from-expert/default",
-        headers=owner_auth,
-        json={"name": "private source"},
-    )
-    assert created.status_code == 201, created.text
-
-    published = await client.post(
-        f"/api/agents/{created.json()['agent_id']}/publish-expert",
-        headers=admin_auth,
-        json={"name": "Admin must not publish"},
-    )
-    assert published.status_code == 403, published.text
+    assert changed.status_code == 403, changed.text

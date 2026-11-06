@@ -36,7 +36,7 @@ def test_published_experts_dir_is_under_instance_root(tmp_path: Path) -> None:
     assert PathLayout(tmp_path).published_experts_dir == tmp_path / "published_experts"
 
 
-def test_only_creator_or_admin_can_mutate_published_expert() -> None:
+def test_only_admin_can_mutate_published_expert() -> None:
     row = PublishedExpertRow(
         id="01",
         pk=1,
@@ -54,11 +54,11 @@ def test_only_creator_or_admin_can_mutate_published_expert() -> None:
     admin = User(id=8, username="admin", role=Role.ADMIN, display_name=None)
     other = User(id=9, username="other", role=Role.USER, display_name=None)
 
-    assert_can_mutate_published(row, owner)
     assert_can_mutate_published(row, admin)
-    with pytest.raises(OctopError) as exc:
-        assert_can_mutate_published(row, other)
-    assert exc.value.code is ErrorCode.FORBIDDEN
+    for user in (owner, other):
+        with pytest.raises(OctopError) as exc:
+            assert_can_mutate_published(row, user)
+        assert exc.value.code is ErrorCode.FORBIDDEN
 
 
 def test_resolve_published_expert_slug_retries_derived_name_and_rejects_taken_explicit_slug() -> (
@@ -532,8 +532,9 @@ async def test_publish_agent_expert_maps_sqlite_integrity_error(
         paths=SimpleNamespace(published_experts_dir=tmp_path),
     )
     registry = SimpleNamespace(get_row=lambda _agent_id: None, get_config=lambda _agent_id: {})
-    user = User(id=1, username="owner", role=Role.USER, display_name=None)
+    user = User(id=1, username="owner", role=Role.ADMIN, display_name=None)
     source = SimpleNamespace(
+        user_id=user.id,
         agent_id="agt",
         description="",
         icon_name="",

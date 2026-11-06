@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 
 import pytest
@@ -98,6 +99,102 @@ async def test_docx_generation_uses_only_text_and_returns_safe_failures(env, mon
             assert response.json()["error"]["code"] == "LOCAL_DOCX_GENERATION_FAILED"
             assert "secret-key" not in response.text
             assert "original-document" not in response.text
+
+
+@pytest.mark.parametrize("format", ["docx", "xlsx"])
+async def test_local_task_rejects_another_employees_expert(env, format):
+    client, server, admin = env
+    alice = await create_user(
+        client, admin, username="alice", permissions=[*GRANTS, "local_xlsx", "experts"]
+    )
+    bob = await create_user(client, admin, username="bob")
+    bob_id = (await client.get("/api/auth/me", headers=bob)).json()["id"]
+    server.services.agent_repo.create(
+        agent_id="bobs-expert", user_id=bob_id, name="Private", default_model="openai/gpt-4o"
+    )
+    async with approved_device(client, admin, alice) as (device_id, native):
+        response = await client.post(
+            f"/api/devices/{device_id}/{format}/generate",
+            headers=native,
+            json={"agent_id": "bobs-expert", "instruction": "整理", "text": "资料"},
+        )
+        assert response.status_code == 403
+        for action in ("read", "create"):
+            response = await client.post(
+                f"/api/devices/{device_id}/{format}/authorize",
+                headers=native,
+                json={"agent_id": "bobs-expert", "action": action},
+            )
+            assert response.status_code == 403
+
+
+@pytest.mark.parametrize("format", ["docx", "xlsx"])
+async def test_local_expert_uses_selected_model_and_discards_revoked_result(
+    env, monkeypatch, format
+):
+    from unittest.mock import AsyncMock
+
+    client, server, admin = env
+    alice = await create_user(
+        client, admin, username="alice", permissions=[*GRANTS, "local_xlsx", "experts"]
+    )
+    alice_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    await seed_intranet_provider(client, admin)
+    server.services.settings_repo.set_active_model("unavailable", "do-not-fallback")
+    server.services.agent_repo.create(
+        agent_id="private-expert",
+        user_id=alice_id,
+        name="Private",
+        default_model="openai/gpt-4o",
+        system_prompt="列出待办负责人。",
+        config_json=json.dumps({"local_only": True, "local_actions": [f"local_{format}"]}),
+    )
+    model = AsyncMock(return_value="整理后的结果")
+    monkeypatch.setattr(
+        server.app_runtime.agent_registry.host_models, "ainvoke_intranet_text", model
+    )
+    async with approved_device(client, admin, alice) as (device_id, native):
+        body = {"agent_id": "private-expert", "instruction": "整理", "text": "资料"}
+        path = f"/api/devices/{device_id}/{format}/generate"
+        response = await client.post(path, headers=native, json=body)
+        assert response.status_code == 200
+        assert response.json() == {"text": "整理后的结果"}
+        assert model.call_args.args[0] == "openai/gpt-4o"
+        assert "列出待办负责人。" in model.call_args.kwargs["system"]
+
+        async def change_configuration(*args, **kwargs):
+            server.services.agent_repo.update_config(
+                "private-expert", system_prompt="Changed while running"
+            )
+            return "stale configuration result"
+
+        model.side_effect = change_configuration
+        changed = await client.post(path, headers=native, json=body)
+        assert changed.status_code == 403
+        assert "stale configuration result" not in changed.text
+
+        async def revoke(*args, **kwargs):
+            server.services.agent_repo.update_config(
+                "private-expert",
+                config_json=json.dumps(
+                    {
+                        "local_only": True,
+                        "local_actions": ["local_xlsx" if format == "docx" else "local_docx"],
+                    }
+                ),
+            )
+            return "不得返回的结果"
+
+        model.side_effect = revoke
+        response = await client.post(path, headers=native, json=body)
+        assert response.status_code == 403
+        assert "不得返回的结果" not in response.text
+        response = await client.post(
+            f"/api/devices/{device_id}/{format}/authorize",
+            headers=native,
+            json={"agent_id": "private-expert", "action": "create"},
+        )
+        assert response.status_code == 403
 
 
 @pytest.mark.parametrize("missing", GRANTS)

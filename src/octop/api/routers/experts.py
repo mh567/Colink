@@ -93,6 +93,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _offline_only() -> None:
+    raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
+
+
 def _validated_session_defaults(
     registry: Any,
     user_id: int,
@@ -639,7 +643,7 @@ async def get_published_expert(
 async def publish_agent_expert(
     agent_id: str,
     body: PublishExpertBody,
-    user: Any = Depends(current_user),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Snapshot an owned agent workspace into a globally installable expert template."""
@@ -675,7 +679,7 @@ async def publish_agent_expert(
 async def refresh_published_expert(
     expert_id: str,
     body: RefreshPublishedExpertBody | None = None,
-    user: Any = Depends(current_user),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Replace a published snapshot using its still-owned source agent workspace."""
@@ -736,7 +740,7 @@ async def unpublish_expert(
 async def install_published_expert(
     expert_id: str,
     body: InstallPublishedExpertBody,
-    user: Any = Depends(current_user),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Create a private agent and seed it from the immutable published snapshot."""
@@ -754,6 +758,8 @@ async def install_published_expert(
         mcp_servers=body.mcp_servers,
     )
     patch, copies, report = _composer_apply(body, user=user, server=server)
+    if body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
     if body.visibility is not None:
         from octop.infra.users.groups import GroupAccess  # noqa: PLC0415
 
@@ -815,7 +821,7 @@ async def list_experts(
 async def list_expert_hub(
     q: str = "",
     scene: str = "",
-    _: Any = Depends(current_user),
+    _: Any = Depends(_offline_only),
 ) -> dict[str, Any]:
     """List experts published on the octop.cloud market."""
     try:
@@ -843,7 +849,7 @@ async def list_expert_hub(
 )
 async def get_expert_hub_item(
     slug: str,
-    _: Any = Depends(current_user),
+    _: Any = Depends(_offline_only),
 ) -> dict[str, Any]:
     """Expert detail from the octop.cloud market."""
     try:
@@ -872,7 +878,7 @@ async def get_expert_hub_item(
 async def install_expert_hub_item(
     slug: str,
     body: FromExpertBody,
-    user: Any = Depends(current_user),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Create an agent from an octop.cloud market expert package."""
@@ -896,6 +902,8 @@ async def install_expert_hub_item(
         mcp_servers=body.mcp_servers,
     )
     patch, copies, report = _composer_apply(body, user=user, server=server)
+    if body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
     if body.visibility is not None:
         from octop.infra.users.groups import GroupAccess  # noqa: PLC0415
 
@@ -1038,6 +1046,8 @@ async def create_agent_from_expert(
         mcp_servers=servers,
     )
     patch, copies, report = _composer_apply(body, user=user, server=server)
+    if body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
     if body.visibility is not None:
         from octop.infra.users.groups import GroupAccess  # noqa: PLC0415
 

@@ -49,7 +49,7 @@ def _store() -> SimpleNamespace:
         ("snapshot", _user(2), True),
         ("lock", _user(2), True),
         ("deny", _user(2), False),
-        ("deny", _user(7), True),  # creator
+        ("deny", _user(7), False),  # shared creator is a reader
         ("deny", _user(1, admin=True), True),  # admin
         (None, _user(2), True),  # legacy rows without policy
         ("garbage", _user(2), True),  # unknown values clamp to snapshot
@@ -65,8 +65,21 @@ def test_assert_can_copy_raises_deny_for_others() -> None:
     with pytest.raises(OctopError) as excinfo:
         store.assert_can_copy(_row("deny"), _user(2))
     assert excinfo.value.code == ErrorCode.SKILL_PACKAGE_COPY_DENIED
-    # creator passes without raising
-    store.assert_can_copy(_row("deny"), _user(7))
+    with pytest.raises(OctopError) as excinfo:
+        store.assert_can_copy(_row("deny"), _user(7))
+    assert excinfo.value.code == ErrorCode.SKILL_PACKAGE_COPY_DENIED
+    store.assert_can_copy(_row("deny"), _user(1, admin=True))
+    store.assert_can_copy(_row("deny", shared=False), _user(7))
+
+
+@pytest.mark.parametrize("user", [_user(2), _user(1, admin=True)])
+def test_private_package_copy_cannot_bypass_visibility(user: SimpleNamespace) -> None:
+    store = _store()
+    row = _row("snapshot", shared=False)
+    assert store.can_copy(row, user) is False
+    with pytest.raises(OctopError) as excinfo:
+        store.assert_can_copy(row, user)
+    assert excinfo.value.code == ErrorCode.SKILL_PACKAGE_NOT_FOUND
 
 
 def test_normalize_copy_policy() -> None:

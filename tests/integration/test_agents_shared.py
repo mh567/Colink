@@ -14,7 +14,7 @@ async def env(env_with_provider):
 
 
 async def _shared_agent(env) -> tuple[object, dict[str, str], dict[str, str], str]:
-    client, _srv, admin_auth = env
+    client, srv, admin_auth = env
     owner_auth = await create_user(client, admin_auth, username="share_owner")
     peer_auth = await create_user(client, admin_auth, username="share_peer")
     response = await client.post(
@@ -23,19 +23,14 @@ async def _shared_agent(env) -> tuple[object, dict[str, str], dict[str, str], st
         json={"name": "shared-bot"},
     )
     assert response.status_code == 201, response.text
-    return client, owner_auth, peer_auth, response.json()["agent_id"]
+    agent_id = response.json()["agent_id"]
+    # Compatibility fixture: sharing was possible before reviewed offline releases.
+    srv.services.agent_repo.set_shared(agent_id, True)
+    return client, owner_auth, peer_auth, agent_id
 
 
 async def test_shared_agent_appears_for_other_user(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["is_shared"] is True
 
     response = await client.get("/api/agents", headers=peer_auth)
     assert response.status_code == 200
@@ -50,7 +45,7 @@ async def test_shared_agent_appears_for_other_user(env) -> None:
     assert response.json()["is_owner"] is False
 
 
-async def test_create_agent_can_be_shared(env) -> None:
+async def test_employee_cannot_create_or_update_directly_shared_agent(env) -> None:
     client, _srv, admin_auth = env
     owner_auth = await create_user(client, admin_auth, username="shared_create_owner")
     peer_auth = await create_user(client, admin_auth, username="shared_create_peer")
@@ -60,23 +55,24 @@ async def test_create_agent_can_be_shared(env) -> None:
         headers=owner_auth,
         json={"name": "created-shared-bot", "config": {}, "is_shared": True},
     )
+    assert response.status_code == 403, response.text
+    assert (await client.get("/api/agents", headers=owner_auth)).json() == []
+    response = await client.post(
+        "/api/agents", headers=owner_auth, json={"name": "private-bot", "config": {}}
+    )
     assert response.status_code == 201, response.text
     agent_id = response.json()["agent_id"]
-    assert response.json()["is_shared"] is True
-
+    denied = await client.patch(
+        f"/api/agents/{agent_id}", headers=owner_auth, json={"is_shared": True}
+    )
+    assert denied.status_code == 403, denied.text
     response = await client.get("/api/agents", headers=peer_auth)
     assert response.status_code == 200
-    assert agent_id in {row["agent_id"] for row in response.json()}
+    assert agent_id not in {row["agent_id"] for row in response.json()}
 
 
 async def test_peer_cannot_patch_shared_agent(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
 
     response = await client.patch(
         f"/api/agents/{agent_id}",
@@ -88,12 +84,6 @@ async def test_peer_cannot_patch_shared_agent(env) -> None:
 
 async def test_peer_cannot_mutate_shared_agent_workspace_or_skills(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
 
     response = await client.put(
         f"/api/agents/{agent_id}/workspace/file",
@@ -139,14 +129,8 @@ async def test_peer_cannot_mutate_shared_agent_workspace_or_skills(env) -> None:
     assert response.status_code == 200, response.text
 
 
-async def test_peer_can_read_shared_agent_inbound_attachment(env) -> None:
+async def test_shared_agent_does_not_expose_owner_inbound_attachment(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
 
     response = await client.put(
         f"/api/agents/{agent_id}/workspace/file",
@@ -158,29 +142,30 @@ async def test_peer_can_read_shared_agent_inbound_attachment(env) -> None:
 
     response = await client.get(
         f"/api/agents/{agent_id}/workspace/file",
-        headers=peer_auth,
+        headers=owner_auth,
         params={"path": "inbound/shared-attachment.txt"},
     )
     assert response.status_code == 200, response.text
     assert response.json()["content"] == "shared attachment"
 
     response = await client.get(
+        f"/api/agents/{agent_id}/workspace/file",
+        headers=peer_auth,
+        params={"path": "inbound/shared-attachment.txt"},
+    )
+    assert response.status_code == 403, response.text
+
+    response = await client.get(
         f"/api/agents/{agent_id}/workspace/download",
         headers=peer_auth,
         params={"path": "inbound/shared-attachment.txt"},
     )
-    assert response.status_code == 200, response.text
-    assert response.content == b"shared attachment"
+    assert response.status_code == 403, response.text
+    assert b"shared attachment" not in response.content
 
 
 async def test_unshare_hides_agent_from_peer(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
 
     response = await client.patch(
         f"/api/agents/{agent_id}",
@@ -200,12 +185,6 @@ async def test_unshare_hides_agent_from_peer(env) -> None:
 
 async def test_shared_agent_threads_are_private(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
 
     response = await client.post(f"/api/agents/{agent_id}/threads", headers=owner_auth)
     assert response.status_code == 201, response.text
@@ -255,13 +234,7 @@ async def test_shared_viewer_marks_own_unread_read(env) -> None:
     denied = await client.post(f"/api/agents/{agent_id}/read", headers=peer_auth)
     assert denied.status_code == 403
 
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
-
+    srv.services.agent_repo.set_shared(agent_id, True)
     cleared = await client.post(f"/api/agents/{agent_id}/read", headers=peer_auth)
     assert cleared.status_code == 204, cleared.text
 
@@ -278,12 +251,6 @@ async def test_shared_viewer_marks_own_unread_read(env) -> None:
 
 async def test_peer_cannot_rebind_session_to_owner_thread(env) -> None:
     client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
 
     response = await client.post(f"/api/agents/{agent_id}/threads", headers=owner_auth)
     assert response.status_code == 201, response.text

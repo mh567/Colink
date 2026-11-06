@@ -98,7 +98,7 @@ async def test_owner_can_delete_own_agent(env) -> None:
     assert r.status_code == 404
 
 
-async def test_non_admin_cannot_delete_shared_agent(env) -> None:
+async def test_management_role_does_not_grant_orphan_agent_ownership(env) -> None:
     c, srv, admin_auth = env
     user_auth = await create_user(c, admin_auth, username="shared_guard")
     agent_id = "shared-del-test"
@@ -108,7 +108,8 @@ async def test_non_admin_cannot_delete_shared_agent(env) -> None:
     assert r.status_code == 403
 
     r = await c.delete(f"/api/agents/{agent_id}", headers=admin_auth)
-    assert r.status_code == 204
+    assert r.status_code == 403
+    assert srv.services.agent_repo.get(agent_id) is not None
 
 
 async def test_regular_user_can_create_and_reload_agent(env) -> None:

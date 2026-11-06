@@ -6,18 +6,14 @@ from tests.support.auth import create_agent, create_user, seed_openai_provider
 
 
 async def test_shared_agent_hides_owner_cron_from_peer(env) -> None:
-    client, _srv, admin_auth = env
+    client, srv, admin_auth = env
     await seed_openai_provider(client, admin_auth)
     owner_auth = await create_user(client, admin_auth, username="cron_owner")
     peer_auth = await create_user(client, admin_auth, username="cron_peer")
     agent_id = await create_agent(client, owner_auth, name="shared-cron-bot")
 
-    response = await client.patch(
-        f"/api/agents/{agent_id}",
-        headers=owner_auth,
-        json={"is_shared": True},
-    )
-    assert response.status_code == 200, response.text
+    # Retained shared rows must not grant access to the owner's jobs.
+    srv.services.agent_repo.set_shared(agent_id, True)
 
     response = await client.post(
         f"/api/agents/{agent_id}/cron",
