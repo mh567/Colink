@@ -396,7 +396,7 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" {
+	if format != "docx" && format != "xlsx" && format != "ocr" {
 		return errors.New("不支持的文件类型")
 	}
 	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + format + "/" + action
@@ -480,23 +480,28 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" {
+	if format != "docx" && format != "xlsx" && format != "ocr" {
 		return task, errors.New("不支持的文件类型")
 	}
 	s.Format = format
 	s.AgentID = request.AgentID
 	filename := docxFilename
+	outputFilename := docxFilename
 	if format == "xlsx" {
 		filename = xlsxFilename
+		outputFilename = xlsxFilename
+	}
+	if format == "ocr" {
+		filename, outputFilename = ocrSourceFilename, ocrOutputFilename
 	}
 	task = docxTask{AgentID: request.AgentID, Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
 	if err = filename(request.Source); err != nil {
 		return task, err
 	}
-	if err = filename(request.Output); err != nil {
+	if err = outputFilename(request.Output); err != nil {
 		return task, err
 	}
-	if strings.TrimSpace(request.Instruction) == "" || utf8.RuneCountInString(request.Instruction) > 8000 {
+	if format != "ocr" && (strings.TrimSpace(request.Instruction) == "" || utf8.RuneCountInString(request.Instruction) > 8000) {
 		return task, errors.New("请输入不超过 8000 字符的任务说明")
 	}
 	source, err := w.openGrant(s, request.SourceGrant, false)
@@ -559,27 +564,37 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if format == "xlsx" {
 		read = readXLSX
 	}
-	text, err := read(f, actual.Size())
+	var text string
+	if format == "ocr" {
+		text, err = readLocalOCR(s.Context, f, actual.Size())
+	} else {
+		text, err = read(f, actual.Size())
+	}
 	if err != nil {
 		return task, err
 	}
-	var generated struct {
-		Text string `json:"text"`
-	}
-	payload := map[string]string{"instruction": request.Instruction, "text": text}
-	if request.AgentID != "" {
-		payload["agent_id"] = request.AgentID
-	}
-	if err = docxCall(s, "generate", payload, &generated); err != nil {
-		return task, err
-	}
-	makeFile := makeDOCX
-	if format == "xlsx" {
-		makeFile = makeXLSX
-	}
-	data, err := makeFile(generated.Text)
-	if err != nil {
-		return task, err
+	var data []byte
+	if format == "ocr" {
+		data = []byte(text)
+	} else {
+		var generated struct {
+			Text string `json:"text"`
+		}
+		payload := map[string]string{"instruction": request.Instruction, "text": text}
+		if request.AgentID != "" {
+			payload["agent_id"] = request.AgentID
+		}
+		if err = docxCall(s, "generate", payload, &generated); err != nil {
+			return task, err
+		}
+		makeFile := makeDOCX
+		if format == "xlsx" {
+			makeFile = makeXLSX
+		}
+		data, err = makeFile(generated.Text)
+		if err != nil {
+			return task, err
+		}
 	}
 	if err = authorizeDOCX(s, "create"); err != nil {
 		return task, err
@@ -587,7 +602,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = current(); err != nil {
 		return task, err
 	}
-	if format == "xlsx" {
+	if format == "xlsx" || format == "ocr" {
 		output, err = w.openGrant(s, request.OutputGrant, true)
 		if err != nil {
 			return task, err

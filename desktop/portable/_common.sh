@@ -313,3 +313,11 @@ verify_no_homebrew_dylibs() {
   echo "[green] dylib check OK (no Homebrew/MacPorts absolute paths)"
   return 0
 }
+
+# OCR is shipped only on these native targets; other desktop packages stay unchanged.
+supports_local_ocr() {
+  case "$1" in
+    linux-amd64|linux-arm64|windows-amd64|darwin-arm64) return 0 ;;
+    *) return 1 ;;
+  esac
+}

@@ -1,0 +1,6 @@
+本机 OCR 使用 RapidOCR 3.9.2 wheel 内附的 PP-OCRv6 检测、识别及移动方向分类 ONNX 模型。
+来源：https://github.com/RapidAI/RapidOCR/tree/v3.9.2
+模型上游：https://github.com/PaddlePaddle/PaddleOCR
+RapidOCR 与 PaddleOCR 使用 Apache License 2.0；全文分别附在本目录。
+模型字节来自 uv.lock 锁定的 RapidOCR wheel，未修改。
+pypdfium2/PDFium、ONNX Runtime、OpenCV 及传递组件的许可证和第三方声明保留在 ../../packages 对应组件与 .dist-info 目录。

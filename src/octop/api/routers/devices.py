@@ -159,6 +159,27 @@ async def authorize_xlsx(
 
 
 @router.post(
+    "/{device_id}/ocr/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize local scanned PDF recognition on the current native device",
+    description="Requires an approved live native session and explicit OCR/read or OCR/create "
+    "permissions, including for administrators. Only the action is sent; PDF bytes and "
+    "recognized text stay on the client, which also enforces directory grants.",
+)
+async def authorize_ocr(
+    device_id: str,
+    body: DocxAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    server.device_manager.authorize_docx(
+        user, device_id, x_colink_device_session, body.action, format="ocr"
+    )
+    return DocxAuthorization()
+
+
+@router.post(
     "/{device_id}/docx/generate",
     response_model=DocxGeneratedText,
     summary="Generate document text for an authorized native DOCX task",

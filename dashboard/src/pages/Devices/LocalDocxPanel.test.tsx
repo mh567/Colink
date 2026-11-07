@@ -186,6 +186,96 @@ it.each(["completed", "failed"])(
   },
 );
 
+it.each(["completed", "failed"])(
+  "runs OCR locally without a model instruction and displays %s",
+  async (status) => {
+    const { localExpertsApi } = await import("../../api/modules/localExperts");
+    vi.mocked(localExpertsApi.list).mockResolvedValueOnce([
+      {
+        agent_id: "mine-expert",
+        name: "会议专家",
+        description: "",
+        system_prompt: "整理",
+        default_model: "intranet/chat",
+        actions: ["local_docx"],
+        skill_package_ids: [],
+        knowledge_base_ids: [],
+        published_expert_id: null,
+      },
+    ]);
+    const invoke = vi.fn();
+    (window as Window & { _wails?: unknown })._wails = { invoke };
+    render(<LocalDocxPanel deviceId="mine" />);
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: {
+            device_id: "mine",
+            busy: false,
+            grants: [
+              { id: "ro", path: "/资料", mode: "ro" },
+              { id: "rw", path: "/成果", mode: "rw" },
+            ],
+            tasks: [],
+          },
+        }),
+      );
+    });
+    const user = userEvent.setup();
+    await screen.findByRole("option", { name: "会议专家" });
+    await user.selectOptions(screen.getByLabelText("任务专家"), "mine-expert");
+    await user.selectOptions(screen.getByLabelText("文件类型"), "ocr");
+    expect(screen.queryByLabelText("任务专家")).toBeNull();
+    expect(screen.queryByLabelText("任务描述")).toBeNull();
+    expect(screen.getByText(/原件和识别文字均保留在本机/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("资料目录"), "ro");
+    await user.selectOptions(screen.getByLabelText("成果目录"), "rw");
+    await user.type(screen.getByLabelText("源文件名"), "扫描资料.pdf");
+    await user.type(screen.getByLabelText("新文件名"), "识别文字.txt");
+    await user.click(screen.getByRole("button", { name: "识别扫描 PDF" }));
+    expect(
+      JSON.parse(
+        decodeURIComponent(
+          invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+        ),
+      ),
+    ).toEqual({
+      action: "run",
+      format: "ocr",
+      source_grant: "ro",
+      source: "扫描资料.pdf",
+      output_grant: "rw",
+      output: "识别文字.txt",
+      instruction: "",
+    });
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: {
+            device_id: "mine",
+            busy: false,
+            grants: [],
+            tasks: [
+              {
+                id: "ocr-1",
+                format: "ocr",
+                instruction: "",
+                source: "扫描资料.pdf",
+                output: "/成果/识别文字.txt",
+                status,
+                error: status === "failed" ? "离线识别资源缺失" : undefined,
+              },
+            ],
+          },
+        }),
+      );
+    });
+    expect(screen.getByText("/成果/识别文字.txt")).toBeInTheDocument();
+    expect(
+      screen.getByText(status === "failed" ? "离线识别资源缺失" : "已完成"),
+    ).toBeInTheDocument();
+  },
+);
 it("passes the selected authorized expert to the native task", async () => {
   const { localExpertsApi } = await import("../../api/modules/localExperts");
   vi.mocked(localExpertsApi.list).mockResolvedValueOnce([
