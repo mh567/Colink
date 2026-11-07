@@ -10,6 +10,7 @@ import base64
 import io
 import zipfile
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -507,96 +508,45 @@ async def test_put_rejects_removed_skill(env: Any) -> None:
 # --- URL import ------------------------------------------------------------
 
 
-async def test_import_skill_from_url(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    c, srv, auth, aid = env
-    from octop.infra.skills import skills_hub
-
-    uploads = [
-        (
-            "skills/imported-skill/SKILL.md",
-            SAMPLE_SKILL.encode("utf-8"),
-        ),
-        (
-            "skills/imported-skill/references/doc.md",
-            b"# doc",
-        ),
-    ]
-
-    def _fake_resolve(**_kwargs: object) -> skills_hub.BundleResolveResult:
-        return skills_hub.BundleResolveResult(
-            name="imported-skill",
-            uploads=uploads,
-            source_url="https://github.com/example/repo",
-        )
-
-    monkeypatch.setattr(skills_hub, "resolve_bundle_from_url", _fake_resolve)
-
-    srv.app_runtime.agent_registry.sync_skills_disabled = lambda *_a, **_k: None  # type: ignore[method-assign]
-
-    r = await c.post(
-        f"/api/agents/{aid}/skills/import",
-        headers=auth,
-        json={
-            "bundle_url": "https://github.com/example/repo/tree/main/skills/imported-skill",
-            "enable": True,
-        },
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert body["slug"] == "imported-skill"
-    assert body["name"] == "file-reader"
-    assert body["enabled"] is True
-    assert body["kind"] == "workspace"
-
-    agent = srv.app_runtime.agent_registry.get_agent(aid)
-    raw = await agent.workspace.aread_text("skills/imported-skill/SKILL.md")
-    assert raw is not None
-    assert "file-reader" in raw
-    ref = await agent.workspace.aread_text("skills/imported-skill/references/doc.md")
-    assert ref == "# doc"
-
-    cfg = srv.app_runtime.agent_registry.get_config(aid)
-    assert "imported-skill" not in set(cfg.get("skills_disabled") or [])
-
-
-async def test_import_rejects_unsupported_url(env: Any) -> None:
-    c, _srv, auth, aid = env
-    r = await c.post(
-        f"/api/agents/{aid}/skills/import",
-        headers=auth,
-        json={"bundle_url": "https://example.com/skill"},
-    )
-    assert r.status_code == 400
-    assert r.json()["error"]["code"] == "SKILL_IMPORT_UNSUPPORTED_URL"
-
-
-async def test_import_rejects_adapter_upload_outside_skill_root(
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/example/repo/tree/main/skills/imported-skill",
+        "https://example.com/skill",
+        "https://github.com/example/repo",
+    ],
+    ids=["supported-url", "unsupported-url", "unsafe-adapter-upload"],
+)
+async def test_url_import_rejected_before_adapter(
     env: Any,
     monkeypatch: pytest.MonkeyPatch,
+    url: str,
 ) -> None:
-    c, _srv, auth, aid = env
-    from octop.infra.skills import skills_hub
+    from octop.infra.skills import install, skills_hub
 
-    def _fake_resolve(**_kwargs: object) -> skills_hub.BundleResolveResult:
-        return skills_hub.BundleResolveResult(
+    c, _srv, auth, aid = env
+    adapter = Mock(
+        return_value=skills_hub.BundleResolveResult(
             name="imported-skill",
             uploads=[
                 ("skills/imported-skill/SKILL.md", SAMPLE_SKILL.encode()),
                 ("skills/other/escape.md", b"unsafe"),
             ],
-            source_url="https://github.com/example/repo",
+            source_url=url,
         )
-
-    monkeypatch.setattr(skills_hub, "resolve_bundle_from_url", _fake_resolve)
-
+    )
+    resolver = Mock(side_effect=AssertionError("Online import must not resolve a URL"))
+    monkeypatch.setattr(skills_hub, "resolve_bundle_from_url", adapter)
+    monkeypatch.setattr(install, "resolve_url_import", resolver)
     r = await c.post(
         f"/api/agents/{aid}/skills/import",
         headers=auth,
-        json={"bundle_url": "https://github.com/example/repo"},
+        json={"bundle_url": url, "enable": True},
     )
-
-    assert r.status_code == 502
-    assert r.json()["error"]["code"] == "SKILL_IMPORT_FAILED"
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "LOCAL_EXPERT_REVIEW_REQUIRED"
+    resolver.assert_not_called()
+    adapter.assert_not_called()
 
 
 # --- local zip-style files create / overwrite -----------------------------

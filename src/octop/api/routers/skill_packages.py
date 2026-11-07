@@ -235,6 +235,20 @@ def _package_access(server: OctopServer) -> GroupAccess:
     return GroupAccess(server.services.repos)
 
 
+def _assert_package_mutable(
+    server: Any, store: SkillPackageStore, row: SkillPackageRow, user: User
+) -> None:
+    from octop.infra.agents.experts.local_tasks import approved_skill
+
+    if approved_skill(server.services, row.id) is not None:
+        raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "publish a new reviewed version")
+    store.assert_can_mutate(row, user)
+
+
+def _offline_only() -> None:
+    raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
+
+
 def _package_owner(user: User, row: SkillPackageRow) -> bool:
     return str(user.id) == str(row.created_by)
 
@@ -291,8 +305,6 @@ def _icon_url(value: str, *, package_id: str | None = None) -> str:
 
 
 def _visible_packages(store: SkillPackageStore, user: User) -> list[SkillPackageRow]:
-    if user.is_admin:
-        return store.repo.list_all()
     return store.repo.list_visible(user.id)
 
 
@@ -403,7 +415,7 @@ async def list_skill_packages(
 async def package_hub_search(
     q: str = "",
     limit: int = 50,
-    _user: User = Depends(require_permission("skill_packages")),
+    _user: User = Depends(_offline_only),
 ) -> list[dict[str, Any]]:
     from fastapi import HTTPException  # noqa: PLC0415
 
@@ -423,7 +435,7 @@ async def package_hub_search(
 @router.get("/hub/rankings", summary="SkillHub rankings for installing into packages")
 async def package_hub_rankings(
     type: str = "all",
-    _user: User = Depends(require_permission("skill_packages")),
+    _user: User = Depends(_offline_only),
 ) -> dict[str, Any]:
     from fastapi import HTTPException  # noqa: PLC0415
 
@@ -450,6 +462,8 @@ async def create_skill_package(
     user: User = Depends(require_permission("skill_packages")),
 ) -> dict[str, Any]:
     store = _store(server)
+    if body.shared or body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
     name = _required(body.name, "name")
     if body.visibility is not None:
         _package_access(server).validate_visibility(body.visibility, body.group_ids)
@@ -496,7 +510,7 @@ async def create_skill_package(
 async def create_from_skillhub(
     body: FromSkillHubBody,
     server: OctopServer = Depends(get_server),
-    user: User = Depends(require_permission("skill_packages")),
+    user: User = Depends(_offline_only),
 ) -> dict[str, Any]:
     store = _store(server)
     try:
@@ -556,7 +570,9 @@ async def update_skill_package(
     store = _store(server)
     locale = resolve_request_locale(request)
     row = _package_or_404(store, package_id, locale=locale)
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
+    if body.shared or body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
     name = _required(body.name, "name") if body.name is not None else None
     description = body.description.strip() if body.description is not None else None
     icon_name = body.icon_name.strip() if body.icon_name is not None else None
@@ -621,7 +637,7 @@ async def delete_skill_package(
 ) -> None:
     store = _store(server)
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
     store.delete_package(package_id)
     from octop.infra.users.profile_avatar import delete_profile_avatar  # noqa: PLC0415
 
@@ -651,7 +667,7 @@ async def upload_skill_package_avatar(
     store = _store(server)
     locale = resolve_request_locale(request)
     row = _package_or_404(store, package_id, locale=locale)
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
     write_profile_avatar(
         _package_avatars(server),
         package_id,
@@ -694,7 +710,7 @@ async def delete_skill_package_avatar(
     store = _store(server)
     locale = resolve_request_locale(request)
     row = _package_or_404(store, package_id, locale=locale)
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
     delete_profile_avatar(_package_avatars(server), package_id)
     store.repo.update(package_id, icon_url="")
 
@@ -853,7 +869,7 @@ async def create_package_skill(
 ) -> dict[str, Any]:
     store = _store(server)
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
     slug = _required(body.name, "name")
     if _package_skill_exists(store, package_id, slug) and not body.overwrite:
         raise OctopError.localized(
@@ -888,7 +904,7 @@ async def update_package_skill(
     """
     store = _store(server)
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
     _package_skill_or_404(store, package_id, slug)
     # Truthiness mirrors ``_files_from_package_skill_body`` / workspace skills.
     if body.files:
@@ -920,7 +936,7 @@ async def delete_package_skill(
 ) -> None:
     store = _store(server)
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
     _package_skill_or_404(store, package_id, slug)
     store.delete_skill(package_id, slug)
     if server.app_runtime is not None:
@@ -971,7 +987,7 @@ async def import_package_skill(
     body: ImportPackageSkillBody,
     request: Request,
     server: OctopServer = Depends(get_server),
-    user: User = Depends(require_permission("skill_packages")),
+    user: User = Depends(_offline_only),
 ) -> dict[str, Any]:
     import asyncio  # noqa: PLC0415
     from urllib.error import HTTPError, URLError  # noqa: PLC0415
@@ -987,7 +1003,7 @@ async def import_package_skill(
     locale = resolve_request_locale(request)
     store = _store(server)
     row = _package_or_404(store, package_id, locale=locale)
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
 
     bundle_url = body.bundle_url.strip()
     if not bundle_url:
@@ -1051,7 +1067,7 @@ async def hub_install_package_skill(
     body: HubInstallPackageSkillBody,
     request: Request,
     server: OctopServer = Depends(get_server),
-    user: User = Depends(require_permission("skill_packages")),
+    user: User = Depends(_offline_only),
 ) -> dict[str, Any]:
     from fastapi import HTTPException  # noqa: PLC0415
 
@@ -1076,7 +1092,7 @@ async def hub_install_package_skill(
     locale = resolve_request_locale(request)
     store = _store(server)
     row = _package_or_404(store, package_id, locale=locale)
-    store.assert_can_mutate(row, user)
+    _assert_package_mutable(server, store, row, user)
 
     try:
         skill_name = validate_skill_slug(body.skill_name)

@@ -11,6 +11,11 @@ import {
 } from "antd";
 import { FileText, FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  localExpertsApi,
+  type LocalExpert,
+} from "../../api/modules/localExperts";
+import { apiErrorMessage } from "../../utils/apiError";
 
 interface Grant {
   id: string;
@@ -21,6 +26,7 @@ interface LocalTask {
   format?: "docx" | "xlsx" | "ocr";
   id: string;
   instruction: string;
+  agent_id?: string;
   source: string;
   output: string;
   status: string;
@@ -56,6 +62,9 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     tasks: [],
     busy: false,
   });
+  const [experts, setExperts] = useState<LocalExpert[]>([]);
+  const [expertId, setExpertId] = useState("");
+  const [expertError, setExpertError] = useState<unknown>(null);
   const [format, setFormat] = useState<"docx" | "xlsx" | "ocr">("docx");
   const contentKey = { docx: "localDocx", xlsx: "localXlsx", ocr: "localOcr" }[
     format
@@ -69,6 +78,18 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   useEffect(() => {
     setState({ device_id: deviceId, grants: [], tasks: [], busy: false });
     setFormat("docx");
+    setExpertId("");
+    setExperts([]);
+    setExpertError(null);
+    let active = true;
+    void localExpertsApi
+      .list()
+      .then((items) => {
+        if (active) setExperts(items);
+      })
+      .catch((error: unknown) => {
+        if (active) setExpertError(error);
+      });
     setSourceGrant("");
     setOutputGrant("");
     setSource("");
@@ -85,7 +106,10 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     };
     window.addEventListener("colink:docx-status", receive);
     send({ action: "list" });
-    return () => window.removeEventListener("colink:docx-status", receive);
+    return () => {
+      active = false;
+      window.removeEventListener("colink:docx-status", receive);
+    };
   }, [deviceId]);
 
   const dispatch = (command: Record<string, string>) => {
@@ -126,7 +150,14 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
     ) &&
     source.trim() &&
     output.trim() &&
-    (format === "ocr" || instruction.trim());
+    (format === "ocr" ||
+      (instruction.trim() &&
+        (!expertId ||
+          experts.some(
+            (expert) =>
+              expert.agent_id === expertId &&
+              expert.actions.includes(`local_${format}`),
+          ))));
 
   return (
     <Card
@@ -149,6 +180,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             style={selectStyle}
             onChange={(event) => {
               setFormat(event.target.value as "docx" | "xlsx" | "ocr");
+              setExpertId("");
               setSource("");
               setOutput("");
               setInstruction("");
@@ -161,6 +193,45 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             </option>
           </select>
         </div>
+        {format !== "ocr" && (
+          <>
+            {expertError ? (
+              <Alert
+                type="error"
+                message={apiErrorMessage(
+                  expertError,
+                  t("localExperts.loadFailed", "无法加载私人专家"),
+                  t,
+                )}
+              />
+            ) : null}
+            <div>
+              <label htmlFor={`${id}-expert`}>
+                {t("localExperts.taskExpert", "任务专家")}
+              </label>
+              <select
+                id={`${id}-expert`}
+                style={selectStyle}
+                value={expertId}
+                disabled={state.busy}
+                onChange={(event) => setExpertId(event.target.value)}
+              >
+                <option value="">
+                  {t("localExperts.noExpert", "不使用专家")}
+                </option>
+                {experts
+                  .filter((expert) =>
+                    expert.actions.includes(`local_${format}`),
+                  )
+                  .map((expert) => (
+                    <option key={expert.agent_id} value={expert.agent_id}>
+                      {expert.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </>
+        )}
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           {t(
             `${contentKey}.privacy`,
@@ -224,6 +295,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             if (canRun && !state.busy)
               dispatch({
                 action: "run",
+                ...(format !== "ocr" && expertId ? { agent_id: expertId } : {}),
                 source_grant: sourceGrant,
                 source: source.trim(),
                 output_grant: outputGrant,

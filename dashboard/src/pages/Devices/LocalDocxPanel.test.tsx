@@ -2,6 +2,9 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import LocalDocxPanel from "./LocalDocxPanel";
+vi.mock("../../api/modules/localExperts", () => ({
+  localExpertsApi: { list: vi.fn().mockResolvedValue([]) },
+}));
 
 afterEach(() => {
   delete (window as Window & { _wails?: unknown })._wails;
@@ -186,6 +189,20 @@ it.each(["completed", "failed"])(
 it.each(["completed", "failed"])(
   "runs OCR locally without a model instruction and displays %s",
   async (status) => {
+    const { localExpertsApi } = await import("../../api/modules/localExperts");
+    vi.mocked(localExpertsApi.list).mockResolvedValueOnce([
+      {
+        agent_id: "mine-expert",
+        name: "会议专家",
+        description: "",
+        system_prompt: "整理",
+        default_model: "intranet/chat",
+        actions: ["local_docx"],
+        skill_package_ids: [],
+        knowledge_base_ids: [],
+        published_expert_id: null,
+      },
+    ]);
     const invoke = vi.fn();
     (window as Window & { _wails?: unknown })._wails = { invoke };
     render(<LocalDocxPanel deviceId="mine" />);
@@ -205,7 +222,10 @@ it.each(["completed", "failed"])(
       );
     });
     const user = userEvent.setup();
+    await screen.findByRole("option", { name: "会议专家" });
+    await user.selectOptions(screen.getByLabelText("任务专家"), "mine-expert");
     await user.selectOptions(screen.getByLabelText("文件类型"), "ocr");
+    expect(screen.queryByLabelText("任务专家")).toBeNull();
     expect(screen.queryByLabelText("任务描述")).toBeNull();
     expect(screen.getByText(/原件和识别文字均保留在本机/)).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("资料目录"), "ro");
@@ -256,3 +276,59 @@ it.each(["completed", "failed"])(
     ).toBeInTheDocument();
   },
 );
+it("passes the selected authorized expert to the native task", async () => {
+  const { localExpertsApi } = await import("../../api/modules/localExperts");
+  vi.mocked(localExpertsApi.list).mockResolvedValueOnce([
+    {
+      agent_id: "mine-expert",
+      name: "会议专家",
+      description: "",
+      system_prompt: "整理",
+      default_model: "intranet/chat",
+      actions: ["local_docx"],
+      skill_package_ids: [],
+      knowledge_base_ids: [],
+      published_expert_id: null,
+    },
+    {
+      agent_id: "xlsx-only",
+      name: "表格专家",
+      description: "",
+      system_prompt: "整理",
+      default_model: "intranet/chat",
+      actions: ["local_xlsx"],
+      skill_package_ids: [],
+      knowledge_base_ids: [],
+      published_expert_id: null,
+    },
+  ]);
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  render(<LocalDocxPanel deviceId="mine" />);
+  await screen.findByRole("option", { name: "会议专家" });
+  expect(screen.queryByRole("option", { name: "表格专家" })).toBeNull();
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [{ id: "rw", path: "/成果", mode: "rw" }],
+          tasks: [],
+        },
+      }),
+    );
+  });
+  const user = userEvent.setup();
+  await user.selectOptions(screen.getByLabelText("任务专家"), "mine-expert");
+  await user.selectOptions(screen.getByLabelText("资料目录"), "rw");
+  await user.selectOptions(screen.getByLabelText("成果目录"), "rw");
+  await user.type(screen.getByLabelText("源文件名"), "source.docx");
+  await user.type(screen.getByLabelText("新文件名"), "result.docx");
+  await user.type(screen.getByLabelText("任务描述"), "整理");
+  await user.click(screen.getByRole("button", { name: "生成 DOCX" }));
+  const command = JSON.parse(
+    decodeURIComponent(invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1]),
+  );
+  expect(command.agent_id).toBe("mine-expert");
+});

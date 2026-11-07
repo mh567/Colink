@@ -37,10 +37,13 @@ def test_shared_agent_non_admin_forbidden() -> None:
     assert ei.value.code is ErrorCode.FORBIDDEN
 
 
-def test_shared_agent_admin_allowed() -> None:
-    row = SimpleNamespace(user_id=None)
+@pytest.mark.parametrize("owner_id", [None, 2])
+def test_admin_cannot_assume_agent_ownership(owner_id: int | None) -> None:
+    row = SimpleNamespace(user_id=owner_id)
     user = SimpleNamespace(id=1, is_admin=True)
-    assert_agent_owner(row, user)
+    with pytest.raises(OctopError) as exc:
+        assert_agent_owner(row, user)
+    assert exc.value.code is ErrorCode.FORBIDDEN
 
 
 def test_shared_agent_accessible_to_non_owner() -> None:

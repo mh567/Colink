@@ -796,3 +796,24 @@ dashboard mirrors every code under `apiErrors.*` in
 | `STORAGE_BACKEND_UNREACHABLE` | 502 | Remote backend connect / list failed |
 | `CONNECTOR_OAUTH_FAILED` | 400 | OAuth flow could not complete |
 | `INTERNAL_ERROR` | 500 | Unhandled exception (logged with traceback) |
+
+### 本机专家与离线审核发布
+
+本机专家复用现有专家记录，但只在本人客户端的 DOCX/XLSX 受控任务中运行，不启动服务端 Harness，不开放服务端工作区或任意脚本。
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/experts/local/resources` | 本人可用模型、动作、批准技能和知识库 |
+| `GET/POST /api/experts/local` | 列出本人专家／创建私人专家 |
+| `PUT /api/experts/local/{agent_id}` | 修改本人专家及资源选择 |
+| `POST /api/experts/local/{agent_id}/export` | 导出明确配置，拒绝知识库引用、未批准技能和同名技能的多个版本 |
+| `POST /api/experts/local/releases/preview` | 管理员预览离线 JSON 包 |
+| `POST /api/experts/local/releases` | 管理员确认来源、许可、内容和权限后发布 |
+| `GET /api/experts/local/releases` | 查看批准版本；旧版本保留 |
+| `POST /api/experts/local/releases/{release_id}/install` | 按安装者自己的模型、动作和资料权限创建私人副本 |
+
+创建／编辑字段为 `name`、`description`、`system_prompt`、`default_model`、`actions`、`skill_package_ids`、`knowledge_base_ids`。动作仅有 `local_docx`、`local_xlsx`，保存和执行均检查当前员工显式授权；管理员身份不代替本机动作权限或私人内容访问权。
+
+DOCX/XLSX 的 `authorize` 与 `generate` 接口均接受可选 `agent_id`。带该字段时，原生客户端在读前、写前传递专家 ID，服务端在模型调用前后复查本人归属、已选资源和模型权限；配置在调用期间改变则拒绝结果。任务历史记录专家 ID。无该字段时沿用活动模型流程。
+
+旧直接发布／刷新／安装专家模板，以及专家和技能公网市场、URL 导入入口拒绝请求。发布不会改变员工、设备和动作授权。实际 API 字段与响应见 `/api/docs`。

@@ -248,6 +248,10 @@ async def publish_agent_expert(
     task_examples: dict[str, list[str]] | None = None,
 ) -> PublishedExpertRow:
     """Snapshot an owned agent workspace into a globally installable expert template."""
+    if not user.is_admin:
+        raise OctopError(ErrorCode.FORBIDDEN, "administrator offline review required")
+    if source.user_id != user.id:
+        raise OctopError(ErrorCode.FORBIDDEN, "private source belongs to another employee")
     repo = services.published_expert_repo
     existing = repo.get_by_source_agent_id(source.agent_id)
     if existing is not None:
@@ -408,6 +412,8 @@ async def install_published_expert(
     may pass their own lists on this request.
     """
     row = require_published_expert(services, expert_id)
+    if _manifest_for(services, expert_id).get("local_release"):
+        raise OctopError(ErrorCode.FORBIDDEN, "use local expert installation")
     repo = _control_files(services)
     staging: Path | None = None
     if repo is not None:

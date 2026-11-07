@@ -1,21 +1,4 @@
-/**
- * Experts page — redesigned as Agents Management Centre.
- *
- * Tab A: user's experts, shown as a card grid with start/stop/edit/delete.
- * Tab B: octop.cloud expert market, plus templates published by users on this instance.
- *
- * API (all via request() which already prefixes /api):
- *   GET  /experts/default                 → blank expert seed
- *   GET  /experts/published               → templates published on this instance
- *   GET  /experts/hub                     → octop.cloud market cards (+ scenes)
- *   GET  /experts/hub/{slug}              → market detail + quick prompts
- *   POST /experts/hub/{slug}/install      → create agent from market
- *   GET  /agents                          → via AgentContext
- *   POST /agents/from-expert/{id}         → create agent (via CreateFromExpertDrawer)
- *   POST /agents/{id}/start|stop          → lifecycle (via AgentCard)
- *   PATCH /agents/{id}                    → edit (via EditAgentDrawer)
- *   DELETE /agents/{id}                   → delete (via AgentCard)
- */
+/** Experts: local private configuration, approved offline releases and existing agents. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -58,9 +41,9 @@ import TeamDrawer from "./components/TeamDrawer";
 import type { TeamRecord } from "../../api/modules/teams";
 import { TeamCard } from "./components/TeamCard";
 import AgentExpertsTable from "./components/AgentExpertsTable";
-import ExpertMarketTab from "./components/ExpertMarketTab";
+import LocalExpertsPanel from "./components/LocalExpertsPanel";
 import { OctopEmptyMascot } from "../../components/EmptyState";
-import { isOwnedExpert, ownedExperts } from "../../utils/sharedExpert";
+import { isOwnedExpert } from "../../utils/sharedExpert";
 import {
   matchesExpertLocation,
   type ExpertLocationFilter,
@@ -70,10 +53,10 @@ import { apiErrorMessage } from "../../utils/apiError";
 import { navAllowed } from "../../utils/permissions";
 import styles from "./index.module.less";
 
-type TabKey = "my" | "teams" | "market";
+type TabKey = "local" | "my" | "teams";
 
 function tabFromQuery(raw: string | null): TabKey | null {
-  if (raw === "library" || raw === "market") return "market";
+  if (raw === "local" || raw === "library" || raw === "market") return "local";
   if (raw === "my" || raw === "teams") return raw;
   return null;
 }
@@ -98,24 +81,6 @@ function textMatchesQuery(
   return parts.some((part) => (part ?? "").toLowerCase().includes(query));
 }
 
-function installedExpertIdsFromAgents(
-  agents: Pick<OctopAgent, "template_name" | "config">[],
-): Set<string> {
-  const ids = new Set<string>();
-  for (const agent of agents) {
-    const fromTemplate = agent.template_name?.trim();
-    if (fromTemplate) {
-      ids.add(fromTemplate);
-      continue;
-    }
-    const legacy = agent.config?.expert_id;
-    if (typeof legacy === "string" && legacy.trim()) {
-      ids.add(legacy.trim());
-    }
-  }
-  return ids;
-}
-
 export default function ExpertsPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -133,7 +98,7 @@ export default function ExpertsPage() {
   // address bar stays /experts while the user switches tabs.
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>(
-    () => tabFromQuery(searchParams.get("tab")) ?? "my",
+    () => tabFromQuery(searchParams.get("tab")) ?? "local",
   );
   useEffect(() => {
     if (!searchParams.has("tab")) return;
@@ -180,7 +145,6 @@ export default function ExpertsPage() {
   const [publishedExperts, setPublishedExperts] = useState<PublishedExpert[]>(
     [],
   );
-  const [publishedExpertLoading, setPublishedExpertLoading] = useState(false);
 
   const publishedByAgentId = useMemo(() => {
     const map: Record<string, PublishedExpert> = {};
@@ -204,7 +168,6 @@ export default function ExpertsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setPublishedExpertLoading(true);
     fetchPublishedExperts()
       .then((publishedData) => {
         if (!cancelled) {
@@ -216,11 +179,6 @@ export default function ExpertsPage() {
         message.error(
           err instanceof Error ? err.message : t("experts.loadFailed"),
         );
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPublishedExpertLoading(false);
-        }
       });
     return () => {
       cancelled = true;
@@ -228,10 +186,12 @@ export default function ExpertsPage() {
   }, [t]);
 
   // ── Local agent state (extends AgentContext for optimistic updates) ──
-  const ownedAgents = useMemo(() => ownedExperts(agents), [agents]);
   const [localAgents, setLocalAgents] = useState<OctopAgent[]>(agents);
   const expertAgents = useMemo(
-    () => localAgents.filter((item) => item.kind !== "team"),
+    () =>
+      localAgents.filter(
+        (item) => item.kind !== "team" && item.config?.local_only !== true,
+      ),
     [localAgents],
   );
   const teamAgents = useMemo(
@@ -385,14 +345,8 @@ export default function ExpertsPage() {
   }, [t]);
 
   const openExpertMarket = useCallback(() => {
-    setActiveTab("market");
+    setActiveTab("local");
   }, []);
-
-  // ── "Installed" badge lookup (template_name column; legacy config.expert_id) ──
-  const agentExpertIds = useMemo(
-    () => installedExpertIdsFromAgents(ownedAgents),
-    [ownedAgents],
-  );
 
   const refreshButton = useMemo(
     () => (
@@ -467,7 +421,7 @@ export default function ExpertsPage() {
               disabled: defaultCreating,
             }}
             secondaryAction={{
-              label: t("experts.goToMarket"),
+              label: t("localExperts.releases", "企业批准版本"),
               onClick: openExpertMarket,
               icon: <Store size={14} />,
               type: "default",
@@ -547,7 +501,7 @@ export default function ExpertsPage() {
               {t("experts.newExpert")}
             </button>
             <button className={styles.toolbarBtn} onClick={openExpertMarket}>
-              {t("experts.addFromMarket")}
+              {t("localExperts.releases", "企业批准版本")}
             </button>
           </div>
         </div>
@@ -737,33 +691,6 @@ export default function ExpertsPage() {
     visibleTeamAgents,
   ]);
 
-  const marketContent = useMemo(
-    () => (
-      <ExpertMarketTab
-        lang={lang}
-        installedExpertIds={agentExpertIds}
-        publishedExperts={publishedExperts}
-        publishedLoading={publishedExpertLoading}
-        onInstallPublished={(expert) =>
-          setCreateSource({ kind: "published", expert })
-        }
-        onPublishedChanged={() => {
-          void refreshPublishedExperts();
-        }}
-        onRequestCreate={(expert) =>
-          setCreateSource({ kind: "market", expert })
-        }
-      />
-    ),
-    [
-      agentExpertIds,
-      lang,
-      publishedExpertLoading,
-      publishedExperts,
-      refreshPublishedExperts,
-    ],
-  );
-
   return (
     <PageShell.FillTabs
       title={t("pageShell.experts.title")}
@@ -775,6 +702,15 @@ export default function ExpertsPage() {
         onChange={(k) => setActiveTab(k as TabKey)}
         items={[
           {
+            key: "local",
+            label: (
+              <TabLabel icon={Store}>
+                {t("localExperts.title", "本机私人专家与企业版本")}
+              </TabLabel>
+            ),
+            children: <LocalExpertsPanel />,
+          },
+          {
             key: "my",
             label: (
               <TabLabel icon={GraduationCap}>{t("experts.myExperts")}</TabLabel>
@@ -785,13 +721,6 @@ export default function ExpertsPage() {
             key: "teams",
             label: <TabLabel icon={Users}>{t("experts.myTeams")}</TabLabel>,
             children: teamsContent,
-          },
-          {
-            key: "market",
-            label: (
-              <TabLabel icon={Store}>{t("experts.expertMarket")}</TabLabel>
-            ),
-            children: marketContent,
           },
         ]}
       />

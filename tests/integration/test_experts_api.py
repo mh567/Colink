@@ -7,10 +7,228 @@ shape matches production exactly.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 from typing import Any
 
 import pytest
+
+
+async def test_patch_expert_rejects_private_package_in_nested_config(env_boundary: Any) -> None:
+    client, server, _admin_auth, _alice_auth, bob_auth, ctx = env_boundary
+    package = server.services.skill_package_repo.create(
+        id="alice-private", name="Alice private", created_by=str(ctx["alice_id"])
+    )
+    created = await client.post("/api/agents", headers=bob_auth, json={"name": "Bob expert"})
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["agent_id"]
+
+    denied = await client.patch(
+        f"/api/agents/{agent_id}",
+        headers=bob_auth,
+        json={"name": "Changed", "config": {"skill_package_ids": [package.id]}},
+    )
+    assert denied.status_code == 404, denied.text
+    assert denied.json()["error"]["code"] == "SKILL_PACKAGE_NOT_FOUND"
+    detail = await client.get(f"/api/agents/{agent_id}", headers=bob_auth)
+    assert detail.json()["name"] == "Bob expert"
+    assert detail.json()["skill_package_ids"] == []
+
+
+@pytest.mark.parametrize("operation", ["create", "patch"])
+@pytest.mark.parametrize(
+    ("field", "status", "code"),
+    [
+        ("skill_package_ids", 404, "SKILL_PACKAGE_NOT_FOUND"),
+        ("knowledge_base_ids", 404, "KNOWLEDGE_NOT_FOUND"),
+        ("mcp_servers", 400, "CONNECTOR_NOT_BOUND"),
+    ],
+)
+async def test_expert_nested_resources_reject_unknown_ids(
+    env: Any, operation: str, field: str, status: int, code: str
+) -> None:
+    client, _server, auth = env
+    before = (await client.get("/api/agents", headers=auth)).json()
+    body = {"name": "Invalid resources", "config": {field: ["missing-resource"]}}
+    if operation == "create":
+        response = await client.post("/api/agents", headers=auth, json=body)
+    else:
+        response = await client.patch(
+            f"/api/agents/{before[0]['agent_id']}", headers=auth, json=body
+        )
+    assert response.status_code == status, response.text
+    assert response.json()["error"]["code"] == code
+    after = (await client.get("/api/agents", headers=auth)).json()
+    assert [(row["agent_id"], row["name"], row[field]) for row in after] == [
+        (row["agent_id"], row["name"], row[field]) for row in before
+    ]
+
+
+@pytest.mark.parametrize("operation", ["create", "patch"])
+async def test_admin_cannot_attach_employee_private_skill_package(
+    env_boundary: Any, operation: str
+) -> None:
+    client, server, admin_auth, _alice_auth, _bob_auth, ctx = env_boundary
+    package = server.services.skill_package_repo.create(
+        id="private-employee-kit", name="Employee kit", created_by=str(ctx["alice_id"])
+    )
+    body = {"name": "Admin expert", "config": {"skill_package_ids": [package.id]}}
+    if operation == "create":
+        response = await client.post("/api/agents", headers=admin_auth, json=body)
+    else:
+        response = await client.patch(
+            f"/api/agents/{ctx['alice_agent_id']}", headers=admin_auth, json=body
+        )
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "SKILL_PACKAGE_NOT_FOUND"
+
+
+@pytest.mark.parametrize("field", ["knowledge_base_ids", "mcp_servers"])
+async def test_nested_expert_resource_selection_uses_owner_authorization(
+    env_boundary: Any, field: str
+) -> None:
+    client, server, _admin_auth, alice_auth, bob_auth, ctx = env_boundary
+    if field == "knowledge_base_ids":
+        resource = server.services.knowledge_repo.create_base(
+            owner_user_id=ctx["alice_id"], name="Private documents"
+        )
+        resource_id = resource.id
+        expected_status = 404
+    else:
+        connector = await client.post(
+            "/api/connector-instances",
+            headers=alice_auth,
+            json={
+                "kind": "tencent-docs",
+                "display_name": "Private docs connector",
+                "credentials": {"token": "test-token"},
+            },
+        )
+        assert connector.status_code == 201, connector.text
+        resource_id = connector.json()["mcp_server_name"]
+        expected_status = 400
+    body = {"name": "Selected resources", "config": {field: [resource_id]}}
+    denied = await client.post("/api/agents", headers=bob_auth, json=body)
+    assert denied.status_code == expected_status, denied.text
+    own = await client.post("/api/agents", headers=alice_auth, json=body)
+    assert own.status_code == 201, own.text
+    assert own.json()[field] == [resource_id]
+
+    other = await client.post("/api/agents", headers=bob_auth, json={"name": "Bob resource test"})
+    assert other.status_code == 201, other.text
+    agent_id = other.json()["agent_id"]
+    denied = await client.patch(f"/api/agents/{agent_id}", headers=bob_auth, json=body)
+    assert denied.status_code == expected_status, denied.text
+    detail = await client.get(f"/api/agents/{agent_id}", headers=bob_auth)
+    assert detail.json()[field] == []
+    assert detail.json()["name"] == "Bob resource test"
+
+
+async def test_local_expert_cannot_start_server_runtime_or_drop_local_boundary(
+    env_with_provider: Any,
+) -> None:
+    client, server, auth = env_with_provider
+    server.services.user_repo.set_permissions(1, ["local_docx"])
+    created = await client.post(
+        "/api/experts/local",
+        headers=auth,
+        json={
+            "name": "Local expert",
+            "default_model": "openai/gpt-4o",
+            "actions": ["local_docx"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["agent_id"]
+    detail = await client.get(f"/api/agents/{agent_id}", headers=auth)
+    assert detail.json()["state"] == "stopped"
+    shared = await client.post(
+        "/api/agents",
+        headers=auth,
+        json={
+            "name": "Shared local expert",
+            "is_shared": True,
+            "config": {"local_only": True, "local_actions": ["local_docx"]},
+        },
+    )
+    assert shared.status_code == 403, shared.text
+    started = await client.post(f"/api/agents/{agent_id}/start", headers=auth)
+    assert started.status_code == 403, started.text
+    removed = await client.patch(
+        f"/api/agents/{agent_id}", headers=auth, json={"config": {"local_only": False}}
+    )
+    assert removed.status_code == 403, removed.text
+    omitted = await client.patch(f"/api/agents/{agent_id}", headers=auth, json={"config": {}})
+    assert omitted.status_code == 200, omitted.text
+    assert omitted.json()["config"]["local_only"] is True
+    assert omitted.json()["config"]["local_actions"] == ["local_docx"]
+    expanded = await client.patch(
+        f"/api/agents/{agent_id}",
+        headers=auth,
+        json={"config": {"local_actions": ["local_docx", "local_xlsx"]}},
+    )
+    assert expanded.status_code == 403, expanded.text
+
+
+async def test_local_expert_requires_explicit_action_grants_even_for_admin(
+    env_with_provider: Any,
+) -> None:
+    client, _server, auth = env_with_provider
+    response = await client.post(
+        "/api/experts/local",
+        headers=auth,
+        json={
+            "name": "Unapproved action",
+            "default_model": "openai/gpt-4o",
+            "actions": ["local_docx"],
+        },
+    )
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.parametrize("endpoint", ["download", "doc"])
+async def test_local_expert_cannot_read_server_files_via_workspace(
+    env_with_provider: Any, tmp_path: Path, endpoint: str
+) -> None:
+    from docx import Document
+
+    client, server, auth = env_with_provider
+    server.services.user_repo.set_permissions(1, ["local_docx"])
+    created = await client.post(
+        "/api/experts/local",
+        headers=auth,
+        json={"name": "Local files", "default_model": "openai/gpt-4o", "actions": ["local_docx"]},
+    )
+    assert created.status_code == 201, created.text
+    server_file = tmp_path / "server-private.docx"
+    document = Document()
+    document.add_paragraph("Private server content must not leave the server")
+    document.save(server_file)
+
+    response = await client.get(
+        f"/api/agents/{created.json()['agent_id']}/workspace/{endpoint}",
+        headers=auth,
+        params={"path": str(server_file), "from_workspace": "false"},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.parametrize("actions", [[], ["execute"], [{}], "local_docx"])
+async def test_local_expert_rejects_invalid_action_selection(
+    env_with_provider: Any, actions: Any
+) -> None:
+    client, server, auth = env_with_provider
+    server.services.user_repo.set_permissions(1, ["local_docx"])
+    response = await client.post(
+        "/api/experts/local",
+        headers=auth,
+        json={
+            "name": "Invalid local expert",
+            "default_model": "openai/gpt-4o",
+            "actions": actions,
+        },
+    )
+    assert response.status_code == 422, response.text
 
 
 async def test_list_experts_hides_blank_template(env: Any) -> None:
@@ -271,79 +489,30 @@ async def test_create_agent_from_expert_rejects_unknown_package_before_creation(
     }
 
 
-async def test_hub_install_mounts_skill_packages(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("package_id", ["existing", "MISSING"])
+async def test_hub_install_cannot_bypass_offline_review(
+    env: Any, monkeypatch: pytest.MonkeyPatch, package_id: str
+) -> None:
     from octop.api.routers import experts as experts_router
-    from octop.infra.agents.manager import AgentCreateSpec
 
-    c, server, auth = env
-    package_id = (
-        await c.post(
-            "/api/skill-packages",
-            headers=auth,
-            json={"name": "Hub package"},
+    client, _server, auth = env
+    if package_id == "existing":
+        created = await client.post(
+            "/api/skill-packages", headers=auth, json={"name": "Offline only"}
         )
-    ).json()["id"]
-    row = await server.app_runtime.agent_registry.create(
-        AgentCreateSpec(
-            name="hub-packaged-expert",
-            user_id=1,
-            skill_package_ids=[package_id],
-        ),
-        defer_bootstrap=True,
-    )
+        package_id = created.json()["id"]
 
-    async def fake_create_skillhub_market_agent(**kwargs: Any) -> Any:
-        assert kwargs["options"].skill_package_ids == [package_id]
-        return SimpleNamespace(
-            row=row,
-            expert_id="hub-expert",
-            icon_name=None,
-            color=None,
-            slug="hub-expert",
-            welcome_enrichment="skipped",
-        )
+    async def unexpected_market(**_kwargs: Any) -> Any:
+        raise AssertionError("disabled market must not create or download")
 
-    monkeypatch.setattr(
-        experts_router, "create_skillhub_market_agent", fake_create_skillhub_market_agent
-    )
-    created = await c.post(
+    monkeypatch.setattr(experts_router, "create_skillhub_market_agent", unexpected_market)
+    response = await client.post(
         "/api/experts/hub/hub-expert/install",
         headers=auth,
         json={"skill_package_ids": [package_id]},
     )
-
-    assert created.status_code == 201, created.text
-    mounted = await c.get(f"/api/agents/{row.agent_id}/skill-packages", headers=auth)
-    assert mounted.status_code == 200, mounted.text
-    assert mounted.json()["package_ids"] == [package_id]
-    assert [package["id"] for package in mounted.json()["packages"]] == [package_id]
-
-
-async def test_hub_install_rejects_unknown_package_before_creation(
-    env: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from octop.api.routers import experts as experts_router
-
-    c, _server, auth = env
-    create_called = False
-
-    async def fake_create_skillhub_market_agent(**_kwargs: Any) -> Any:
-        nonlocal create_called
-        create_called = True
-        raise AssertionError("agent creation must not run for an unknown package")
-
-    monkeypatch.setattr(
-        experts_router, "create_skillhub_market_agent", fake_create_skillhub_market_agent
-    )
-    created = await c.post(
-        "/api/experts/hub/hub-expert/install",
-        headers=auth,
-        json={"skill_package_ids": ["MISSING"]},
-    )
-
-    assert created.status_code == 404, created.text
-    assert created.json()["error"]["code"] == "SKILL_PACKAGE_NOT_FOUND"
-    assert create_called is False
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "LOCAL_EXPERT_REVIEW_REQUIRED"
 
 
 async def test_get_expert_includes_file_contents(env: Any) -> None:

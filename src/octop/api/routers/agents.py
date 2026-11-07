@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
+from pydantic import ValidationError
 
 from octop.api.common.agent import (
     apply_agent_audience,
@@ -266,7 +267,23 @@ async def list_agents(
             )
             for r in rows
         ]
-        return _attach_unread_counts(server, user.id, payloads)
+        return [
+            payload
+            if payload["is_owner"]
+            else {
+                key: payload[key]
+                for key in (
+                    "id",
+                    "agent_id",
+                    "user_id",
+                    "name",
+                    "state",
+                    "owner_username",
+                    "is_owner",
+                )
+            }
+            for payload in payloads
+        ]
 
     owned = registry.list_agents(user.id)
     shared = server.services.agent_repo.list_shared(
@@ -309,6 +326,8 @@ async def create_agent(
     from octop.infra.agents.manager import AgentCreateSpec  # noqa: PLC0415
 
     assert server.app_runtime is not None
+    if body.config.get("local_only"):
+        raise OctopError(ErrorCode.FORBIDDEN, "use local expert creation")
     if isinstance(body.config, dict):
         assert_user_backend_root_dirs(
             user,
@@ -327,6 +346,8 @@ async def create_agent(
         if body.mcp_servers is not None
         else None
     )
+    if body.is_shared or body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.FORBIDDEN, "use reviewed offline publication")
     spec = AgentCreateSpec(
         name=body.name,
         user_id=user.id,
@@ -422,6 +443,34 @@ async def patch_agent(
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
     _assert_agent_owner(row, user)
+    if body.is_shared or body.visibility in {"all", "groups"}:
+        raise OctopError(ErrorCode.FORBIDDEN, "use reviewed offline publication")
+    if parse_config_json(row.config_json).get("local_only"):
+        from octop.infra.agents.experts.local_tasks import (
+            LocalExpertConfig,
+            assert_local_resources,
+            expert_config,
+        )
+
+        try:
+            candidate = expert_config(row).model_dump()
+        except ValidationError as exc:
+            raise OctopError(
+                ErrorCode.RESOURCE_NOT_ALLOWED, "invalid local expert configuration"
+            ) from exc
+        supplied = body.model_dump(exclude_unset=True)
+        if body.config is not None:
+            candidate.update({key: value for key, value in body.config.items() if key in candidate})
+            if "local_actions" in body.config:
+                candidate["actions"] = body.config["local_actions"]
+        candidate.update({key: value for key, value in supplied.items() if key in candidate})
+        try:
+            checked = LocalExpertConfig.model_validate(candidate)
+        except ValidationError as exc:
+            raise OctopError(
+                ErrorCode.RESOURCE_NOT_ALLOWED, "invalid local expert configuration"
+            ) from exc
+        assert_local_resources(server.services, user, checked)
     if body.config is not None and isinstance(body.config, dict):
         assert_user_backend_root_dirs(
             user,
@@ -447,6 +496,10 @@ async def patch_agent(
         updates["config_json"] = json.dumps(body.config)
     if body.welcome_message is not None:
         updates["welcome_message"] = body.welcome_message
+    for field in ("skill_package_ids", "knowledge_base_ids", "mcp_servers"):
+        value = getattr(body, field)
+        if value is not None:
+            updates[field] = json.dumps(value)
     if updates:
         row = await server.app_runtime.agent_registry.update(agent_id, **updates)
     if body.skill_package_ids is not None:
