@@ -110,6 +110,47 @@ class PublishedExpertRepo:
             raise RuntimeError(f"published expert insert failed: {id}")
         return row
 
+    def create_offline_edition(
+        self,
+        *,
+        id: str,
+        slug: str,
+        name: str,
+        description: str,
+        created_by: str,
+        actor: str,
+        manifest: bytes,
+        skill_namespace: str,
+        skills: list[tuple[str, str, str, bytes]],
+    ) -> None:
+        """Commit an edition, its approved skill records and audit as one publication."""
+        ts = now_ts()
+        with self._db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO published_experts(published_expert_id, slug, name, description, "
+                "created_by, icon_name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', '', ?, ?)",
+                (id, slug, name, description, created_by, ts, ts),
+            )
+            conn.execute(
+                "INSERT INTO control_files(namespace, owner_id, path, content) VALUES (?, ?, ?, ?)",
+                ("published_expert", id, "manifest.json", manifest),
+            )
+            for package_id, skill_name, source, review in skills:
+                conn.execute(
+                    "INSERT INTO skill_packages(skill_package_id, name, description, created_by, "
+                    "skill_count, icon_name, icon_url, copy_policy, allow_download, shared, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 0, '', '', 'deny', 0, 1, ?, ?)",
+                    (package_id, skill_name, source, created_by, str(ts), str(ts)),
+                )
+                conn.execute(
+                    "INSERT INTO control_files(namespace, owner_id, path, content) VALUES (?, ?, ?, ?)",
+                    (skill_namespace, package_id, "review.json", review),
+                )
+            conn.execute(
+                "INSERT INTO audit_log(ts, actor, action, target) VALUES (?, ?, ?, ?)",
+                (ts, actor, "expert.offline_published", id),
+            )
+
     def update_snapshot_meta(
         self,
         expert_id: str,

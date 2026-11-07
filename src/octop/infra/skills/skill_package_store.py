@@ -405,7 +405,9 @@ class SkillPackageStore:
         )
 
     def can_mutate(self, row: SkillPackageRow, user: User) -> bool:
-        return user.is_admin or str(user.id) == row.created_by
+        if row.shared:
+            return user.is_admin
+        return str(user.id) == row.created_by
 
     def _update_skill_count(self, pack_id: str) -> None:
         self.repo.update_skill_count(pack_id, len(self.list_skill_summaries(pack_id)))

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from octop.infra.errors import ErrorCode, OctopError
+
 
 @pytest.fixture()
 def mock_server_and_user():
@@ -17,7 +19,7 @@ def mock_server_and_user():
     user.is_admin = True
 
     registry = MagicMock()
-    registry.get_row.return_value = MagicMock(id="agent1")
+    registry.get_row.return_value = MagicMock(id="agent1", user_id=1)
 
     runtime = MagicMock()
     runtime.app_runtime = MagicMock()
@@ -251,11 +253,12 @@ def test_dingtalk_qrcode_poll_rejects_different_user(mock_server_and_user):
         registration_id = generated_resp.json()["registration_id"]
 
     user.id = 2
-    resp = client.post(
-        "/agents/agent1/channels/dingtalk/qrcode/poll",
-        json={"registration_id": registration_id},
-    )
-    assert resp.status_code == 404
+    with pytest.raises(OctopError) as exc:
+        client.post(
+            "/agents/agent1/channels/dingtalk/qrcode/poll",
+            json={"registration_id": registration_id},
+        )
+    assert exc.value.code is ErrorCode.FORBIDDEN
 
 
 def test_dingtalk_registration_client_uses_official_device_flow_endpoints():

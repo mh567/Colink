@@ -193,7 +193,7 @@ def test_delete_package_removes_database_row_and_directory(
     assert not (store.root / row.id).exists()
 
 
-def test_assert_can_mutate_allows_creator_and_admin_only(
+def test_private_package_allows_only_creator(
     store: SkillPackageStore,
 ) -> None:
     row = store.create(name="P", description="", created_by="42")
@@ -202,11 +202,26 @@ def test_assert_can_mutate_allows_creator_and_admin_only(
     admin = User(id=1, username="admin", role=Role.ADMIN, display_name=None)
 
     store.assert_can_mutate(row, creator)
-    store.assert_can_mutate(row, admin)
+    store.assert_can_view(row, creator)
+    for user in (other, admin):
+        with pytest.raises(OctopError) as exc_info:
+            store.assert_can_mutate(row, user)
+        assert exc_info.value.code is ErrorCode.FORBIDDEN
+        with pytest.raises(OctopError) as exc_info:
+            store.assert_can_view(row, user)
+        assert exc_info.value.code is ErrorCode.SKILL_PACKAGE_NOT_FOUND
 
-    with pytest.raises(OctopError) as exc_info:
-        store.assert_can_mutate(row, other)
-    assert exc_info.value.code is ErrorCode.FORBIDDEN
+
+def test_legacy_shared_package_is_writable_only_by_admin(store: SkillPackageStore) -> None:
+    row = store.create(name="Shared", description="", created_by="42", shared=True)
+    admin = User(id=1, username="admin", role=Role.ADMIN, display_name=None)
+    store.assert_can_mutate(row, admin)
+    for uid in (42, 7):
+        user = User(id=uid, username=f"user-{uid}", role=Role.USER, display_name=None)
+        store.assert_can_view(row, user)
+        with pytest.raises(OctopError) as exc_info:
+            store.assert_can_mutate(row, user)
+        assert exc_info.value.code is ErrorCode.FORBIDDEN
 
 
 def test_list_skill_tree_and_read_file(store: SkillPackageStore) -> None:

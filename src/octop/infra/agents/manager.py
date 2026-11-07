@@ -778,6 +778,9 @@ class AgentManager:
                 spec.config,
                 spec.runtime_config,
             )
+            self._validate_local_expert_config(spec.user_id, config)
+            if spec.is_shared and config.get("local_only") is True:
+                raise OctopError(ErrorCode.FORBIDDEN, "local experts require reviewed publication")
             if spec.persona_mbti:
                 config["persona"] = spec.persona_mbti.upper()
             from octop.infra.agents.workspace.dir import (  # noqa: PLC0415
@@ -852,6 +855,7 @@ class AgentManager:
                     spec.user_id,
                     _stored_id_list(knowledge_ids_json),
                 )
+                self.validate_mcp_servers(spec.user_id, _stored_id_list(mcp_servers_json))
             self._repos.agent_repo.create(
                 agent_id=agent_id,
                 user_id=spec.user_id,
@@ -906,7 +910,11 @@ class AgentManager:
                 except Exception:
                     await self._abort_incomplete_create(agent_id)
                     raise
-            if defer_bootstrap:
+            if config.get("local_only") is True:
+                self._repos.agent_repo.set_state(agent_id, "stopped")
+                row = self._repos.agent_repo.get(agent_id)
+                assert row is not None
+            elif defer_bootstrap:
                 self._repos.agent_repo.set_state(agent_id, "starting")
                 row = self._repos.agent_repo.get(agent_id)
                 assert row is not None
@@ -939,7 +947,7 @@ class AgentManager:
             self._repos.audit_repo.write(
                 actor=ACTOR_SYSTEM, action="agent.create", target=agent_id, payload=spec.name
             )
-            if self._proactive_scheduler is not None:
+            if self._proactive_scheduler is not None and config.get("local_only") is not True:
                 self._proactive_scheduler.ensure_scheduled(agent_id)
             return row
 
@@ -1006,6 +1014,15 @@ class AgentManager:
         out = dict(cfg)
         row = self._repos.agent_repo.get(agent_id)
         current_raw = parse_config_json(row.config_json) if row and row.config_json else {}
+        if current_raw.get("local_only") is True:
+            if "local_only" in out and out["local_only"] is not True:
+                raise OctopError(ErrorCode.FORBIDDEN, "local expert execution boundary is fixed")
+            out["local_only"] = True
+            out.setdefault("local_actions", current_raw.get("local_actions"))
+        elif out.get("local_only") is True:
+            raise OctopError(
+                ErrorCode.FORBIDDEN, "existing server expert cannot change execution mode"
+            )
         if "system_files_path" in current_raw:
             out["system_files_path"] = current_raw["system_files_path"]
         else:
@@ -1013,6 +1030,26 @@ class AgentManager:
         if pin_workspace_dir and "workspace_dir" in current_raw:
             out["workspace_dir"] = current_raw["workspace_dir"]
         return out
+
+    def _validate_local_expert_config(self, user_id: int | None, config: dict[str, Any]) -> None:
+        if "local_only" not in config and "local_actions" not in config:
+            return
+        actions = config.get("local_actions")
+        user = self._repos.user_repo.get(user_id) if user_id is not None else None
+        if (
+            config.get("local_only") is not True
+            or not isinstance(actions, list)
+            or not actions
+            or user is None
+            or user.disabled
+            or any(
+                not isinstance(action, str)
+                or action not in {"local_docx", "local_xlsx"}
+                or action not in user.permissions
+                for action in actions
+            )
+        ):
+            raise OctopError(ErrorCode.FORBIDDEN, "local expert action is not authorized")
 
     async def update(self, agent_id: str, **kwargs: Any) -> AgentRow:
         """Update agent config in DB and reload harness agent in the background."""
@@ -1043,6 +1080,9 @@ class AgentManager:
                 agent_id, parsed_profile_cfg, pin_workspace_dir=True
             )
             owner_row = self._repos.agent_repo.get(agent_id)
+            self._validate_local_expert_config(
+                owner_row.user_id if owner_row is not None else None, parsed_profile_cfg
+            )
             if owner_row is not None and owner_row.user_id is not None:
                 from octop.infra.users.resource_policy import (
                     POLICY_WORKSPACE_ROOT_DIR,
@@ -1083,6 +1123,20 @@ class AgentManager:
             model_owner = self._repos.agent_repo.get(agent_id)
             if model_owner is not None and model_owner.user_id is not None:
                 self._assert_model_ref(model_owner.user_id, kwargs.get("default_model"))
+        resource_owner = self._repos.agent_repo.get(agent_id)
+        if resource_owner is not None and resource_owner.user_id is not None:
+            if "skill_package_ids" in kwargs:
+                self._assert_skill_packages_visible(
+                    resource_owner.user_id, _stored_id_list(kwargs["skill_package_ids"])
+                )
+            if "knowledge_base_ids" in kwargs:
+                self.validate_knowledge_base_ids(
+                    resource_owner.user_id, _stored_id_list(kwargs["knowledge_base_ids"])
+                )
+            if "mcp_servers" in kwargs:
+                self.validate_mcp_servers(
+                    resource_owner.user_id, _stored_id_list(kwargs["mcp_servers"])
+                )
         new_name = kwargs.get("name")
         if isinstance(new_name, str):
             row = self._repos.agent_repo.get(agent_id)
@@ -1098,7 +1152,8 @@ class AgentManager:
         row = self._repos.agent_repo.get(agent_id)
         if row is None:
             raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
-        self._schedule_reload(agent_id)
+        if parse_config_json(row.config_json).get("local_only") is not True:
+            self._schedule_reload(agent_id)
         return row
 
     async def set_shared(self, agent_id: str, shared: bool) -> AgentRow:
@@ -1106,6 +1161,10 @@ class AgentManager:
         existing = self._repos.agent_repo.get(agent_id)
         if existing is None:
             raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
+        if shared and parse_config_json(existing.config_json).get("local_only") is True:
+            raise OctopError(
+                ErrorCode.FORBIDDEN, "local experts must be published as reviewed packages"
+            )
         from octop.infra.agents.teams import is_team_agent
 
         if shared and is_team_agent(existing):
@@ -1369,6 +1428,7 @@ class AgentManager:
         row = self.get_row(agent_id)
         if row is None:
             return None
+        self._assert_harness_allowed(row)
         if self._harness_manager is not None:
             try:
                 return self._harness_manager.get_agent(agent_id).agent.workspace
@@ -1928,6 +1988,9 @@ class AgentManager:
 
     @asynccontextmanager
     async def _track_invocation(self, agent_id: str) -> AsyncIterator[None]:
+        row = self.get_row(agent_id)
+        if row is not None:
+            self._assert_harness_allowed(row)
         await self._begin_invocation(agent_id)
         try:
             yield
@@ -2743,20 +2806,7 @@ class AgentManager:
 
     async def update_config_json(self, agent_id: str, config_json: str) -> AgentRow:
         """Patch ``config_json`` and reload the harness runtime in the background."""
-        parsed = self._preserve_internal_layout(
-            agent_id, parse_config_json(config_json), pin_workspace_dir=True
-        )
-        lifted = extract_profile_from_config(parsed)
-        self._repos.agent_repo.update_config(
-            agent_id,
-            config_json=dumps_config(parsed),
-            **lifted,
-        )
-        row = self._repos.agent_repo.get(agent_id)
-        if row is None:
-            raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
-        self._schedule_reload(agent_id)
-        return row
+        return await self.update(agent_id, config_json=config_json)
 
     async def persist_skills_disabled(self, agent_id: str, disabled: set[str]) -> None:
         """Persist ``skills_disabled`` and hot-sync the running agent (no rebuild).
@@ -3009,8 +3059,6 @@ class AgentManager:
 
     def _skill_package_shared_with(self, user_id: int, package: Any) -> bool:
         """Private packages stay with the owner. Groups cannot open them."""
-        if self._user_is_admin(user_id):
-            return True
         if str(user_id) == str(getattr(package, "created_by", "")):
             return True
         return bool(getattr(package, "shared", False))
@@ -3036,7 +3084,7 @@ class AgentManager:
         for package_id in package_ids:
             package = self._repos.skill_package_repo.get(package_id)
             if package is None:
-                continue
+                raise OctopError(ErrorCode.SKILL_PACKAGE_NOT_FOUND, "skill package not found")
             if not self._skill_package_shared_with(user_id, package):
                 raise OctopError(ErrorCode.SKILL_PACKAGE_NOT_FOUND, "skill package not found")
             access.assert_allowed(
@@ -3417,6 +3465,7 @@ class AgentManager:
     async def _start_agent(
         self, row: AgentRow, *, init_workspace: bool = True
     ) -> HarnessAgent | None:
+        self._assert_harness_allowed(row)
         assert self._harness_manager is not None, "_start_agent called before boot()"
         if self._harness_manager.shared_factory is None:
             self._repos.agent_repo.set_state(row.agent_id, "failed", error=NO_MODELS_CONFIGURED)
@@ -3657,6 +3706,7 @@ class AgentManager:
         allow_ephemeral_remote: bool = False,
     ) -> Any:
         """Resolve :class:`BackendWorkspace` for *row* without a running harness agent."""
+        self._assert_harness_allowed(row)
         from octop_harness.backends.workspace import BackendWorkspace  # noqa: PLC0415
 
         from octop.infra.agents.workspace.dir import system_files_path_from_config  # noqa: PLC0415
@@ -3965,8 +4015,17 @@ class AgentManager:
                 return str(row.default_model).strip()
         return ""
 
+    @staticmethod
+    def _assert_harness_allowed(row: AgentRow) -> None:
+        cfg = parse_config_json(row.config_json)
+        if cfg.get("local_only") is True or "local_actions" in cfg:
+            raise OctopError(
+                ErrorCode.FORBIDDEN, "local experts require the authorized device task"
+            )
+
     def _build_harness_config(self, row: AgentRow) -> HarnessAgentConfig:
         """Convert an AgentRow into a HarnessAgentConfig."""
+        self._assert_harness_allowed(row)
         from octop_harness.middleware.bootstrap import bootstrap_marker_exists  # noqa: PLC0415
 
         from octop.infra.agents.workspace.dir import (  # noqa: PLC0415

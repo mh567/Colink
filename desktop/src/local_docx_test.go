@@ -17,19 +17,26 @@ import (
 )
 
 func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing.T) {
-	var sent string
+	var sent, sentAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Colink-Device-Session") != "secret" {
 			t.Error("missing native session")
 		}
 		if strings.HasSuffix(r.URL.Path, "/generate") {
 			var body struct {
-				Text string `json:"text"`
+				Text    string `json:"text"`
+				AgentID string `json:"agent_id"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
 			sent = body.Text
+			sentAgent = body.AgentID
 			json.NewEncoder(w).Encode(map[string]string{"text": "整理结果\n第二段"})
 		} else {
+			var body map[string]string
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["agent_id"] != "private-expert" {
+				t.Error("expert not checked before file operation")
+			}
 			w.Write([]byte(`{"allowed":true}`))
 		}
 	}))
@@ -48,7 +55,7 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := worker.run(session, docxRequest{SourceGrant: grant.ID, Source: "输入.docx", OutputGrant: grant.ID, Output: "成果.docx", Instruction: "整理"}, func() error { return nil })
+	task, err := worker.run(session, docxRequest{AgentID: "private-expert", SourceGrant: grant.ID, Source: "输入.docx", OutputGrant: grant.ID, Output: "成果.docx", Instruction: "整理"}, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +64,10 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 	}
 	if task.Status != "completed" || sent != "原始中文内容\n" {
 		t.Fatalf("task=%+v uploaded=%q", task, sent)
+	}
+	state, err := newLocalDOCX(worker.home).state(session)
+	if err != nil || sentAgent != "private-expert" || len(state.Tasks) != 1 || state.Tasks[0].AgentID != "private-expert" {
+		t.Fatalf("expert not forwarded or persisted: %q %+v %v", sentAgent, state, err)
 	}
 	result, err := os.ReadFile(filepath.Join(directory, "成果.docx"))
 	if err != nil {
@@ -73,7 +84,7 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 	if err != nil || text != "整理结果\n第二段\n" {
 		t.Fatalf("%q %v", text, err)
 	}
-	if _, err = worker.run(session, docxRequest{SourceGrant: grant.ID, Source: "输入.docx", OutputGrant: grant.ID, Output: "成果.docx", Instruction: "整理"}, func() error { return nil }); err == nil {
+	if _, err = worker.run(session, docxRequest{AgentID: "private-expert", SourceGrant: grant.ID, Source: "输入.docx", OutputGrant: grant.ID, Output: "成果.docx", Instruction: "整理"}, func() error { return nil }); err == nil {
 		t.Fatal("overwrote existing file")
 	}
 }

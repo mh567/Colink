@@ -50,7 +50,6 @@ import {
 } from "../../../utils/sharedExpert";
 import { useCurrentUser } from "../../../hooks/useCurrentUser";
 import type { PublishedExpert } from "../../../api/modules/publishedExperts";
-import PublishTemplateButton from "./PublishTemplateButton";
 import AgentMoreActions from "./AgentMoreActions";
 
 const STATE_META: Record<
@@ -90,8 +89,6 @@ export const AgentCard = memo(function AgentCard({
   iconName,
   iconUrl,
   accentColor,
-  publishedExpert = null,
-  onPublishedChange,
   onEdit,
   onDeleted,
   onStateChange,
@@ -492,15 +489,6 @@ export const AgentCard = memo(function AgentCard({
                   </button>
                 </Tooltip>
               </Popconfirm>
-
-              {onPublishedChange && (
-                <PublishTemplateButton
-                  agent={agent}
-                  published={publishedExpert}
-                  onChanged={onPublishedChange}
-                  buttonClassName={styles.agentCard2EditBtn}
-                />
-              )}
 
               <AgentMoreActions
                 buttonClassName={styles.agentCard2EditBtn}

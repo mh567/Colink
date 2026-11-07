@@ -56,7 +56,6 @@ import {
 } from "../../../utils/sharedExpert";
 import { useCurrentUser } from "../../../hooks/useCurrentUser";
 import type { PublishedExpert } from "../../../api/modules/publishedExperts";
-import PublishTemplateButton from "./PublishTemplateButton";
 import AgentMoreActions from "./AgentMoreActions";
 
 const STATE_COLORS: Record<string, string> = {
@@ -81,8 +80,6 @@ interface AgentExpertsTableProps {
 
 export default function AgentExpertsTable({
   agents,
-  publishedByAgentId = {},
-  onPublishedChange,
   onEdit,
   onDeleted,
   onStateChange,
@@ -515,14 +512,7 @@ export default function AgentExpertsTable({
                     </button>
                   </Tooltip>
                 </Popconfirm>
-                {onPublishedChange && (
-                  <PublishTemplateButton
-                    agent={row}
-                    published={publishedByAgentId[row.agent_id] ?? null}
-                    onChanged={onPublishedChange}
-                    buttonClassName={styles.tableActionBtn}
-                  />
-                )}
+
                 <AgentMoreActions
                   buttonClassName={styles.tableActionBtn}
                   onSkills={() => setSkillCatalogAgentId(row.agent_id)}

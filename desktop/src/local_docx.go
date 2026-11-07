@@ -28,6 +28,7 @@ const docxFileLimit = 20 * 1024 * 1024
 type docxSession struct {
 	Base, APIPath, DeviceID, Token, Secret string
 	Format                                 string
+	AgentID                                string
 	UserID                                 int
 	Generation                             uint64
 	Context                                context.Context
@@ -37,6 +38,7 @@ type docxSession struct {
 func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s.UserID, s.DeviceID) }
 
 type docxRequest struct {
+	AgentID     string `json:"agent_id,omitempty"`
 	Format      string `json:"format,omitempty"`
 	Action      string `json:"action"`
 	Mode        string `json:"mode,omitempty"`
@@ -53,6 +55,7 @@ type directoryGrant struct {
 	Identity string `json:"identity"`
 }
 type docxTask struct {
+	AgentID     string `json:"agent_id,omitempty"`
 	Format      string `json:"format,omitempty"`
 	ID          string `json:"id"`
 	Instruction string `json:"instruction"`
@@ -439,7 +442,11 @@ func authorizeDOCX(s docxSession, action string) error {
 	var reply struct {
 		Allowed bool `json:"allowed"`
 	}
-	if err := docxCall(s, "authorize", map[string]string{"action": action}, &reply); err != nil {
+	payload := map[string]string{"action": action}
+	if s.AgentID != "" {
+		payload["agent_id"] = s.AgentID
+	}
+	if err := docxCall(s, "authorize", payload, &reply); err != nil {
 		return err
 	}
 	if !reply.Allowed {
@@ -477,11 +484,12 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		return task, errors.New("不支持的文件类型")
 	}
 	s.Format = format
+	s.AgentID = request.AgentID
 	filename := docxFilename
 	if format == "xlsx" {
 		filename = xlsxFilename
 	}
-	task = docxTask{Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
+	task = docxTask{AgentID: request.AgentID, Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
 	if err = filename(request.Source); err != nil {
 		return task, err
 	}
@@ -558,7 +566,11 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	var generated struct {
 		Text string `json:"text"`
 	}
-	if err = docxCall(s, "generate", map[string]string{"instruction": request.Instruction, "text": text}, &generated); err != nil {
+	payload := map[string]string{"instruction": request.Instruction, "text": text}
+	if request.AgentID != "" {
+		payload["agent_id"] = request.AgentID
+	}
+	if err = docxCall(s, "generate", payload, &generated); err != nil {
 		return task, err
 	}
 	makeFile := makeDOCX

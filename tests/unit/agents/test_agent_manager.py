@@ -2461,6 +2461,32 @@ async def test_update_config_json_still_schedules_reload(
     assert scheduled == [row.agent_id]
 
 
+async def test_update_config_json_rejects_unavailable_resource(manager: AgentManager) -> None:
+    owner_id = manager._repos.user_repo.create(username="resource-owner", role="user")
+    manager._repos.agent_repo.create(agent_id="RESOURCES", user_id=owner_id, name="Resources")
+    with pytest.raises(OctopError) as exc:
+        await manager.update_config_json(
+            "RESOURCES", json.dumps({"skill_package_ids": ["missing-package"]})
+        )
+    assert exc.value.code == ErrorCode.SKILL_PACKAGE_NOT_FOUND
+    assert manager.get_config("RESOURCES").get("skill_package_ids", []) == []
+
+
+async def test_local_expert_cannot_be_shared_as_live_agent(manager: AgentManager) -> None:
+    owner_id = manager._repos.user_repo.create(username="local-owner", role="user")
+    manager._repos.agent_repo.create(
+        agent_id="LOCAL",
+        user_id=owner_id,
+        name="Local",
+        config_json=json.dumps({"local_only": True, "local_actions": ["local_docx"]}),
+    )
+    with pytest.raises(OctopError) as exc:
+        await manager.set_shared("LOCAL", True)
+    assert exc.value.code == ErrorCode.FORBIDDEN
+    row = manager.get_row("LOCAL")
+    assert row is not None and not row.is_shared
+
+
 @pytest.mark.asyncio
 async def test_update_config_json_cannot_change_system_files_path(
     manager: AgentManager, monkeypatch: pytest.MonkeyPatch

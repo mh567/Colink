@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from octop_harness.backends.workspace import BackendWorkspace
 
-from octop.api.common.agent import require_agent_owner_row, require_agent_row
+from octop.api.common.agent import require_agent_owner_row
 from octop.infra.errors import ErrorCode, OctopError
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ async def require_running_workspace(
     Stopped / failed agents still raise — the fallback is only for the
     rebuild gap, not a way to edit a stopped workspace through this helper.
     """
-    checker = require_agent_owner_row if owner_only else require_agent_row
+    checker = require_agent_owner_row
     row = checker(agent_id, user=user, as_user=as_user, server=server)
     try:
         return require_running_agent(server, agent_id).workspace
@@ -79,10 +79,9 @@ async def require_agent_workspace(
     """Auth-checked workspace even when the agent is stopped.
 
     Used for display files (e.g. expert avatar) that must work from the
-    experts list without requiring a running harness handle, and for chat
-    artifact preview/download after a team member has finished a turn.
+    experts list without requiring a running harness handle, and for owner-only chat artifact preview/download.
     """
-    checker = require_agent_owner_row if owner_only else require_agent_row
+    checker = require_agent_owner_row
     checker(agent_id, user=user, as_user=as_user, server=server)
     assert server.app_runtime is not None
     workspace = server.app_runtime.agent_registry.workspace_for_agent(agent_id)

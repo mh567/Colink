@@ -73,6 +73,11 @@ from octop.infra.utils.locale import Locale, resolve_request_locale
 
 router = APIRouter()
 
+
+def _offline_only() -> None:
+    raise OctopError(ErrorCode.LOCAL_EXPERT_REVIEW_REQUIRED, "use reviewed offline publication")
+
+
 _BUILTIN_ROOT = "_builtin_skills"
 _SKILLS_ROOT = "skills"
 
@@ -854,7 +859,7 @@ async def import_skill_from_url(
     body: ImportSkillBody,
     request: Request,
     as_user: int | None = None,
-    user: Any = Depends(require_permission("skills")),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Import a skill bundle from a supported external URL into the agent workspace."""
@@ -1092,7 +1097,7 @@ async def _hub_rankings(ranking_type: str) -> dict[str, Any]:
 async def hub_search_skills_global(
     q: str = "",
     limit: int = 50,
-    _user: Any = Depends(current_user),
+    _user: Any = Depends(_offline_only),
 ) -> list[dict[str, Any]]:
     """Browse SkillHub while composing a new expert (no agent exists yet)."""
     return await _hub_search(q=q, limit=limit)
@@ -1101,7 +1106,7 @@ async def hub_search_skills_global(
 @router.get("/skills/hub/rankings", summary="SkillHub rankings without an agent")
 async def hub_rankings_global(
     type: str = "all",
-    _user: Any = Depends(current_user),
+    _user: Any = Depends(_offline_only),
 ) -> dict[str, Any]:
     """Browse SkillHub rankings while composing a new expert."""
     return await _hub_rankings(type)
@@ -1113,7 +1118,7 @@ async def hub_search_skills(
     q: str = "",
     limit: int = 50,
     as_user: int | None = None,
-    user: Any = Depends(current_user),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> list[dict[str, Any]]:
     """Search the skill market over HTTP.
@@ -1130,7 +1135,7 @@ async def hub_rankings(
     agent_id: str,
     type: str = "all",
     as_user: int | None = None,
-    user: Any = Depends(current_user),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Fetch Tencent SkillHub rankings directly over HTTP.
@@ -1151,7 +1156,7 @@ async def hub_install_skill(
     agent_id: str,
     body: HubInstallBody,
     as_user: int | None = None,
-    user: Any = Depends(require_permission("skills")),
+    user: Any = Depends(_offline_only),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Install a SkillHub skill into the specified agent's workspace.

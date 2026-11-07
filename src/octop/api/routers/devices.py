@@ -61,6 +61,12 @@ class DeviceHeartbeat(BaseModel):
 class DocxAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["read", "create"]
+    agent_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="Optional employee-owned expert, rechecked before the native file action.",
+    )
 
 
 class DocxAuthorization(BaseModel):
@@ -69,6 +75,12 @@ class DocxAuthorization(BaseModel):
 
 class DocxGenerateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    agent_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="Optional employee-owned expert used with its currently authorized resources.",
+    )
     instruction: str = Field(min_length=1, max_length=8000, description="Employee's document task.")
     text: str = Field(
         max_length=60000,
@@ -82,6 +94,12 @@ class DocxGeneratedText(BaseModel):
 
 class XlsxGenerateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    agent_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="Optional employee-owned expert used with its currently authorized resources.",
+    )
     instruction: str = Field(
         min_length=1, max_length=8000, description="Employee's spreadsheet task."
     )
@@ -114,7 +132,9 @@ async def authorize_docx(
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
-    server.device_manager.authorize_docx(user, device_id, x_colink_device_session, body.action)
+    server.device_manager.authorize_docx(
+        user, device_id, x_colink_device_session, body.action, agent_id=body.agent_id
+    )
     return DocxAuthorization()
 
 
@@ -133,7 +153,7 @@ async def authorize_xlsx(
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(
-        user, device_id, x_colink_device_session, body.action, format="xlsx"
+        user, device_id, x_colink_device_session, body.action, format="xlsx", agent_id=body.agent_id
     )
     return DocxAuthorization()
 
@@ -142,7 +162,7 @@ async def authorize_xlsx(
     "/{device_id}/docx/generate",
     response_model=DocxGeneratedText,
     summary="Generate document text for an authorized native DOCX task",
-    description="Uses the explicitly configured active enterprise model without tools. "
+    description="Uses the selected private expert's authorized model, or the active enterprise model, without tools. "
     "Requires read and create rights, checked again after generation. Original files stay local.",
 )
 async def generate_docx(
@@ -159,6 +179,7 @@ async def generate_docx(
         x_colink_device_session,
         instruction=body.instruction,
         text=body.text,
+        agent_id=body.agent_id,
         models=server.app_runtime.agent_registry.host_models,
     )
     return DocxGeneratedText(text=text)
@@ -168,7 +189,7 @@ async def generate_docx(
     "/{device_id}/xlsx/generate",
     response_model=XlsxGeneratedData,
     summary="Generate structured spreadsheet data for an authorized native XLSX task",
-    description="Uses the explicitly configured active enterprise model without tools. "
+    description="Uses the selected private expert's authorized model, or the active enterprise model, without tools. "
     "Requires read and create rights, checked again after generation. Original files stay local.",
 )
 async def generate_xlsx(
@@ -185,6 +206,7 @@ async def generate_xlsx(
         x_colink_device_session,
         instruction=body.instruction,
         text=body.text,
+        agent_id=body.agent_id,
         models=server.app_runtime.agent_registry.host_models,
         format="xlsx",
     )
