@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Colink</vendor>
+  <action id="org.colink.fileops.overwrite">
+    <description>Overwrite a managed file</description>
+    <description xml:lang="zh_CN">覆盖受管文件</description>
+    <message>$(prompt_en)</message>
+    <message xml:lang="zh_CN">$(prompt_zh)</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.owner">unix-user:colink-fileops</annotate>
+  </action>
+  <action id="org.colink.fileops.delete">
+    <description>Delete a managed file</description>
+    <description xml:lang="zh_CN">删除受管文件</description>
+    <message>$(prompt_en)</message>
+    <message xml:lang="zh_CN">$(prompt_zh)</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.owner">unix-user:colink-fileops</annotate>
+  </action>
+</policyconfig>

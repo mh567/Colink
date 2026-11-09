@@ -325,12 +325,27 @@ func (c *deviceClient) docxSession() (docxSession, error) {
 	return snapshot, nil
 }
 func (c *deviceClient) currentDOCX(s docxSession) error {
-	current, err := c.docxSession()
-	if err != nil {
-		return err
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentDOCXLocked(s)
+}
+
+func (c *deviceClient) currentDOCXLocked(s docxSession) error {
+	current := c.docx
+	if current.Secret == "" || current.Context == nil || current.Context.Err() != nil {
+		return errors.New("请先接入已获批准的本人设备")
 	}
 	if current.Generation != s.Generation || current.scope() != s.scope() || current.Secret != s.Secret {
 		return errors.New("设备会话已改变，任务已停止")
 	}
 	return nil
+}
+
+func (c *deviceClient) applyDOCX(s docxSession, apply func() error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.currentDOCXLocked(s); err != nil {
+		return err
+	}
+	return apply()
 }

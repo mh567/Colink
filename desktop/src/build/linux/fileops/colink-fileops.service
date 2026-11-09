@@ -1,0 +1,22 @@
+[Unit]
+Description=Colink managed file operations
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=org.colink.FileOperations1
+ExecStart=/usr/local/libexec/colink-fileopsd
+User=colink-fileops
+Group=colink-fileops
+StateDirectory=colink-fileops
+StateDirectoryMode=0711
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

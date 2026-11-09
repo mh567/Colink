@@ -21,7 +21,7 @@ tasks:
       PRODUCTION: '{{.PRODUCTION | default "false"}}'
 
   package:
-    summary: Packages one production binary with its portable runtime embedded
+    summary: Packages the desktop and managed file service for Linux
     cmds:
       - task: stage:portable
         vars:
@@ -29,13 +29,25 @@ tasks:
       - task: build
         vars:
           PRODUCTION: "true"
+      - task: stage:fileops
       - rm -f {{.ARCHIVE}} bundled/portable.zip
-      - tar -C {{.BIN_DIR}} -czf {{.ARCHIVE}} {{.APP_NAME}}
+      - tar -C {{.BIN_DIR}} -czf {{.ARCHIVE}} {{.APP_NAME}} fileops
     vars:
       ARCH: "{{.ARCH | default ARCH}}"
       VERSION: '{{.VERSION | default "dev"}}'
       PORTABLE_ZIP: '{{.PORTABLE_ZIP | default (printf "../portable/release/Octop-portable-linux-%s-%s.zip" .ARCH .VERSION)}}'
       ARCHIVE: '{{.BIN_DIR}}/{{.APP_NAME}}-desktop-linux-{{.ARCH}}-{{.VERSION}}.tar.gz'
+
+  stage:fileops:
+    cmds:
+      - mkdir -p "{{.BIN_DIR}}/fileops"
+      - go build -trimpath -buildvcs=false -ldflags="-w -s" -o "{{.BIN_DIR}}/fileops/colink-fileopsd" ./cmd/fileopsd
+      - install -m 0755 build/linux/fileops/install.sh "{{.BIN_DIR}}/fileops/install.sh"
+      - install -m 0644 build/linux/fileops/colink-fileops.service build/linux/fileops/org.colink.FileOperations1.conf build/linux/fileops/org.colink.fileops.policy "{{.BIN_DIR}}/fileops/"
+    env:
+      GOOS: linux
+      GOARCH: "{{.ARCH | default ARCH}}"
+      CGO_ENABLED: 0
 
   stage:portable:
     summary: Copies the matching green zip for go:embed

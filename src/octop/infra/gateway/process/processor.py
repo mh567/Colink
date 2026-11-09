@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
@@ -43,6 +43,7 @@ from octop.infra.gateway.hitl.coordinator import (
 )
 from octop.infra.gateway.hitl.format import normalize_hitl_request
 from octop.infra.gateway.hitl.phrases import ApprovalUtterance, match_approval_utterance
+from octop.infra.gateway.hitl.store import HitlApprovalExpired
 from octop.infra.gateway.hitl.stream_compat import install_harness_hitl_compat
 from octop.infra.gateway.media.attachment_hints import (
     content_blocks_need_vision,
@@ -1600,6 +1601,7 @@ class GlobalProcessor:
         thread_id: str,
         user_id: int,
         decisions: list[dict[str, Any]],
+        before_resume: Callable[[], None] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Resume a dashboard HITL turn with the normal history bookkeeping."""
         usage_tracker = UsageTracker()
@@ -1617,6 +1619,7 @@ class GlobalProcessor:
                     agent_id,
                     thread_id,
                     decisions,
+                    before_resume=before_resume,
                 ),
                 thread_id=thread_id,
                 policies=self._hitl.session_policies,
@@ -1647,6 +1650,9 @@ class GlobalProcessor:
                     )
                 yield _maybe_stamp_team_host(chunk, agent_id, team_host)
             completed = True
+        except HitlApprovalExpired:
+            failure_saved = True
+            raise
         except Exception as exc:
             await self._record_stream_error(
                 user_id=user_id, agent_id=agent_id, thread_id=thread_id, exc=exc

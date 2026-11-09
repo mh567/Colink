@@ -2040,6 +2040,8 @@ class AgentManager:
         agent_id: str,
         thread_id: str,
         decisions: list[dict[str, Any]],
+        *,
+        before_resume: Callable[[], None] | None = None,
     ) -> AsyncIterator[Any]:
         """Resume a paused HITL interrupt for *thread_id*."""
         if self._harness_manager is None:
@@ -2049,6 +2051,8 @@ class AgentManager:
             self._track_invocation(agent_id),
         ):
             self._apply_pending_bootstrap_graph_refresh(agent_id)
+            if before_resume is not None:
+                before_resume()
             with (
                 hitl_thread_scope(thread_id),
                 turn_model_scope(self._stream_model_label(agent_id, {}, thread_id)),

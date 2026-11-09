@@ -150,12 +150,12 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 管理员须在用户权限中明确授予“本机 DOCX 任务”（`local_docx`）、“读取本机授权文件”（`local_files_read`）和“新建本机文件”（`local_files_create`）。三项默认不授予；管理身份不自动取得本人或其他员工电脑的文件执行权。
 
-员工在桌面客户端的设备页确认当前设备已批准并在线，进入“本机 DOCX 任务”，选择只读或读写目录，填写授权目录直属的 DOCX 文件名与任务描述（不含子目录，文件不超过 20 MB）。读取仅限授权目录；成果必须写入读写目录，成功后显示本机产物路径。已有文件不覆盖，未知命令与任意 shell 执行被拒绝。浏览器页面不能代替本机目录选择及原生设备连接。
+员工在桌面客户端的设备页确认当前设备已批准并在线，进入“本机 DOCX 任务”，选择只读或读写目录，填写授权目录直属的 DOCX 文件名与任务描述（不含子目录，文件不超过 20 MB）。读取仅限授权目录；成果必须写入读写目录，成功后显示本机产物路径。新建任务遇到已有文件时拒绝写入。未知命令与任意 shell 执行被拒绝。浏览器页面不能代替本机目录选择及原生设备连接。
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| `POST` | `/devices/{device_id}/docx/authorize` | 员工令牌＋`X-Colink-Device-Session` | `{action:"read"或"create"}`；校验当前设备归属、在线状态、功能及动作权限，返回 `{allowed:true}` |
-| `POST` | `/devices/{device_id}/docx/generate` | 同上，须同时持有读取与新建权限 | `{instruction,text}`；任务描述最多 8,000 字符，必要正文最多 60,000 字符；返回 `{text}`，最多 60,000 字符 |
+| `POST` | `/devices/{device_id}/docx/authorize` | 员工令牌＋`X-Colink-Device-Session` | `action` 可为 `read`、`create`、`overwrite`、`delete`。校验当前设备归属、在线状态、功能及动作权限，返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/docx/generate` | 同上，须持有读取及所选写入动作的权限 | `{instruction,text,action?}`，`action` 默认为 `create`，覆盖任务传 `overwrite`。任务描述最多 8,000 字符，必要正文最多 60,000 字符。返回 `{text}`，最多 60,000 字符 |
 
 已批准的 WebSocket `status` 帧增加 `session_token`，仅保留在原生客户端，不透传页面、列表或审计。它与本人访问令牌一起证明当前设备会话；重新连接产生新值，断线、撤销、停用或重置口令后失效。生成前及模型返回后均重新核对权限。客户端在实际读写处另行核对本机目录授权，不能以服务端批准代替目录边界。
 
@@ -173,14 +173,26 @@ DOCX 客户端使用 Go 标准库 ZIP/XML，不需运行时下载或额外 Offic
 
 | 方法 | 路径 | 请求与结果 |
 | --- | --- | --- |
-| `POST` | `/devices/{device_id}/xlsx/authorize` | 原生会话头和员工令牌；`{action:"read"或"create"}`，返回 `{allowed:true}` |
-| `POST` | `/devices/{device_id}/xlsx/generate` | 同上；`{instruction,text}`，`text` 是本机提取的工作表 JSON；返回 `{text}`，内含模型生成的 JSON，不代表文件已经成功生成 |
+| `POST` | `/devices/{device_id}/xlsx/authorize` | 原生会话头和员工令牌。`action` 可为 `read`、`create`、`overwrite`、`delete`，返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/xlsx/generate` | 同上。`{instruction,text,action?}`，`action` 默认为 `create`，覆盖任务传 `overwrite`。`text` 是本机提取的工作表 JSON。返回 `{text}`，内含模型生成的 JSON，实际写入结果由本机任务记录显示 |
 
-数据结构为 `{"sheets":[{"name":"汇总","rows":[["金额",12.5],["总计",{"formula":"SUM(B1:B1)"}]]}]}`。输入另附 `display_rows` 保存日期、百分比和零填充编号的显示含义；原始数值仍在 `rows` 中供计算。日期成果使用可读文本，不保留 Excel 日期类型和原格式。模型仅接收数据，不接收原始 XLSX 或目录凭据；客户端验证结构并计算公式后才新建文件。字符串始终为文本，公式须使用显式对象。失败显示错误，不返回虚假完成状态。
+数据结构为 `{"sheets":[{"name":"汇总","rows":[["金额",12.5],["总计",{"formula":"SUM(B1:B1)"}]]}]}`。输入另附 `display_rows` 保存日期、百分比和零填充编号的显示含义；原始数值仍在 `rows` 中供计算。日期成果使用可读文本，不保留 Excel 日期类型和原格式。模型仅接收数据，不接收原始 XLSX 或目录凭据；客户端验证结构并计算公式后才写入成果。字符串始终为文本，公式须使用显式对象。失败显示错误，不返回虚假完成状态。
 
-范围：授权目录直属 XLSX，原件与成果不超过 20 MB，解压数据不超过 40 MB；最多 10 张表、合计 10,000 单元格（含表内空白范围），输入与输出 JSON 各不超过 60,000 字符。新建数据表，不保留原样式、图表或宏。公式支持同表有界单元格引用、算术及 SUM/AVERAGE/MIN/MAX/COUNT；拒绝外部链接、跨表引用、循环、错误结果、总引用超过 100,000 或依赖超过 100 层。已有产物不会覆盖。
+范围：授权目录直属 XLSX，原件与成果不超过 20 MB，解压数据不超过 40 MB；最多 10 张表、合计 10,000 单元格（含表内空白范围），输入与输出 JSON 各不超过 60,000 字符。新建数据表，不保留原样式、图表或宏。公式支持同表有界单元格引用、算术及 SUM/AVERAGE/MIN/MAX/COUNT；拒绝外部链接、跨表引用、循环、错误结果、总引用超过 100,000 或依赖超过 100 层。新建任务遇到已有文件时拒绝写入。
 
 本机任务记录包含文件类型、来源、产物完整路径、状态与失败原因。重启后仍显示记录；运行中断不标为完成。真实模型、目标平台打包运行和 Office 实机编辑须单独验收。
+
+### 本机办公文件的覆盖与删除权限
+
+覆盖和删除 DOCX 或 XLSX 时，管理员须分别显式授予 `local_files_overwrite` 或 `local_files_delete`，同时授予相应格式的任务权限。两项操作权限彼此独立，管理身份和新建权限均不包含它们。服务端授权接口只校验本人设备会话与当前动作权限，目标路径和本次确认留在原生客户端。覆盖生成还需读取权限，生成前后都会核对读取与覆盖权限。删除无需调用模型。
+
+Windows 的读写授权目录支持经确认的覆盖和删除。Linux 使用[受管目录](../desktop/README.md#linux-受管文件目录)执行这两类操作，普通授权目录用于读取和新建。受管服务在提示与执行前，向管理员配置的可信 HTTPS Colink 服务端复核设备和动作权限。授权请求仅包含动作，目标路径和文件留在本机。
+
+例如，员工想把整理后的正文写回授权目录里的 `纪要.docx`。未授予覆盖权限时，`{action:"overwrite"}` 的授权请求返回 `403`。授予后，员工在原生弹窗核对完整路径和覆盖范围。取消会保留原件，确认只替换该文件。
+
+如果执行前原文件被移走或同名文件已被调换，本次任务停止，原文件和同名新文件的内容都保持原样。Windows 在替换中断且保留原件备份时，任务记录会提示核对目标和备份路径。重复提交同一请求编号读取已记录的状态，变更动作或目标须新建任务并确认。
+
+[Harness 1.0.7 的人工确认恢复](https://github.com/TencentCloud/octop-harness/blob/v1.0.7/src/octop_harness/agent.py#L570)保留暂停会话的用户与工具配置。Colink 恢复前核对当前员工、会话和确认编号，并且只接受一次。本机文件操作独立校验本人设备、动作权限和原生确认。
 
 ### 本机扫描 PDF 识别
 
@@ -238,7 +250,7 @@ and `allow_download` still apply to users who can already view the package.
 | `GET /agents/{id}/chat/welcome` | agent access | `{welcome_message, quick_prompts, task_examples}`; `task_examples` is `null` when the workspace field is absent |
 | `POST /text/assist` | JWT | Unified polish/generate: body `{kind, text?, context?, locale?, default_model?, agent_id?}` → `{text}`. Form kinds require `context.name`; `chat.prompt` requires `text`. Model defaults to automatic routing. |
 | `POST /agents/{id}/chat/polish` | owner | **Deprecated** compat alias for `POST /text/assist` with `kind=chat.prompt` |
-| `POST /agents/{id}/chat/hitl/resume` | owner | body `{thread_id, decisions: [...], hitl_policy?}` → SSE chunk stream; finishes with `{"type":"done"}`. When the resume stops on another approval, the done frame is `{"type":"done","hitl_paused":true}` and parked steers stay queued. Optional `hitl_policy` (`ask` / `allow_all` / `allow_tools`) is a thread-scoped bypass and does not change global tool-approval settings. |
+| `POST /agents/{id}/chat/hitl/resume` | employee who owns the approval | body `{thread_id, pending_id, decisions: [...], hitl_policy?}` → SSE chunk stream. Each pending ID is accepted once for its employee and thread. Missing, expired, or mismatched IDs return an error frame. When the resume stops on another approval, the done frame is `{"type":"done","hitl_paused":true}` and parked steers stay queued. Optional `hitl_policy` (`ask` / `allow_all` / `allow_tools`) applies to this thread. |
 
 Model calls retain LangChain's default retry eligibility and the configured
 retry budget/backoff. Exhausted calls raise and remain failed

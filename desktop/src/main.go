@@ -370,6 +370,7 @@ func main() {
 	}
 	api.device = &deviceClient{emit: api.emitDeviceStatus}
 	api.docx = newLocalDOCX(octopHome())
+	api.docx.confirmDestructive = api.confirmLocalFile
 
 	app := application.New(application.Options{
 		Name:        "Octop",

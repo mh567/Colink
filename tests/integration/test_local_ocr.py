@@ -30,9 +30,10 @@ async def test_ocr_requires_feature_and_native_device_possession(env):
             assert (
                 await client.post(path, headers=other_native, json={"action": "read"})
             ).status_code == 403
-        assert (
-            await client.post(path, headers=native, json={"action": "execute"})
-        ).status_code == 422
+        for action in ("execute", "overwrite", "delete"):
+            assert (
+                await client.post(path, headers=native, json={"action": action})
+            ).status_code == 422
         assert (
             await client.post(path, headers=native, json={"action": "read", "text": "private"})
         ).status_code == 422

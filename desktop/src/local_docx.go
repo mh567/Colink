@@ -33,11 +33,16 @@ type docxSession struct {
 	Generation                             uint64
 	Context                                context.Context
 	Refresh                                func() (docxSession, error)
+	Locale                                 Locale
+	Apply                                  func(func() error) error
+	TaskChanged                            func()
+	RecordRecovery                         func(string) error
 }
 
 func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s.UserID, s.DeviceID) }
 
 type docxRequest struct {
+	RequestID   string `json:"request_id,omitempty"`
 	AgentID     string `json:"agent_id,omitempty"`
 	Format      string `json:"format,omitempty"`
 	Action      string `json:"action"`
@@ -49,10 +54,12 @@ type docxRequest struct {
 	Instruction string `json:"instruction,omitempty"`
 }
 type directoryGrant struct {
-	ID       string `json:"id"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode"`
-	Identity string `json:"identity"`
+	ID          string `json:"id"`
+	Path        string `json:"path"`
+	Mode        string `json:"mode"`
+	Identity    string `json:"identity"`
+	Destructive bool   `json:"destructive,omitempty"`
+	Overwrite   bool   `json:"overwrite,omitempty"`
 }
 type docxTask struct {
 	AgentID     string `json:"agent_id,omitempty"`
@@ -63,23 +70,27 @@ type docxTask struct {
 	Output      string `json:"output"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
+	Operation   string `json:"operation,omitempty"`
+	Recovery    string `json:"recovery,omitempty"`
 }
 type docxState struct {
 	Grants []directoryGrant `json:"grants"`
 	Tasks  []docxTask       `json:"tasks"`
 }
 type docxEvent struct {
-	DeviceID string           `json:"device_id"`
-	Grants   []directoryGrant `json:"grants"`
-	Tasks    []docxTask       `json:"tasks"`
-	Busy     bool             `json:"busy"`
-	Error    string           `json:"error,omitempty"`
+	DeviceID         string           `json:"device_id"`
+	Grants           []directoryGrant `json:"grants"`
+	Tasks            []docxTask       `json:"tasks"`
+	Busy             bool             `json:"busy"`
+	Error            string           `json:"error,omitempty"`
+	ManagedDirectory bool             `json:"managed_directory,omitempty"`
 }
 type localDOCX struct {
-	mu    sync.Mutex
-	home  string
-	roots map[string]*os.Root
-	busy  bool
+	mu                 sync.Mutex
+	home               string
+	roots              map[string]*os.Root
+	busy               bool
+	confirmDestructive func(context.Context, Locale, string, string) (bool, error)
 }
 
 func newLocalDOCX(home string) *localDOCX {
@@ -117,7 +128,11 @@ func (w *localDOCX) save(states map[string]docxState) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(w.home, ".local-docx-")
+	return saveLocalTaskJSON(filepath.Join(w.home, "local-docx.json"), data)
+}
+
+func saveLocalTaskJSON(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".local-docx-")
 	if err != nil {
 		return err
 	}
@@ -133,7 +148,7 @@ func (w *localDOCX) save(states map[string]docxState) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(w.home, "local-docx.json"))
+	return os.Rename(f.Name(), path)
 }
 func (w *localDOCX) state(s docxSession) (docxState, error) {
 	w.mu.Lock()
@@ -166,11 +181,20 @@ func (w *localDOCX) state(s docxSession) (docxState, error) {
 			return docxState{}, err
 		}
 	}
+	tasks, err := w.destructiveTasks(s)
+	if err != nil {
+		return docxState{}, err
+	}
+	state.Tasks = append(state.Tasks, tasks...)
 	return state, nil
 }
 func (w *localDOCX) grant(s docxSession, path, mode string) (directoryGrant, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	managed := mode == "managed"
+	if managed {
+		mode = "rw"
+	}
 	if mode != "ro" && mode != "rw" {
 		return directoryGrant{}, errors.New("无效目录权限")
 	}
@@ -201,12 +225,19 @@ func (w *localDOCX) grant(s docxSession, path, mode string) (directoryGrant, err
 	if err != nil {
 		return directoryGrant{}, err
 	}
-	grant := directoryGrant{ID: localID(), Path: path, Mode: mode, Identity: identity}
+	grant := directoryGrant{ID: localID(), Path: path, Mode: mode, Identity: identity, Destructive: managed, Overwrite: managed}
 	states, err := w.load()
 	if err != nil {
 		return directoryGrant{}, err
 	}
 	state := states[s.scope()]
+	if managed {
+		for _, existing := range state.Grants {
+			if existing.Destructive && existing.Path == path && existing.Identity == identity {
+				return existing, nil
+			}
+		}
+	}
 	state.Grants = append(state.Grants, grant)
 	states[s.scope()] = state
 	if err = w.save(states); err != nil {
@@ -368,18 +399,25 @@ func makeDOCX(text string) ([]byte, error) {
 	}
 	return result.Bytes(), nil
 }
-func docxCall(s docxSession, action string, body any, result any) error {
+func refreshDOCXSession(s docxSession) (docxSession, error) {
 	if s.Refresh != nil {
 		latest, err := s.Refresh()
 		if err != nil {
-			return err
+			return s, err
 		}
 		if latest.Generation != s.Generation || latest.scope() != s.scope() || latest.Secret != s.Secret {
-			return errors.New("设备会话已改变，任务已停止")
+			return s, errors.New("设备会话已改变，任务已停止")
 		}
 		s.Token, s.Context = latest.Token, latest.Context
 	}
+	return s, nil
+}
 
+func docxCall(s docxSession, action string, body any, result any) error {
+	s, err := refreshDOCXSession(s)
+	if err != nil {
+		return err
+	}
 	u, err := url.Parse(s.Base)
 	if err != nil {
 		return err
@@ -476,6 +514,12 @@ func (w *localDOCX) record(s docxSession, task docxTask) error {
 	return w.save(states)
 }
 func (w *localDOCX) run(s docxSession, request docxRequest, current func() error) (task docxTask, err error) {
+	if isDestructiveAction(request.Action) {
+		return w.runDestructive(s, request, current)
+	}
+	if request.Action != "" && request.Action != "run" {
+		return task, errors.New("不支持的本机任务")
+	}
 	format := request.Format
 	if format == "" {
 		format = "docx"
@@ -528,73 +572,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 			err = fmt.Errorf("任务结果记录失败，请核对目标文件：%w", saveErr)
 		}
 	}()
-	if err = current(); err != nil {
-		return task, err
-	}
-	if err = authorizeDOCX(s, "read"); err != nil {
-		return task, err
-	}
-	if err = current(); err != nil {
-		return task, err
-	}
-	info, err := source.Lstat(request.Source)
+	data, err := generateLocalOutput(s, request, source, current)
 	if err != nil {
 		return task, err
-	}
-	if !info.Mode().IsRegular() {
-		return task, errors.New("只允许读取普通文件，不允许符号链接")
-	}
-	f, err := source.OpenFile(request.Source, os.O_RDONLY|docxNonblock, 0)
-	if err != nil {
-		return task, err
-	}
-	defer f.Close()
-	actual, err := f.Stat()
-	if err != nil {
-		return task, err
-	}
-	_, links, err := fileIdentity(f)
-	if err != nil {
-		return task, err
-	}
-	if !actual.Mode().IsRegular() || !os.SameFile(info, actual) || links != 1 {
-		return task, errors.New("文件已改变或存在硬链接，拒绝读取")
-	}
-	read := readDOCX
-	if format == "xlsx" {
-		read = readXLSX
-	}
-	var text string
-	if format == "ocr" {
-		text, err = readLocalOCR(s.Context, f, actual.Size())
-	} else {
-		text, err = read(f, actual.Size())
-	}
-	if err != nil {
-		return task, err
-	}
-	var data []byte
-	if format == "ocr" {
-		data = []byte(text)
-	} else {
-		var generated struct {
-			Text string `json:"text"`
-		}
-		payload := map[string]string{"instruction": request.Instruction, "text": text}
-		if request.AgentID != "" {
-			payload["agent_id"] = request.AgentID
-		}
-		if err = docxCall(s, "generate", payload, &generated); err != nil {
-			return task, err
-		}
-		makeFile := makeDOCX
-		if format == "xlsx" {
-			makeFile = makeXLSX
-		}
-		data, err = makeFile(generated.Text)
-		if err != nil {
-			return task, err
-		}
 	}
 	if err = authorizeDOCX(s, "create"); err != nil {
 		return task, err
@@ -602,11 +582,12 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = current(); err != nil {
 		return task, err
 	}
-	if format == "xlsx" || format == "ocr" {
-		output, err = w.openGrant(s, request.OutputGrant, true)
-		if err != nil {
-			return task, err
-		}
+	output, err = w.openGrant(s, request.OutputGrant, true)
+	if err != nil {
+		return task, err
+	}
+	if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
+		return task, presentFileopsError(s.Locale, createErr)
 	}
 	target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -620,4 +601,81 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		err = closeErr
 	}
 	return task, err
+}
+
+func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, current func() error) ([]byte, error) {
+	format := s.Format
+	var err error
+	if err = current(); err != nil {
+		return nil, err
+	}
+	if err = authorizeDOCX(s, "read"); err != nil {
+		return nil, err
+	}
+	if err = current(); err != nil {
+		return nil, err
+	}
+	info, err := source.Lstat(request.Source)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("只允许读取普通文件，不允许符号链接")
+	}
+	f, err := source.OpenFile(request.Source, os.O_RDONLY|docxNonblock, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	actual, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	_, links, err := fileIdentity(f)
+	if err != nil {
+		return nil, err
+	}
+	if !actual.Mode().IsRegular() || !os.SameFile(info, actual) || links != 1 {
+		return nil, errors.New("文件已改变或存在硬链接，拒绝读取")
+	}
+	read := readDOCX
+	if format == "xlsx" {
+		read = readXLSX
+	}
+	var text string
+	if format == "ocr" {
+		text, err = readLocalOCR(s.Context, f, actual.Size())
+	} else {
+		text, err = read(f, actual.Size())
+	}
+	if err != nil {
+		return nil, err
+	}
+	var data []byte
+	if format == "ocr" {
+		data = []byte(text)
+	} else {
+		var generated struct {
+			Text string `json:"text"`
+		}
+		payload := map[string]string{"instruction": request.Instruction, "text": text}
+		if request.Action == "overwrite" {
+			payload["action"] = "overwrite"
+		}
+		if request.AgentID != "" {
+			payload["agent_id"] = request.AgentID
+		}
+		if err = docxCall(s, "generate", payload, &generated); err != nil {
+			return nil, err
+		}
+		makeFile := makeDOCX
+		if format == "xlsx" {
+			makeFile = makeXLSX
+		}
+		data, err = makeFile(generated.Text)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return data, nil
 }

@@ -89,12 +89,32 @@ GitHub Release names follow `Octop-<kind>-<os>-<arch>-<version>.<ext>`:
 - Green runtime zip: `Octop-portable-<plat>-<version>.zip`
 - PyPI wheels stay `octop-<version>-py3-none-any.whl` (PEP 427)
 
-The Linux tar.gz contains only the GUI binary; it has no separate portable zip or
-server terminal process. Runtime upgrades remain owned by Octop:
+The Linux tar.gz contains the GUI binary and the optional managed file service in
+`fileops/`. The GUI embeds its portable runtime. Runtime upgrades remain owned by Octop:
 the shell sets `OCTOP_GREEN_PACKAGES`, so `octop update` upgrades the extracted
 `packages/` directory through Octop's existing `--target` logic.
 
 Linux also needs GTK4 + WebKitGTK 6 to link. macOS 12+.
+
+## Windows 本机文件确认
+
+在本机文档任务面板授权读写目录后，选择覆盖或删除。例如，覆盖示例文件 `周报.docx` 时，确认框会显示动作、完整路径和影响范围。点击取消后核对原件，点击确认后核对更新内容。同一任务重试时可查看已记录的结果。如果任务提示备份路径，先核对目标文件和备份，再新建任务。
+
+从 `desktop/src` 在 Windows 原生环境运行 `go test -count=1 ./...`，再用同一源码构建的桌面客户端检查示例文件。确认期间调换同名文件或撤销权限时，核对两个文件的内容是否保持原样。
+
+## Linux 受管文件目录
+
+在安装了 systemd、系统消息总线和 Polkit 的 Linux 桌面上，管理员将对应架构的可信桌面包解压到仅管理员可写的目录，并运行 `sudo ./fileops/install.sh https://colink.example.com/office`。示例网址应替换为员工桌面客户端连接的 Colink 服务器地址，并包含相同的反向代理路径前缀。安装脚本将可信地址保存在管理员拥有的 `/etc/colink-fileops/server-url`，并使用包内二进制和配置。
+
+受管文件服务必须能通过系统信任的证书连接该 HTTPS 服务器，以核对已批准的设备会话和文件动作权限。仅部署在内网也可使用受系统信任的企业证书。管理员可用 `systemctl status colink-fileops` 检查服务，桌面程序仍以员工的普通账户启动。
+
+在本机文档任务面板授权受管目录后，先向该目录新建文件，再选择其中的文件覆盖或删除。例如，生成 `周报.docx` 后选择覆盖，系统弹窗会列出目标路径、覆盖动作和影响范围。点击取消后，核对原文件内容是否保持不变。普通授权目录继续用于读取和新建文件。
+
+在目标 Linux 桌面验收时，从 `desktop/src` 运行 `go test -count=1 ./internal/fileops`，再安装同一源码构建的桌面包。用受管目录内的临时文件逐项检查。
+
+- 覆盖和删除各取消一次，`sha256sum` 输出保持一致。
+- 分别确认覆盖和删除，只有覆盖目标的内容发生变化，只有删除目标消失。同一任务重试返回原结果。
+- 弹窗打开后撤销当前设备或动作权限，再确认操作，目标文件保持原样。
 
 ## Icons
 

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"runtime"
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -42,8 +44,11 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" {
 		return request, errors.New("不支持的文件类型")
 	}
-	if request.Action != "list" && request.Action != "grant" && request.Action != "run" {
+	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "run" && !isDestructiveAction(request.Action) {
 		return request, errors.New("不支持该操作；不允许命令执行")
+	}
+	if isDestructiveAction(request.Action) && !validDestructiveID(request.RequestID) {
+		return request, fileopsCopyError(copyFileInvalidIntent)
 	}
 	return request, nil
 }
@@ -58,7 +63,7 @@ func (a *App) emitDOCX(s docxSession, busy bool, err error) {
 	if err == nil {
 		err = stateErr
 	}
-	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy}
+	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy, ManagedDirectory: runtime.GOOS == "linux"}
 	if event.Grants == nil {
 		event.Grants = []directoryGrant{}
 	}
@@ -66,11 +71,15 @@ func (a *App) emitDOCX(s docxSession, busy bool, err error) {
 		event.Tasks = []docxTask{}
 	}
 	if err != nil {
-		event.Error = err.Error()
+		event.Error = presentFileopsError(s.Locale, err).Error()
 	}
 	// Local identities are only for reopening the exact directory, not UI data.
 	for i := range event.Grants {
 		event.Grants[i].Identity = ""
+		if runtime.GOOS == "windows" && event.Grants[i].Mode == "rw" {
+			event.Grants[i].Destructive = true
+			event.Grants[i].Overwrite = true
+		}
 	}
 	data, marshalErr := json.Marshal(event)
 	if marshalErr != nil {
@@ -83,6 +92,7 @@ func (a *App) handleDOCX(raw string) {
 	if err != nil {
 		return
 	}
+	session.Locale = a.store.get().Locale
 	request, err := parseDOCXRequest(raw)
 	if err != nil {
 		a.emitDOCX(session, false, err)
@@ -103,7 +113,12 @@ func (a *App) handleDOCX(raw string) {
 		a.emitDOCX(session, true, errors.New("已有本机任务执行中"))
 		return
 	}
-	defer func() { a.docx.mu.Lock(); a.docx.busy = false; a.docx.mu.Unlock(); a.emitDOCX(session, false, err) }()
+	defer func() {
+		a.docx.mu.Lock()
+		a.docx.busy = false
+		a.docx.mu.Unlock()
+		a.emitDOCX(session, false, err)
+	}()
 	a.emitDOCX(session, true, nil)
 	switch request.Action {
 	case "grant":
@@ -130,7 +145,64 @@ func (a *App) handleDOCX(raw string) {
 			return
 		}
 		_, err = a.docx.grant(session, path, request.Mode)
-	case "run":
+	case "grant_managed":
+		if err = authorizeDOCX(session, "read"); err != nil {
+			return
+		}
+		if err = authorizeDOCX(session, "create"); err != nil {
+			return
+		}
+		var path string
+		path, err = linuxManagedDirectory(session)
+		if err != nil {
+			return
+		}
+		if err = a.device.currentDOCX(session); err == nil {
+			_, err = a.docx.grant(session, path, "managed")
+		}
+	case "run", "overwrite", "delete":
+		session.Apply = func(apply func() error) error {
+			return a.device.applyDOCX(session, apply)
+		}
+		session.TaskChanged = func() { a.emitDOCX(session, true, nil) }
 		_, err = a.docx.run(session, request, func() error { return a.device.currentDOCX(session) })
 	}
+}
+
+func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, path string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if a.app == nil || a.window == nil {
+		return false, errors.New(desktopText(locale, copyFileConfirmationUnavailable))
+	}
+	var action, scope string
+	switch operation {
+	case "delete":
+		action, scope = copyFileDelete, copyFileDeleteScope
+	case "overwrite":
+		action, scope = copyFileOverwrite, copyFileOverwriteScope
+	default:
+		return false, fileopsCopyError(copyFileInvalidIntent)
+	}
+	const width, maxLines = 28, 10
+	runes := []rune(path)
+	if len(runes) > width*maxLines {
+		return false, errors.New(desktopText(locale, copyFilePathTooLong))
+	}
+	lines := make([]string, 0, maxLines)
+	for len(runes) > width {
+		lines = append(lines, string(runes[:width]))
+		runes = runes[width:]
+	}
+	lines = append(lines, string(runes))
+	dialog := a.app.Dialog.Question().
+		SetTitle(desktopText(locale, copyFileConfirmTitle)).
+		SetMessage(desktopText(locale, copyFileConfirmMessage, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
+		AttachToWindow(a.window)
+	approved := false
+	dialog.AddButton("Yes").OnClick(func() { approved = true })
+	dialog.SetDefaultButton(dialog.AddButton("No"))
+	dialog.Show()
+	return approved, ctx.Err()
 }

@@ -21,7 +21,10 @@ interface Grant {
   id: string;
   path: string;
   mode: "ro" | "rw";
+  destructive?: boolean;
+  overwrite?: boolean;
 }
+type Operation = "run" | "overwrite" | "delete";
 interface LocalTask {
   format?: "docx" | "xlsx" | "ocr";
   id: string;
@@ -29,6 +32,7 @@ interface LocalTask {
   agent_id?: string;
   source: string;
   output: string;
+  operation?: Operation;
   status: string;
   error?: string;
 }
@@ -37,6 +41,7 @@ interface NativeState {
   grants: Grant[];
   tasks: LocalTask[];
   busy: boolean;
+  managed_directory?: boolean;
   error?: string;
 }
 
@@ -66,6 +71,11 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   const [expertId, setExpertId] = useState("");
   const [expertError, setExpertError] = useState<unknown>(null);
   const [format, setFormat] = useState<"docx" | "xlsx" | "ocr">("docx");
+  const [operation, setOperation] = useState<Operation>("run");
+  const [lastRequest, setLastRequest] = useState<{
+    key: string;
+    id: string;
+  } | null>(null);
   const contentKey = { docx: "localDocx", xlsx: "localXlsx", ocr: "localOcr" }[
     format
   ];
@@ -78,6 +88,8 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   useEffect(() => {
     setState({ device_id: deviceId, grants: [], tasks: [], busy: false });
     setFormat("docx");
+    setOperation("run");
+    setLastRequest(null);
     setExpertId("");
     setExperts([]);
     setExpertError(null);
@@ -135,29 +147,85 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   };
   const statuses: Record<string, string> = {
     running: t("localDocx.running", "处理中"),
+    awaiting_confirmation: t("localDocx.awaitingConfirmation", "等待确认"),
     completed: t("localDocx.completed", "已完成"),
+    cancelled: t("localDocx.cancelled", "已取消"),
     failed: t("localDocx.failed", "失败"),
     interrupted: t("localDocx.interrupted", "已中断"),
+  };
+  const operations: Record<Operation, string> = {
+    run: t("localDocx.createOperation", "生成新文件"),
+    overwrite: t("localDocx.overwriteOperation", "覆盖现有文件"),
+    delete: t("localDocx.deleteOperation", "删除文件"),
   };
   const errorMessage = (message: string) =>
     /^OCR_[A-Z_]+$/.test(message)
       ? t(`localOcr.errors.${message}`, t("localOcr.errors.OCR_INTERNAL"))
       : message;
+  const destructive = operation !== "run";
+  const deleting = operation === "delete";
+  const supportsOverwrite = state.grants.some(
+    (grant) => grant.mode === "rw" && grant.overwrite,
+  );
+  const targetGrants = state.grants.filter(
+    (grant) =>
+      grant.mode === "rw" &&
+      (!destructive || (deleting ? grant.destructive : grant.overwrite)),
+  );
+  const hasSource =
+    source.trim() && state.grants.some((grant) => grant.id === sourceGrant);
+  const hasExpert =
+    !expertId ||
+    experts.some(
+      (expert) =>
+        expert.agent_id === expertId &&
+        expert.actions.includes(`local_${format}`),
+    );
   const canRun =
-    state.grants.some((grant) => grant.id === sourceGrant) &&
-    state.grants.some(
-      (grant) => grant.id === outputGrant && grant.mode === "rw",
-    ) &&
-    source.trim() &&
+    targetGrants.some((grant) => grant.id === outputGrant) &&
     output.trim() &&
-    (format === "ocr" ||
-      (instruction.trim() &&
-        (!expertId ||
-          experts.some(
-            (expert) =>
-              expert.agent_id === expertId &&
-              expert.actions.includes(`local_${format}`),
-          ))));
+    (deleting ||
+      (hasSource && (format === "ocr" || (instruction.trim() && hasExpert))));
+
+  const taskCommand: Record<string, string> = {
+    action: operation,
+    output_grant: outputGrant,
+    output: output.trim(),
+  };
+  if (!deleting) {
+    taskCommand.source_grant = sourceGrant;
+    taskCommand.source = source.trim();
+    taskCommand.instruction = format === "ocr" ? "" : instruction.trim();
+    if (format !== "ocr" && expertId) taskCommand.agent_id = expertId;
+  }
+  const requestKey = destructive ? JSON.stringify([format, taskCommand]) : "";
+  const matchingRequest = lastRequest?.key === requestKey ? lastRequest : null;
+  const canStartNew =
+    matchingRequest &&
+    state.tasks.some(
+      (task) =>
+        task.id === matchingRequest.id &&
+        ["completed", "cancelled", "failed", "interrupted"].includes(
+          task.status,
+        ),
+    );
+
+  const submitTask = (startNew = false) => {
+    if (!canRun || state.busy) return;
+    if (!destructive) {
+      dispatch(taskCommand);
+      return;
+    }
+    let requestId = startNew ? undefined : matchingRequest?.id;
+    if (!requestId) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      requestId = Array.from(bytes, (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      setLastRequest({ key: requestKey, id: requestId });
+    }
+    dispatch({ ...taskCommand, request_id: requestId });
+  };
 
   return (
     <Card
@@ -180,6 +248,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             style={selectStyle}
             onChange={(event) => {
               setFormat(event.target.value as "docx" | "xlsx" | "ocr");
+              setOperation("run");
               setExpertId("");
               setSource("");
               setOutput("");
@@ -194,6 +263,31 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           </select>
         </div>
         {format !== "ocr" && (
+          <div>
+            <label htmlFor={`${id}-operation`}>
+              {t("localDocx.operation", "文件操作")}
+            </label>
+            <select
+              id={`${id}-operation`}
+              value={operation}
+              disabled={state.busy}
+              style={selectStyle}
+              onChange={(event) => {
+                setOperation(event.target.value as Operation);
+                setOutputGrant("");
+              }}
+            >
+              <option value="run">{operations.run}</option>
+              {(supportsOverwrite || operation === "overwrite") && (
+                <option value="overwrite" disabled={!supportsOverwrite}>
+                  {operations.overwrite}
+                </option>
+              )}
+              <option value="delete">{operations.delete}</option>
+            </select>
+          </div>
+        )}
+        {format !== "ocr" && !deleting && (
           <>
             {expertError ? (
               <Alert
@@ -233,21 +327,25 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           </>
         )}
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
-          {t(
-            `${contentKey}.privacy`,
-            format === "ocr"
-              ? "原件和识别文字均保留在本机，不发送到模型；文字成果写入授权目录，不覆盖已有文件。"
-              : "原始文件保留在本机；所选文档的正文经服务端发送到已配置模型。成果写入授权目录，不覆盖已有文件。",
-          )}
+          {deleting
+            ? t("localDocx.deletePrivacy", "仅删除目标目录中的一个文件。")
+            : t(
+                `${contentKey}.privacy`,
+                format === "ocr"
+                  ? "原件和识别文字均保留在本机，不发送到模型；文字成果写入授权目录，不覆盖已有文件。"
+                  : "原始文件保留在本机。所选文档的正文经服务端发送到已配置模型。新建任务遇到同名文件时停止。",
+              )}
         </Typography.Paragraph>
-        <Typography.Text type="secondary">
-          {t(
-            `${contentKey}.limits`,
-            format === "ocr"
-              ? "支持授权目录直属的扫描 PDF，不超过 20 MB、20 页和 60,000 字符。识别结果按页写入 TXT，请对照原件核对；资源缺失或识别失败时停止并报错。"
-              : "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。",
-          )}
-        </Typography.Text>
+        {!deleting && (
+          <Typography.Text type="secondary">
+            {t(
+              `${contentKey}.limits`,
+              format === "ocr"
+                ? "支持授权目录直属的扫描 PDF，不超过 20 MB、20 页和 60,000 字符。识别结果按页写入 TXT，请对照原件核对；资源缺失或识别失败时停止并报错。"
+                : "支持授权目录直属的 DOCX 文件（不含子目录），文件不超过 20 MB、正文不超过 60,000 字符；生成基础正文，不保留原版式。",
+            )}
+          </Typography.Text>
+        )}
         <Space wrap>
           <Button
             icon={<FolderPlus size={16} />}
@@ -263,6 +361,15 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           >
             {t("localDocx.grantWrite", "选择读写目录")}
           </Button>
+          {format !== "ocr" && state.managed_directory && (
+            <Button
+              icon={<FolderPlus size={16} />}
+              disabled={state.busy}
+              onClick={() => dispatch({ action: "grant_managed" })}
+            >
+              {t("localDocx.grantManaged", "添加受管目录")}
+            </Button>
+          )}
           <Button
             disabled={state.busy}
             onClick={() => dispatch({ action: "list" })}
@@ -289,19 +396,20 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
         {state.error && (
           <Alert type="error" showIcon message={errorMessage(state.error)} />
         )}
+        {destructive && (
+          <Alert
+            type="info"
+            showIcon
+            message={t(
+              "localDocx.confirmNative",
+              "请在本机弹窗核对目标文件并确认。",
+            )}
+          />
+        )}
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (canRun && !state.busy)
-              dispatch({
-                action: "run",
-                ...(format !== "ocr" && expertId ? { agent_id: expertId } : {}),
-                source_grant: sourceGrant,
-                source: source.trim(),
-                output_grant: outputGrant,
-                output: output.trim(),
-                instruction: format === "ocr" ? "" : instruction.trim(),
-              });
+            submitTask();
           }}
         >
           <fieldset
@@ -316,30 +424,34 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 gap: 16,
               }}
             >
-              <div>
-                <label htmlFor={`${id}-source-grant`}>
-                  {t("localDocx.sourceGrant", "资料目录")}
-                </label>
-                <select
-                  id={`${id}-source-grant`}
-                  value={sourceGrant}
-                  onChange={(event) => setSourceGrant(event.target.value)}
-                  style={selectStyle}
-                  required
-                >
-                  <option value="">
-                    {t("localDocx.select", "请选择授权目录")}
-                  </option>
-                  {state.grants.map((grant) => (
-                    <option key={grant.id} value={grant.id}>
-                      {grant.path}
+              {!deleting && (
+                <div>
+                  <label htmlFor={`${id}-source-grant`}>
+                    {t("localDocx.sourceGrant", "资料目录")}
+                  </label>
+                  <select
+                    id={`${id}-source-grant`}
+                    value={sourceGrant}
+                    onChange={(event) => setSourceGrant(event.target.value)}
+                    style={selectStyle}
+                    required
+                  >
+                    <option value="">
+                      {t("localDocx.select", "请选择授权目录")}
                     </option>
-                  ))}
-                </select>
-              </div>
+                    {state.grants.map((grant) => (
+                      <option key={grant.id} value={grant.id}>
+                        {grant.path}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label htmlFor={`${id}-output-grant`}>
-                  {t("localDocx.outputGrant", "成果目录")}
+                  {destructive
+                    ? t("localDocx.targetGrant", "目标目录")
+                    : t("localDocx.outputGrant", "成果目录")}
                 </label>
                 <select
                   id={`${id}-output-grant`}
@@ -351,36 +463,38 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   <option value="">
                     {t("localDocx.select", "请选择授权目录")}
                   </option>
-                  {state.grants
-                    .filter((grant) => grant.mode === "rw")
-                    .map((grant) => (
-                      <option key={grant.id} value={grant.id}>
-                        {grant.path}
-                      </option>
-                    ))}
+                  {targetGrants.map((grant) => (
+                    <option key={grant.id} value={grant.id}>
+                      {grant.path}
+                    </option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor={`${id}-source`}>
-                  {t("localDocx.source", "源文件名")}
-                </label>
-                <Input
-                  id={`${id}-source`}
-                  value={source}
-                  onChange={(event) => setSource(event.target.value)}
-                  placeholder={t(
-                    `${contentKey}.sourceExample`,
-                    format === "ocr"
-                      ? "例如：扫描资料.pdf"
-                      : "例如：会议记录.docx",
-                  )}
-                  maxLength={240}
-                  required
-                />
-              </div>
+              {!deleting && (
+                <div>
+                  <label htmlFor={`${id}-source`}>
+                    {t("localDocx.source", "源文件名")}
+                  </label>
+                  <Input
+                    id={`${id}-source`}
+                    value={source}
+                    onChange={(event) => setSource(event.target.value)}
+                    placeholder={t(
+                      `${contentKey}.sourceExample`,
+                      format === "ocr"
+                        ? "例如：扫描资料.pdf"
+                        : "例如：会议记录.docx",
+                    )}
+                    maxLength={240}
+                    required
+                  />
+                </div>
+              )}
               <div>
                 <label htmlFor={`${id}-output`}>
-                  {t("localDocx.output", "新文件名")}
+                  {destructive
+                    ? t("localDocx.target", "目标文件名")
+                    : t("localDocx.output", "新文件名")}
                 </label>
                 <Input
                   id={`${id}-output`}
@@ -397,7 +511,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 />
               </div>
             </div>
-            {format !== "ocr" && (
+            {format !== "ocr" && !deleting && (
               <div style={{ marginTop: 16, marginBottom: 16 }}>
                 <label htmlFor={`${id}-instruction`}>
                   {t("localDocx.instruction", "任务描述")}
@@ -416,22 +530,35 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 />
               </div>
             )}
-            <Button
-              style={{ marginTop: format === "ocr" ? 16 : 0 }}
-              type="primary"
-              htmlType="submit"
-              loading={state.busy}
-              disabled={!canRun}
+            <Space
+              wrap
+              style={{ marginTop: format === "ocr" || deleting ? 16 : 0 }}
             >
-              {t(
-                `${contentKey}.run`,
-                format === "ocr"
-                  ? "识别扫描 PDF"
-                  : format === "xlsx"
-                  ? "生成 XLSX"
-                  : "生成 DOCX",
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={state.busy}
+                disabled={!canRun}
+              >
+                {operation === "overwrite"
+                  ? t("localDocx.requestOverwrite", "请求覆盖")
+                  : deleting
+                  ? t("localDocx.requestDelete", "请求删除")
+                  : t(
+                      `${contentKey}.run`,
+                      format === "ocr"
+                        ? "识别扫描 PDF"
+                        : format === "xlsx"
+                        ? "生成 XLSX"
+                        : "生成 DOCX",
+                    )}
+              </Button>
+              {canStartNew && (
+                <Button disabled={!canRun} onClick={() => submitTask(true)}>
+                  {t("localDocx.startNewTask", "新建本次任务")}
+                </Button>
               )}
-            </Button>
+            </Space>
           </fieldset>
         </form>
         {state.tasks.length > 0 && (
@@ -463,6 +590,9 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                     {statuses[task.status] ?? task.status}
                   </Tag>
                   <Tag>{(task.format ?? "docx").toUpperCase()}</Tag>
+                  {task.operation && task.operation !== "run" && (
+                    <Tag>{operations[task.operation]}</Tag>
+                  )}
                   <Typography.Text strong>{task.instruction}</Typography.Text>
                   <div>
                     <Typography.Text type="secondary">

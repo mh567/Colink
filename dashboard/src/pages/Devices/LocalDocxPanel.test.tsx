@@ -332,3 +332,159 @@ it("passes the selected authorized expert to the native task", async () => {
   );
   expect(command.agent_id).toBe("mine-expert");
 });
+
+it.each([
+  { operation: "overwrite", button: "请求覆盖" },
+  { operation: "delete", button: "请求删除" },
+])(
+  "requests native $operation only for a destructive directory grant",
+  async ({ operation, button }) => {
+    const invoke = vi.fn();
+    (window as Window & { _wails?: unknown })._wails = { invoke };
+    render(<LocalDocxPanel deviceId="mine" />);
+    const grants = [
+      { id: "ro", path: "/资料", mode: "ro" },
+      { id: "rw", path: "/成果", mode: "rw" },
+      { id: "delete-only", path: "/普通授权", mode: "rw", destructive: true },
+      {
+        id: "managed",
+        path: "/受管",
+        mode: "rw",
+        destructive: true,
+        overwrite: true,
+      },
+    ];
+    const nativeStatus = (extra: Record<string, unknown> = {}) =>
+      act(async () => {
+        window.dispatchEvent(
+          new CustomEvent("colink:docx-status", {
+            detail: {
+              device_id: "mine",
+              busy: false,
+              grants,
+              tasks: [],
+              ...extra,
+            },
+          }),
+        );
+      });
+    const lastCommand = () =>
+      JSON.parse(
+        decodeURIComponent(
+          invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+        ),
+      );
+    await nativeStatus({
+      grants: grants.filter((grant) => grant.id !== "managed"),
+    });
+    expect(screen.queryByRole("option", { name: "覆盖现有文件" })).toBeNull();
+    expect(
+      screen.getByRole("option", { name: "删除文件" }),
+    ).toBeInTheDocument();
+    await nativeStatus();
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("文件操作"), operation);
+    const targetGrant = screen.getByLabelText("目标目录");
+    expect(targetGrant.querySelector('option[value="rw"]')).toBeNull();
+    expect(targetGrant.querySelector('option[value="ro"]')).toBeNull();
+    expect(
+      Boolean(targetGrant.querySelector('option[value="delete-only"]')),
+    ).toBe(operation === "delete");
+    expect(screen.getByRole("button", { name: button })).toBeDisabled();
+    await user.selectOptions(targetGrant, "managed");
+    await user.type(screen.getByLabelText("目标文件名"), "纪要.docx");
+
+    const source = {
+      source_grant: "ro",
+      source: "会议.docx",
+      instruction: "更新会议待办",
+    };
+    if (operation === "overwrite") {
+      await user.selectOptions(
+        screen.getByLabelText("资料目录"),
+        source.source_grant,
+      );
+      await user.type(screen.getByLabelText("源文件名"), source.source);
+      await user.type(screen.getByLabelText("任务描述"), source.instruction);
+    } else {
+      expect(screen.queryByLabelText("源文件名")).toBeNull();
+      expect(screen.queryByLabelText("任务描述")).toBeNull();
+    }
+    await user.click(screen.getByRole("button", { name: button }));
+    const original = lastCommand();
+    expect(original).toEqual({
+      action: operation,
+      output_grant: "managed",
+      output: "纪要.docx",
+      ...(operation === "overwrite" ? source : {}),
+      request_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+    });
+
+    const task = {
+      id: original.request_id,
+      operation,
+      instruction: operation === "overwrite" ? source.instruction : "",
+      source: operation === "overwrite" ? source.source : "",
+      output: "/受管/纪要.docx",
+    };
+    await nativeStatus({
+      busy: true,
+      tasks: [{ ...task, status: "awaiting_confirmation" }],
+    });
+    expect(screen.getByText("等待确认")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建本次任务" })).toBeNull();
+    await nativeStatus({ tasks: [{ ...task, status: "cancelled" }] });
+    expect(screen.getByText("已取消")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: button }));
+    expect(lastCommand()).toEqual(original);
+
+    await nativeStatus({ tasks: [{ ...task, status: "cancelled" }] });
+    await user.click(screen.getByRole("button", { name: "新建本次任务" }));
+    const fresh = lastCommand();
+    expect(fresh).toEqual({
+      ...original,
+      request_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+    });
+    expect(fresh.request_id).not.toBe(original.request_id);
+
+    await nativeStatus();
+    const filename = screen.getByLabelText("目标文件名");
+    await user.clear(filename);
+    await user.type(filename, "另一份纪要.docx");
+    await user.click(screen.getByRole("button", { name: button }));
+    expect(lastCommand()).toEqual({
+      ...original,
+      output: "另一份纪要.docx",
+      request_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+    });
+    expect(lastCommand().request_id).not.toBe(fresh.request_id);
+  },
+);
+
+it("requests the native managed directory only when the platform exposes it", async () => {
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  render(<LocalDocxPanel deviceId="mine" />);
+  expect(screen.queryByRole("button", { name: "添加受管目录" })).toBeNull();
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [],
+          tasks: [],
+          managed_directory: true,
+        },
+      }),
+    );
+  });
+  await userEvent.click(screen.getByRole("button", { name: "添加受管目录" }));
+  expect(
+    JSON.parse(
+      decodeURIComponent(
+        invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+      ),
+    ),
+  ).toEqual({ action: "grant_managed" });
+});

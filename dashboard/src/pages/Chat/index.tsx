@@ -102,6 +102,7 @@ import {
   findAutoResumableApproval,
   findPendingAsk,
   hasPendingHitl,
+  type PendingAsk,
 } from "./utils/pendingHitl";
 import { isAgentChatReady } from "../../utils/agentError";
 import { useMemoryMaintenance } from "./hooks/useMemoryMaintenance";
@@ -776,6 +777,9 @@ function ChatPageInner() {
         resumeHitl(
           ask.actions.map(() => ({ type: "respond", message: trimmed })),
           targetThreadId,
+          undefined,
+          undefined,
+          ask.pendingId,
         );
         return;
       }
@@ -1060,14 +1064,16 @@ function ChatPageInner() {
   /** Close an ask pause without answering: ``respond`` is the only decision
    *  the agent allows for ``ask_user_question``, so tell it to wrap up. */
   const handleAskDismiss = useCallback(
-    (actions: unknown[]) => {
+    (ask: PendingAsk) => {
       resumeHitl(
-        actions.map(() => ({
+        ask.actions.map(() => ({
           type: "respond",
           message: t("chat.ask.dismissMessage"),
         })),
         activeThreadId ?? undefined,
         true,
+        undefined,
+        ask.pendingId,
       );
     },
     [resumeHitl, activeThreadId, t],
@@ -1766,9 +1772,11 @@ function ChatPageInner() {
                           type: "respond",
                           message: answer,
                         })),
+                        undefined,
+                        pendingAsk.pendingId,
                       )
                     }
-                    onDismiss={() => handleAskDismiss(pendingAsk.actions)}
+                    onDismiss={() => handleAskDismiss(pendingAsk)}
                   />
                 </div>
               </div>

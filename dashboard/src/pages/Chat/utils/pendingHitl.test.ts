@@ -86,6 +86,7 @@ describe("pendingHitl", () => {
       }),
     ]);
     expect(ask?.messageId).toBe("ask");
+    expect(ask?.pendingId).toBe("ab12");
     expect(ask?.questions[0]?.question).toBe("Which DB?");
   });
 
