@@ -30,6 +30,31 @@ const (
 	copyTrayQuit               = "tray.quit"
 )
 
+const (
+	copyFileConfirmTitle            = "file.confirm_title"
+	copyFileConfirmMessage          = "file.confirm_message"
+	copyFileDelete                  = "file.delete"
+	copyFileDeleteScope             = "file.delete_scope"
+	copyFileOverwrite               = "file.overwrite"
+	copyFileOverwriteScope          = "file.overwrite_scope"
+	copyFileInvalidIntent           = "file.invalid_intent"
+	copyFileInvalidPath             = "file.invalid_path"
+	copyFilePathTooLong             = "file.path_too_long"
+	copyFileConfirmationUnavailable = "file.confirmation_unavailable"
+	copyFileCheckResult             = "file.check_result"
+	copyFileCheckBackup             = "file.check_backup"
+	copyFileIntentChanged           = "file.intent_changed"
+	copyFileManagedUnavailable      = "file.managed_unavailable"
+	copyFileManagedRequired         = "file.managed_required"
+	copyFileTargetChanged           = "file.target_changed"
+	copyFileTargetExists            = "file.target_exists"
+	copyFileManagedFailed           = "file.managed_failed"
+	copyFileManagedDenied           = "file.managed_denied"
+	copyFileDirectoryChanged        = "file.directory_changed"
+	copyFileOperationFailed         = "file.operation_failed"
+	copyFileUnsupported             = "file.unsupported"
+)
+
 var desktopCopy = map[Locale]map[string]string{
 	LocaleEN: {
 		copyStatusConnecting:       "Connecting to Octop…",
@@ -57,6 +82,29 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTraySettings:           "Settings",
 		copyTrayShowMain:           "Show Octop",
 		copyTrayQuit:               "Quit",
+
+		copyFileConfirmTitle:            "Confirm file operation",
+		copyFileConfirmMessage:          "Action: %s\nFull path (join the lines without spaces):\n%s\nScope: %s",
+		copyFileDelete:                  "Delete",
+		copyFileDeleteScope:             "Delete this file.",
+		copyFileOverwrite:               "Overwrite",
+		copyFileOverwriteScope:          "Replace this file with the generated document.",
+		copyFileInvalidIntent:           "Check the file and start a new task.",
+		copyFileInvalidPath:             "Choose a path without control characters.",
+		copyFilePathTooLong:             "Shorten the path and try again.",
+		copyFileConfirmationUnavailable: "Open the desktop window and try again.",
+		copyFileCheckResult:             "Check the target file before starting a new task.",
+		copyFileCheckBackup:             "Check the target and this backup path: %s",
+		copyFileIntentChanged:           "The operation or target changed. Start a new task to confirm it.",
+		copyFileManagedUnavailable:      "Install and start the Linux managed file service.",
+		copyFileManagedRequired:         "Choose a file in the managed directory.",
+		copyFileTargetChanged:           "Choose the target file again.",
+		copyFileTargetExists:            "Use a different file name.",
+		copyFileManagedFailed:           "Check the managed directory and target file, then try again.",
+		copyFileManagedDenied:           "Check the approved device connection and file operation permissions on the configured server.",
+		copyFileDirectoryChanged:        "Grant access to the directory again.",
+		copyFileOperationFailed:         "Check the target file and directory permissions before trying again.",
+		copyFileUnsupported:             "Use a supported desktop client for this file operation.",
 	},
 	LocaleZH: {
 		copyStatusConnecting:       "正在连接 Octop…",
@@ -84,6 +132,29 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTraySettings:           "设置",
 		copyTrayShowMain:           "显示 Octop",
 		copyTrayQuit:               "退出",
+
+		copyFileConfirmTitle:            "确认文件操作",
+		copyFileConfirmMessage:          "动作：%s\n完整路径（各行直接拼接）：\n%s\n影响范围：%s",
+		copyFileDelete:                  "删除",
+		copyFileDeleteScope:             "删除此文件。",
+		copyFileOverwrite:               "覆盖",
+		copyFileOverwriteScope:          "用生成的文档替换此文件。",
+		copyFileInvalidIntent:           "请核对文件并新建任务。",
+		copyFileInvalidPath:             "请选择不含控制字符的路径。",
+		copyFilePathTooLong:             "请缩短路径后重试。",
+		copyFileConfirmationUnavailable: "请打开桌面窗口后重试。",
+		copyFileCheckResult:             "请核对目标文件后再新建任务。",
+		copyFileCheckBackup:             "请核对目标文件和此备份路径：%s",
+		copyFileIntentChanged:           "操作或目标已改变，请新建任务并确认。",
+		copyFileManagedUnavailable:      "请安装并启动 Linux 受管文件服务。",
+		copyFileManagedRequired:         "请选择受管目录中的文件。",
+		copyFileTargetChanged:           "请重新选择目标文件。",
+		copyFileTargetExists:            "请使用新文件名。",
+		copyFileManagedFailed:           "请核对受管目录和目标文件后重试。",
+		copyFileManagedDenied:           "请核对已批准的设备连接和服务器上的文件操作权限。",
+		copyFileDirectoryChanged:        "请重新授权目标目录。",
+		copyFileOperationFailed:         "请核对目标文件和目录权限后重试。",
+		copyFileUnsupported:             "请使用支持此文件操作的桌面客户端。",
 	},
 }
 

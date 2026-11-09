@@ -219,7 +219,7 @@ class HitlResumeBody(BaseModel):
     )
     pending_id: str | None = Field(
         default=None,
-        description="Approval card to resume. Required when several cards are open.",
+        description="Exact approval card to resume. Requests without it cannot resume a turn.",
     )
 
     @field_validator("decisions")

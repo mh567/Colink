@@ -41,6 +41,8 @@ def test_user_has_permission_admin_bypass() -> None:
                 "local_ocr",
                 "local_files_read",
                 "local_files_create",
+                "local_files_overwrite",
+                "local_files_delete",
             }
         )
 
@@ -103,6 +105,8 @@ def test_categories_match_nav_groups() -> None:
         "local_ocr",
         "local_files_read",
         "local_files_create",
+        "local_files_overwrite",
+        "local_files_delete",
     }
     assert PERMISSIONS["envs"].page == "advanced"
     assert PERMISSIONS["voice"].page == "models"
@@ -133,7 +137,15 @@ def test_effective_permissions_admin_gets_catalog() -> None:
     admin = _FakeUser(is_admin=True, permissions=[])
     assert effective_permissions(admin) == sorted(
         ASSIGNABLE_PERMISSION_KEYS
-        - {"local_docx", "local_xlsx", "local_ocr", "local_files_read", "local_files_create"}
+        - {
+            "local_docx",
+            "local_xlsx",
+            "local_ocr",
+            "local_files_read",
+            "local_files_create",
+            "local_files_overwrite",
+            "local_files_delete",
+        }
     )
     admin.permissions = ["local_docx", "local_files_read"]
     assert user_has_permission(admin, "local_docx") is True

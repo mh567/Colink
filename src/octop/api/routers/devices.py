@@ -17,6 +17,8 @@ from octop.infra.control.devices import (
     DeviceManager,
     DeviceRow,
     DeviceStatus,
+    LocalFileAction,
+    LocalFileOutputAction,
 )
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.server import OctopServer
@@ -60,7 +62,7 @@ class DeviceHeartbeat(BaseModel):
 
 class DocxAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["read", "create"]
+    action: LocalFileAction
     agent_id: str | None = Field(
         default=None,
         min_length=1,
@@ -73,8 +75,15 @@ class DocxAuthorization(BaseModel):
     allowed: Literal[True] = True
 
 
+class OcrAuthorizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["read", "create"]
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class DocxGenerateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    action: LocalFileOutputAction = "create"
     agent_id: str | None = Field(
         default=None,
         min_length=1,
@@ -94,6 +103,7 @@ class DocxGeneratedText(BaseModel):
 
 class XlsxGenerateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    action: LocalFileOutputAction = "create"
     agent_id: str | None = Field(
         default=None,
         min_length=1,
@@ -168,7 +178,7 @@ async def authorize_xlsx(
 )
 async def authorize_ocr(
     device_id: str,
-    body: DocxAuthorizeBody,
+    body: OcrAuthorizeBody,
     x_colink_device_session: str = Header(default="", max_length=128),
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
@@ -184,7 +194,7 @@ async def authorize_ocr(
     response_model=DocxGeneratedText,
     summary="Generate document text for an authorized native DOCX task",
     description="Uses the selected private expert's authorized model, or the active enterprise model, without tools. "
-    "Requires read and create rights, checked again after generation. Original files stay local.",
+    "Requires read and the selected output action rights, checked again after generation. Original files stay local.",
 )
 async def generate_docx(
     device_id: str,
@@ -201,6 +211,7 @@ async def generate_docx(
         instruction=body.instruction,
         text=body.text,
         agent_id=body.agent_id,
+        action=body.action,
         models=server.app_runtime.agent_registry.host_models,
     )
     return DocxGeneratedText(text=text)
@@ -211,7 +222,7 @@ async def generate_docx(
     response_model=XlsxGeneratedData,
     summary="Generate structured spreadsheet data for an authorized native XLSX task",
     description="Uses the selected private expert's authorized model, or the active enterprise model, without tools. "
-    "Requires read and create rights, checked again after generation. Original files stay local.",
+    "Requires read and the selected output action rights, checked again after generation. Original files stay local.",
 )
 async def generate_xlsx(
     device_id: str,
@@ -228,6 +239,7 @@ async def generate_xlsx(
         instruction=body.instruction,
         text=body.text,
         agent_id=body.agent_id,
+        action=body.action,
         models=server.app_runtime.agent_registry.host_models,
         format="xlsx",
     )

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -224,6 +225,63 @@ func TestLocalDOCXDispatchRejectsExecuteAndPathsInGrant(t *testing.T) {
 	for _, body := range []string{`{"action":"execute","command":"touch bad"}`, `{"action":"grant","mode":"rw","path":"/"}`, `{"action":"list"}{"action":"execute"}`} {
 		if _, err := parseDOCXRequest(url.QueryEscape(body)); err == nil {
 			t.Fatal("accepted unsafe action", body)
+		}
+	}
+}
+
+func TestLocalDOCXDispatchAcceptsIntentButNotWebConfirmation(t *testing.T) {
+	for _, action := range []string{"overwrite", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			body := fmt.Sprintf(`{"action":%q,"request_id":"0123456789abcdef0123456789abcdef","output_grant":"grant","output":"report.docx"}`, action)
+			if request, err := parseDOCXRequest(url.QueryEscape(body)); err != nil || request.Action != action {
+				t.Fatalf("valid intent was rejected: %+v, %v", request, err)
+			}
+			confirmed := strings.TrimSuffix(body, "}") + `,"confirmed":true}`
+			if _, err := parseDOCXRequest(url.QueryEscape(confirmed)); err == nil {
+				t.Fatal("web request asserted native confirmation")
+			}
+			if _, err := parseDOCXRequest(url.QueryEscape(fmt.Sprintf(`{"action":%q}`, action))); err == nil {
+				t.Fatal("destructive intent without a replay key was accepted")
+			}
+		})
+	}
+}
+
+func TestLocalDOCXDestructiveActionDoesNotFallThroughToCreate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/generate") {
+			w.Write([]byte(`{"text":"unexpected result"}`))
+			return
+		}
+		w.Write([]byte(`{"allowed":true}`))
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	data, err := makeDOCX("original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "source.docx"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	worker := newLocalDOCX(t.TempDir())
+	session := docxSession{Base: server.URL, UserID: 1, DeviceID: "device", Secret: "secret", Context: context.Background()}
+	grant, err := worker.grant(session, dir, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, root := range worker.roots {
+			root.Close()
+		}
+	}()
+	for _, action := range []string{"overwrite", "delete"} {
+		request := docxRequest{Action: action, SourceGrant: grant.ID, Source: "source.docx", OutputGrant: grant.ID, Output: action + ".docx", Instruction: "summarize"}
+		if _, err = worker.run(session, request, func() error { return nil }); err == nil {
+			t.Fatalf("direct %s without a confirmation intent was executed", action)
+		}
+		if _, err = os.Stat(filepath.Join(dir, request.Output)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("direct %s created a file: %v", action, err)
 		}
 	}
 }

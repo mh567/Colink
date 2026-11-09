@@ -66,6 +66,83 @@ async def test_docx_requires_explicit_feature_action_and_native_session(env):
     assert (await client.post(path, headers=native, json={"action": "read"})).status_code == 403
 
 
+@pytest.mark.parametrize("format", ["docx", "xlsx"])
+@pytest.mark.parametrize("action", ["overwrite", "delete"])
+async def test_destructive_file_authorization_requires_the_current_employee_and_action(
+    env, format, action
+):
+    client, _server, admin = env
+    grants = [f"local_{format}", "local_files_read", "local_files_create"]
+    alice = await create_user(client, admin, username="alice", permissions=grants)
+    user_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    async with approved_device(client, admin, alice) as (device_id, native):
+        path = f"/api/devices/{device_id}/{format}/authorize"
+        body = {"action": action}
+        assert (await client.post(path, headers=native, json=body)).status_code == 403
+
+        changed = await client.patch(
+            f"/api/users/{user_id}",
+            headers=admin,
+            json={"permissions": [*grants, f"local_files_{action}"]},
+        )
+        assert changed.status_code == 200
+        authorized = await client.post(path, headers=native, json=body)
+        assert authorized.status_code == 200
+        assert authorized.json() == {"allowed": True}
+        assert (await client.post(path, headers=alice, json=body)).status_code == 403
+        assert (await client.post(path, headers={**native, **admin}, json=body)).status_code == 403
+        different_action = "delete" if action == "overwrite" else "overwrite"
+        assert (
+            await client.post(path, headers=native, json={"action": different_action})
+        ).status_code == 403
+
+        changed = await client.patch(
+            f"/api/users/{user_id}", headers=admin, json={"permissions": grants}
+        )
+        assert changed.status_code == 200
+        assert (await client.post(path, headers=native, json=body)).status_code == 403
+
+
+@pytest.mark.parametrize("format", ["docx", "xlsx"])
+async def test_overwrite_generation_checks_overwrite_instead_of_create_and_rechecks_after_model(
+    env, monkeypatch, format
+):
+    client, server, admin = env
+    grants = [f"local_{format}", "local_files_read"]
+    alice = await create_user(client, admin, username="alice", permissions=grants)
+    user_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    server.services.user_repo.set_permissions(user_id, [*grants, "local_files_overwrite"])
+    await seed_intranet_provider(client, admin)
+    server.services.settings_repo.set_active_model("openai", "gpt-4o")
+    generated = '{"sheets":[{"name":"Summary","rows":[[1]]}]}' if format == "xlsx" else "新正文"
+    models = server.app_runtime.agent_registry.host_models
+
+    async def generate(*args, **kwargs):
+        return generated
+
+    async def revoke_then_generate(*args, **kwargs):
+        server.services.user_repo.set_permissions(user_id, grants)
+        return generated
+
+    monkeypatch.setattr(models, "ainvoke_intranet_text", generate)
+    async with approved_device(client, admin, alice) as (device_id, native):
+        path = f"/api/devices/{device_id}/{format}/generate"
+        body = {"instruction": "整理", "text": "资料"}
+        assert (await client.post(path, headers=native, json=body)).status_code == 403
+        overwrite = {**body, "action": "overwrite"}
+        response = await client.post(path, headers=native, json=overwrite)
+        assert response.status_code == 200
+        assert response.json() == {"text": generated}
+        assert (
+            await client.post(path, headers=native, json={**body, "action": "delete"})
+        ).status_code == 422
+
+        monkeypatch.setattr(models, "ainvoke_intranet_text", revoke_then_generate)
+        response = await client.post(path, headers=native, json=overwrite)
+        assert response.status_code == 403
+        assert generated not in response.text
+
+
 async def test_docx_generation_uses_only_text_and_returns_safe_failures(env, monkeypatch):
     from unittest.mock import AsyncMock
 

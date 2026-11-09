@@ -10,6 +10,7 @@ import type { HitlSessionPolicy } from "./hitlSessionPolicy";
 
 export type PendingAsk = {
   messageId: string;
+  pendingId: string;
   actions: HitlActionRequest[];
   questions: AskQuestion[];
 };
@@ -117,11 +118,12 @@ export function findPendingAsk(messages: ChatMessage[]): PendingAsk | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     const hitl = message.hitlData;
+    const pendingId = hitl?.pending_id?.trim();
     if (
       !hitl ||
       (hitl.status ?? "pending") !== "pending" ||
       !isAskHitl(hitl.action_requests) ||
-      !isResumableHitl(hitl)
+      !pendingId
     ) {
       continue;
     }
@@ -129,6 +131,7 @@ export function findPendingAsk(messages: ChatMessage[]): PendingAsk | null {
     if (questions.length > 0) {
       return {
         messageId: message.id,
+        pendingId,
         actions: hitl.action_requests,
         questions,
       };

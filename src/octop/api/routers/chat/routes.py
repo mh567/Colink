@@ -13,6 +13,7 @@ from octop.api.common.agent import assert_agent_access
 from octop.api.deps import current_user, get_server
 from octop.api.routers.chat.models import HitlResumeBody, PolishBody
 from octop.api.routers.chat.sse import format_sse
+from octop.i18n.domains.slash import tr as slash_tr
 from octop.i18n.domains.stream import format_stream_error
 from octop.infra.agents.experts.catalog import (
     default_welcome_payload,
@@ -31,9 +32,9 @@ from octop.infra.gateway.hitl.coordinator import (
     decision_rejection_reason,
 )
 from octop.infra.gateway.hitl.format import normalize_hitl_request
-from octop.infra.gateway.hitl.store import HitlPendingRecord
+from octop.infra.gateway.hitl.store import HitlApprovalExpired, HitlPendingRecord
 from octop.infra.text_assist import require_host_models, run_text_assist
-from octop.infra.utils.locale import resolve_request_locale
+from octop.infra.utils.locale import normalize_locale, resolve_request_locale
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ async def iter_dashboard_hitl_resume_sse(
     channel_type: str,
     locale: str,
     is_disconnected: Callable[[], Awaitable[bool]],
+    hitl_policy: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """Stream dashboard HITL resume chunks and persist any nested ``hitl_required``.
 
@@ -111,9 +113,8 @@ async def iter_dashboard_hitl_resume_sse(
     """
     rejected = any(isinstance(d, dict) and d.get("type") == "reject" for d in decisions)
     if pending is not None and pending.resume_agent_id:
-        from octop.i18n.domains.slash import tr as slash_tr  # noqa: PLC0415
-        from octop.infra.utils.locale import normalize_locale  # noqa: PLC0415
-
+        if hitl_policy is not None:
+            hitl_coordinator.session_policies.set(thread_id, hitl_policy)
         teams = getattr(processor, "teams", None)
         deliver = getattr(teams, "deliver_member_hitl", None) if teams is not None else None
         handed = hitl_coordinator.hand_member_pause(
@@ -145,19 +146,24 @@ async def iter_dashboard_hitl_resume_sse(
     )
     disconnected = False
     followup_pause = False
-    # Clear the in-memory pause before the (possibly long) resume stream so
-    # history reload cannot reinject the same card while the turn continues.
-    if pending is not None:
-        hitl_coordinator.store.mark_resolved(
-            pending.pending_id,
-            "rejected" if rejected else "approved",
-        )
+
+    def before_resume() -> None:
+        # A new turn can expire the card while this request waits for the runtime lock.
+        if pending is not None:
+            store = hitl_coordinator.store
+            if store.get(pending.pending_id) is not pending or pending.status != "pending":
+                raise HitlApprovalExpired
+            store.mark_resolved(pending.pending_id, "rejected" if rejected else "approved")
+        if hitl_policy is not None:
+            hitl_coordinator.session_policies.set(thread_id, hitl_policy)
+
     try:
         async for chunk in processor.iter_hitl_resume_chunks(
             agent_id=agent_id,
             thread_id=thread_id,
             user_id=user_id,
             decisions=decisions,
+            before_resume=before_resume,
         ):
             if not disconnected:
                 disconnected = await is_disconnected()
@@ -197,6 +203,11 @@ async def iter_dashboard_hitl_resume_sse(
             )
         except Exception:
             logging.getLogger(__name__).exception("steer resume drain failed thread=%s", thread_id)
+    except HitlApprovalExpired:
+        yield format_sse(
+            "chunk",
+            {"type": "error", "message": slash_tr("hitl.expired", normalize_locale(locale))},
+        )
     except Exception as exc:
         # Resume failed after we cleared the pause for reinject safety — do not
         # leave the record looking like a successful approve/reject.
@@ -206,22 +217,6 @@ async def iter_dashboard_hitl_resume_sse(
             "chunk",
             {"type": "error", "message": format_stream_error(exc, locale)},
         )
-
-
-def _dashboard_hitl_stream_context(
-    server: Any,
-    *,
-    agent_id: str,
-    thread_id: str,
-    user_id: int,
-    pending: HitlPendingRecord | None,
-) -> tuple[str, str]:
-    if pending is not None:
-        return pending.session_key, pending.channel_type
-    row = server.app_runtime.gateway.thread_registry.get_thread(thread_id)
-    if row is not None:
-        return row.session_key, row.channel_type or "dashboard"
-    return f"{agent_id}:dashboard:{user_id}:dm", "dashboard"
 
 
 @router.post("/agents/{agent_id}/chat/hitl/resume", summary="Resume HITL approval (SSE)")
@@ -236,42 +231,27 @@ async def resume_hitl(
     assert_agent_access(server, agent_id, user)
     processor = server.app_runtime.gateway.processor
     hitl_coordinator = processor.hitl_coordinator
+    store = hitl_coordinator.store
+    locale = resolve_request_locale(request)
     requested_id = (body.pending_id or "").strip()
-    pending = hitl_coordinator.store.resolve_pending_for_thread(
-        body.thread_id,
-        agent_id=agent_id,
-        user_id=user.id,
-        pending_id=requested_id or None,
+    pending = (
+        store.resolve_pending_for_thread(
+            body.thread_id, agent_id=agent_id, user_id=user.id, pending_id=requested_id
+        )
+        if requested_id
+        else None
     )
-    if requested_id and pending is None:
-        from octop.i18n.domains.slash import tr as slash_tr  # noqa: PLC0415
-        from octop.infra.utils.locale import normalize_locale  # noqa: PLC0415
-
-        locale = normalize_locale(resolve_request_locale(request))
-
-        async def missing() -> AsyncIterator[str]:
-            yield format_sse(
-                "chunk",
-                {"type": "error", "message": slash_tr("hitl.expired", locale)},
-            )
-
-        return StreamingResponse(missing(), media_type="text/event-stream")
-    session_key, channel_type = _dashboard_hitl_stream_context(
-        server,
-        agent_id=agent_id,
-        thread_id=body.thread_id,
-        user_id=user.id,
-        pending=pending,
-    )
-    if pending is not None:
-        reason = decision_rejection_reason(pending, body.decisions)
-        if reason is not None:
-            raise HTTPException(status_code=400, detail=reason)
-
-    if body.hitl_policy is not None:
-        hitl_coordinator.session_policies.set(body.thread_id, body.hitl_policy.model_dump())
+    if pending is not None and (reason := decision_rejection_reason(pending, body.decisions)):
+        raise HTTPException(status_code=400, detail=reason)
 
     async def gen() -> AsyncIterator[str]:
+        # A queued response can start after another request has consumed the card.
+        if pending is None or store.get(requested_id) is not pending or pending.status != "pending":
+            yield format_sse(
+                "chunk",
+                {"type": "error", "message": slash_tr("hitl.expired", normalize_locale(locale))},
+            )
+            return
         async for frame in iter_dashboard_hitl_resume_sse(
             server=server,
             processor=processor,
@@ -281,10 +261,11 @@ async def resume_hitl(
             user_id=user.id,
             decisions=body.decisions,
             pending=pending,
-            session_key=session_key,
-            channel_type=channel_type,
-            locale=resolve_request_locale(request),
+            session_key=pending.session_key,
+            channel_type=pending.channel_type,
+            locale=locale,
             is_disconnected=request.is_disconnected,
+            hitl_policy=body.hitl_policy.model_dump() if body.hitl_policy is not None else None,
         ):
             yield frame
 

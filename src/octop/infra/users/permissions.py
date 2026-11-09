@@ -155,6 +155,12 @@ PERMISSIONS: dict[str, PermissionDef] = {
         "local_files_read", "control", "读取本机授权文件", "Read authorized local files"
     ),
     "local_files_create": _p("local_files_create", "control", "新建本机文件", "Create local files"),
+    "local_files_overwrite": _p(
+        "local_files_overwrite", "control", "覆盖本机授权文件", "Overwrite authorized local files"
+    ),
+    "local_files_delete": _p(
+        "local_files_delete", "control", "删除本机授权文件", "Delete authorized local files"
+    ),
     # --- admin: grouped by page, chip = tab title ---
     "users": _p(
         "users",
@@ -453,7 +459,15 @@ PERMISSIONS: dict[str, PermissionDef] = {
 
 ALL_PERMISSION_KEYS: set[str] = set(PERMISSIONS)
 LOCAL_EXECUTION_PERMISSIONS: frozenset[str] = frozenset(
-    {"local_docx", "local_xlsx", "local_ocr", "local_files_read", "local_files_create"}
+    {
+        "local_docx",
+        "local_xlsx",
+        "local_ocr",
+        "local_files_read",
+        "local_files_create",
+        "local_files_overwrite",
+        "local_files_delete",
+    }
 )
 
 ASSIGNABLE_PERMISSION_KEYS: set[str] = {key for key, perm in PERMISSIONS.items() if perm.assignable}

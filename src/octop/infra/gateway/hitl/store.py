@@ -13,6 +13,10 @@ HitlPendingStatus = Literal["pending", "approved", "rejected", "expired"]
 _DEFAULT_TTL_SECONDS = 30 * 60
 
 
+class HitlApprovalExpired(Exception):
+    """The pause changed before the runtime could consume its approval."""
+
+
 def _same_pause_slot(
     existing: HitlPendingRecord,
     *,

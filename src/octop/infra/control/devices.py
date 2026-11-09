@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from octop.infra.agents.providers.host_factory import HostModelFactory
 
 DEVICE_TIMEOUT_SECONDS = 15
+LocalFileAction = Literal["read", "create", "overwrite", "delete"]
+LocalFileOutputAction = Literal["create", "overwrite"]
 
 
 @dataclass
@@ -117,7 +119,7 @@ class DeviceManager:
         user: User,
         device_id: str,
         session_token: str,
-        action: Literal["read", "create"],
+        action: LocalFileAction,
         *,
         format: Literal["docx", "xlsx", "ocr"] = "docx",
         agent_id: str | None = None,
@@ -134,6 +136,7 @@ class DeviceManager:
             or not self.is_online(row)
             or not secrets.compare_digest(connection.session_token.encode(), session_token.encode())
             or employee is None
+            or (format == "ocr" and action not in ("read", "create"))
             or not {f"local_{format}", f"local_files_{action}"}.issubset(employee.permissions)
         ):
             raise OctopError(ErrorCode.FORBIDDEN, "local file operation not authorized")
@@ -156,6 +159,7 @@ class DeviceManager:
         models: HostModelFactory,
         format: Literal["docx", "xlsx"] = "docx",
         agent_id: str | None = None,
+        action: LocalFileOutputAction = "create",
     ) -> str:
         """Generate plain text without exposing files, tools or provider credentials."""
         from octop.infra.agents.providers.store import ProviderStore
@@ -163,7 +167,7 @@ class DeviceManager:
         from octop.infra.utils.ssrf_guard import resolve_intranet_endpoint
 
         self.authorize_docx(user, device_id, session_token, "read", format=format)
-        self.authorize_docx(user, device_id, session_token, "create", format=format)
+        self.authorize_docx(user, device_id, session_token, action, format=format)
         error_code = (
             ErrorCode.LOCAL_XLSX_GENERATION_FAILED
             if format == "xlsx"
@@ -230,7 +234,7 @@ class DeviceManager:
                 raise ValueError("active enterprise model unavailable")
             host, pin_ip = await resolve_intranet_endpoint(row.base_url)
             self.authorize_docx(user, device_id, session_token, "read", format=format)
-            self.authorize_docx(user, device_id, session_token, "create", format=format)
+            self.authorize_docx(user, device_id, session_token, action, format=format)
             validate_resources()
             async with asyncio.timeout(120):
                 result = await models.ainvoke_intranet_text(
@@ -249,7 +253,7 @@ class DeviceManager:
             # Provider errors can contain credentials and the submitted document.
             raise OctopError(error_code, "document generation failed") from None
         self.authorize_docx(user, device_id, session_token, "read", format=format)
-        self.authorize_docx(user, device_id, session_token, "create", format=format)
+        self.authorize_docx(user, device_id, session_token, action, format=format)
         validate_resources()
         if not isinstance(result, str) or not result.strip() or len(result) > 60000:
             raise OctopError(error_code, "invalid generated document text")
