@@ -42,6 +42,8 @@ desktop/package-release.sh
 desktop/package-release.sh darwin-arm64 --reuse-portable
 ```
 
+Rebuild without `--reuse-portable` if the archive's presentation worker differs from the current checkout.
+
 Wails requires native packaging, so all six variants are produced by the CI
 matrix on macOS, Linux, and Windows runners rather than cross-compiled locally.
 Windows packaging also needs [NSIS](https://nsis.sourceforge.io/) (`makensis`)
@@ -143,3 +145,5 @@ see `applyAppIcon` in `src/icons_darwin.go`.
 设备页选择 PPTX，在只读目录选取示例文件 `项目进展.pptx`，并在读写目录生成 `项目汇报.pptx`。从任务记录查看路径，用演示文稿编辑器打开成果，核对标题和要点后修改并保存。权限和格式范围见[本机 PPTX 接口](../docs/api.md#本机-pptx-任务)。
 
 便携包随附本机处理程序，沿用 `uv.lock` 的 [python-pptx 1.0.2 及其 MIT 许可](https://github.com/scanny/python-pptx/blob/v1.0.2/LICENSE)。生成技能由 Colink 独立编写，打包时继续移除 Harness 的受限演示文稿材料。使用同一包在断公网目标环境核对安装、中文文件和编辑结果。
+
+安装同一应用版本的新便携包后，请退出正在运行的本机客户端再打开，以加载更新后的运行时。

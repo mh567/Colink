@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -16,6 +16,7 @@ from octop.infra.users.identity import User
 
 REVIEWED_SKILL = "reviewed_local_skill"
 Action = Literal["local_docx", "local_xlsx", "local_pptx"]
+LocalActions = Annotated[list[Action], Field(min_length=1, max_length=3)]
 
 
 class LocalExpertConfig(BaseModel):
@@ -24,7 +25,7 @@ class LocalExpertConfig(BaseModel):
     description: str = Field(default="", max_length=2000)
     system_prompt: str = Field(default="", max_length=12000)
     default_model: str = Field(min_length=1, max_length=200)
-    actions: list[Action] = Field(min_length=1, max_length=2)
+    actions: LocalActions
     skill_package_ids: list[str] = Field(default_factory=list, max_length=20)
     knowledge_base_ids: list[str] = Field(default_factory=list, max_length=20)
 
@@ -123,16 +124,24 @@ async def local_expert_context(
             raise OctopError(ErrorCode.RESOURCE_NOT_ALLOWED, "skill approval unavailable")
         parts.append(str(skill["content"]))
     if config.knowledge_base_ids:
-        parts.append(
-            await retrieve_context(
+        try:
+            context = await retrieve_context(
                 services,
                 user_id=user.id,
                 is_admin=False,
                 query=instruction,
                 knowledge_base_ids=config.knowledge_base_ids,
                 locale=user.locale,
+                intranet_only=format == "pptx",
             )
-        )
+        except RuntimeError:
+            if format != "pptx":
+                raise
+            raise OctopError(
+                ErrorCode.LOCAL_PPTX_KNOWLEDGE_UNAVAILABLE,
+                "report knowledge retrieval failed",
+            ) from None
+        parts.append(context)
     if expert_config(validate_local_expert(services, user, agent_id, format)) != config:
         raise OctopError(
             ErrorCode.RESOURCE_NOT_ALLOWED, "expert configuration changed during retrieval"

@@ -63,6 +63,15 @@ it.each(["zh", "en"])(
                 status: "failed",
                 error: "PPTX_INVALID_REPORT",
               },
+              {
+                id: "4",
+                format: "pptx",
+                instruction: "",
+                source: "chart.pptx",
+                output: "report.pptx",
+                status: "failed",
+                error: "PPTX_UNSUPPORTED_CHART",
+              },
             ],
           },
         }),
@@ -87,6 +96,13 @@ it.each(["zh", "en"])(
         language === "zh"
           ? "汇报内容格式无效，请缩短任务描述后重试。"
           : "The report format is invalid. Shorten the instructions and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        language === "zh"
+          ? "请在演示文稿副本中用表格替换图表后重试。"
+          : "In a copy of the presentation, replace the charts with tables and try again.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Existing native error")).toBeInTheDocument();

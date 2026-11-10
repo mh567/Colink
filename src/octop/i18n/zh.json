@@ -551,6 +551,7 @@
     "WEBAUTHN_LOGIN_DISABLED": "登录页的通行密钥登录已关闭。管理员可在「应用设置 → 通行密钥」中开启。",
     "LOCAL_DOCX_GENERATION_FAILED": "文档生成失败，未写入文件。请检查已启用的内网 OpenAI 兼容模型、关闭 API 回退，并核对网络与模型输出。",
     "LOCAL_PPTX_GENERATION_FAILED": "汇报生成失败，请检查内网模型连接后重试。",
+    "LOCAL_PPTX_KNOWLEDGE_UNAVAILABLE": "无法检索汇报资料，请联系管理员检查本地或内网向量模型，或选择未绑定知识库的专家。",
     "LOCAL_XLSX_GENERATION_FAILED": "表格生成失败，未写入文件。请检查内网模型连接与输出后重试。",
     "LOCAL_EXPERT_PRIVATE_REFERENCE": "请先从专家配置移除知识库引用，再导出离线包；不会复制私人资料。",
     "LOCAL_EXPERT_DUPLICATE_SKILL": "所选技能存在同名版本，请每个名称只保留一个版本后再导出。",

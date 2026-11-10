@@ -34,6 +34,57 @@ type pptxResult struct {
 	Error string `json:"error"`
 }
 
+func prepareLocalPPTXRunner(root string) (string, func(), error) {
+	installed := filepath.Join(root, "pptx", "runner.py")
+	info, statErr := os.Stat(installed)
+	installedReady := statErr == nil && info.Mode().IsRegular()
+	bundled := sameVersionBundledPPTXRunner(root)
+	if installedReady {
+		if bundled == nil {
+			return installed, func() {}, nil
+		}
+		if info.Size() == int64(len(bundled)) {
+			if content, err := os.ReadFile(installed); err == nil && bytes.Equal(content, bundled) {
+				return installed, func() {}, nil
+			}
+		}
+	}
+	if bundled == nil {
+		return "", nil, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+	}
+
+	// Use the updated runner with existing packages without modifying the live runtime.
+	dir, err := os.MkdirTemp(root, "pptx-worker-")
+	if err != nil {
+		return "", nil, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	script := filepath.Join(dir, "runner.py")
+	if err := os.WriteFile(script, bundled, 0o600); err != nil {
+		cleanup()
+		return "", nil, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+	}
+	return script, cleanup, nil
+}
+
+func sameVersionBundledPPTXRunner(root string) []byte {
+	files, closeArchive, err := bundledPortableFiles()
+	if err != nil {
+		return nil
+	}
+	defer closeArchive()
+	version, err := versionFromZip(files)
+	installed := portableVersion(root)
+	if err != nil || installed == "" || version == "" || compareVersions(version, installed) != 0 {
+		return nil
+	}
+	if bundledPortableRevision(files) < installedPortableRevision(root) {
+		return nil
+	}
+
+	return readPortableBundleFile(files, "pptx/runner.py", 64<<10)
+}
+
 func runLocalPPTX(ctx context.Context, mode string, input io.Reader) (pptxResult, error) {
 	var result pptxResult
 	if err := ctx.Err(); err != nil {
@@ -43,10 +94,11 @@ func runLocalPPTX(ctx context.Context, mode string, input io.Reader) (pptxResult
 		return result, errors.New("PPTX_RUNTIME_UNAVAILABLE")
 	}
 	root := portableDir()
-	script := filepath.Join(root, "pptx", "runner.py")
-	if info, err := os.Stat(script); err != nil || !info.Mode().IsRegular() {
-		return result, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+	script, cleanup, err := prepareLocalPPTXRunner(root)
+	if err != nil {
+		return result, err
 	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, pythonExe(root), "-I", script, mode)
@@ -65,7 +117,7 @@ func runLocalPPTX(ctx context.Context, mode string, input io.Reader) (pptxResult
 		return pptxResult{}, errors.New("PPTX_TASK_FAILED")
 	}
 	switch result.Error {
-	case "PPTX_INVALID_SOURCE", "PPTX_SOURCE_LIMIT", "PPTX_NO_TEXT", "PPTX_INVALID_REPORT", "PPTX_RUNTIME_UNAVAILABLE":
+	case "PPTX_INVALID_SOURCE", "PPTX_SOURCE_LIMIT", "PPTX_NO_TEXT", "PPTX_UNSUPPORTED_CHART", "PPTX_INVALID_REPORT", "PPTX_RUNTIME_UNAVAILABLE":
 		return pptxResult{}, errors.New(result.Error)
 	}
 	if runErr != nil || result.Error != "" {

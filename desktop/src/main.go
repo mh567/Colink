@@ -206,12 +206,6 @@ func (a *App) boot() {
 		a.showDashboard(url)
 		return
 	}
-	a.setStatus(desktopText(locale, copyStatusCheckingRuntime))
-	if err := ensurePortable(locale, a.setStatus); err != nil {
-		a.setStatus(err.Error())
-		return
-	}
-	root := portableDir()
 	a.mu.Lock()
 	stopOctop(a.cmd)
 	a.cmd = nil
@@ -226,6 +220,12 @@ func (a *App) boot() {
 		a.showDashboard(existing)
 		return
 	}
+	a.setStatus(desktopText(locale, copyStatusCheckingRuntime))
+	if err := ensurePortableAtStartup(locale, a.setStatus); err != nil {
+		a.setStatus(err.Error())
+		return
+	}
+	root := portableDir()
 	port, err := chooseFreePort(host, preferred)
 	if err != nil {
 		var busy noFreePortError

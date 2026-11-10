@@ -184,16 +184,18 @@ DOCX 客户端使用 Go 标准库 ZIP/XML，不需运行时下载或额外 Offic
 
 ### 本机 PPTX 任务
 
-设备页选择 PPTX。管理员须显式授予 `local_pptx`、`local_files_read` 和 `local_files_create`。以 DOCX 为资料时，还须授予 `local_docx`。客户端打开授权目录内的文件，仅将提取的文字和任务描述经服务端交给内网模型。源文件和生成文件均留在本机。
+设备页选择 PPTX。管理员须显式授予 `local_pptx`、`local_files_read` 和 `local_files_create`。以 DOCX 为资料时，还须授予 `local_docx`。客户端打开授权目录内的文件，仅将提取的文字和任务描述经服务端交给内网模型。源文件和生成文件均留在本机。私人专家使用资料库时，任务描述可用于本地检索或发送给内网向量模型。
 
 | 方法 | 路径 | 请求与结果 |
 | --- | --- | --- |
-| `POST` | `/devices/{device_id}/pptx/authorize` | 员工令牌及 `X-Colink-Device-Session`，`action` 为 `read` 或 `create`，可选 `agent_id`。授权成功返回 `{allowed:true}` |
-| `POST` | `/devices/{device_id}/pptx/generate` | 同上。接收 `{instruction,text,agent_id?}`，返回 `{text}`，内含模型生成的幻灯片结构。客户端验证结构后写入新文件 |
+| `POST` | `/devices/{device_id}/pptx/authorize` | 员工令牌及 `X-Colink-Device-Session`。`action` 为 `read` 或 `create`，可选 `agent_id` 和 `source_format`。授权成功返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/pptx/generate` | 同上。接收 `{instruction,text,agent_id?,source_format?}`，`action` 仅接受 `create`。返回 `{text}`，内含模型生成的幻灯片结构。客户端验证结构后写入新文件 |
+
+`source_format` 默认为 `pptx`。例如，员工以 `项目进展.docx` 生成汇报时，客户端传 `source_format: docx`。如果管理员在模型生成期间撤回 DOCX 读取权限，任务失败且成果目录没有新增文件。
 
 例如，员工从只读目录选择 `项目进展.pptx`，填写“按进度和风险整理汇报”，在读写目录生成 `项目汇报.pptx`。任务记录显示完整产物路径。用 PowerPoint 或 LibreOffice 打开文件，确认项目数据正确并可编辑标题和要点。若目标目录是只读目录、已有同名文件或源文件已损坏，任务显示失败原因。
 
-读取支持正文、分组文字和表格文字，源文件上限 20 MB，演示文稿解压数据上限 64 MB，提取文字上限 60,000 字符。自有汇报技能输出 `{"slides":[{"title":"项目进度","bullets":["已完成 12 项"]}]}`。最多 20 页，每页一条不超过 48 字符的标题及一至五条各不超过 64 字符的要点。成果使用新的版式。源文件中的图像、动画和模板样式不进入成果。
+读取支持正文、分组文字和表格文字，源文件上限 20 MB，演示文稿解压数据上限 64 MB，提取文字上限 60,000 字符。若示例文件包含展示季度验收数量的原生图表，任务会提示在演示文稿副本中用表格替换图表后重试。自有汇报技能输出 `{"slides":[{"title":"项目进度","bullets":["已完成 12 项"]}]}`。最多 20 页，每页一条不超过 48 字符的标题及一至五条各不超过 64 字符的要点。成果使用新的版式。源文件中的图像、动画和模板样式不进入成果。
 
 ### 本机办公文件的覆盖与删除权限
 

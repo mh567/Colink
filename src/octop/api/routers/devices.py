@@ -19,6 +19,7 @@ from octop.infra.control.devices import (
     DeviceStatus,
     LocalFileAction,
     LocalFileOutputAction,
+    PptxSourceFormat,
 )
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.server import OctopServer
@@ -79,6 +80,27 @@ class OcrAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["read", "create"]
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class PptxSourceBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_format: PptxSourceFormat = Field(
+        default="pptx", description="DOCX sources also require explicit DOCX read permission."
+    )
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class PptxAuthorizeBody(PptxSourceBody):
+    action: Literal["read", "create"]
+
+
+class PptxGenerateBody(PptxSourceBody):
+    action: Literal["create"] = "create"
+    instruction: str = Field(min_length=1, max_length=8000, description="Employee's report task.")
+    text: str = Field(
+        max_length=60000,
+        description="Necessary text extracted on the native client; no original file.",
+    )
 
 
 class DocxGenerateBody(BaseModel):
@@ -177,13 +199,19 @@ async def authorize_xlsx(
 )
 async def authorize_pptx(
     device_id: str,
-    body: DocxAuthorizeBody,
+    body: PptxAuthorizeBody,
     x_colink_device_session: str = Header(default="", max_length=128),
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(
-        user, device_id, x_colink_device_session, body.action, format="pptx", agent_id=body.agent_id
+        user,
+        device_id,
+        x_colink_device_session,
+        body.action,
+        format="pptx",
+        agent_id=body.agent_id,
+        source_format=body.source_format,
     )
     return DocxAuthorization()
 
@@ -275,7 +303,7 @@ async def generate_xlsx(
 )
 async def generate_pptx(
     device_id: str,
-    body: DocxGenerateBody,
+    body: PptxGenerateBody,
     x_colink_device_session: str = Header(default="", max_length=128),
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
@@ -291,6 +319,7 @@ async def generate_pptx(
         action=body.action,
         models=server.app_runtime.agent_registry.host_models,
         format="pptx",
+        source_format=body.source_format,
     )
     return DocxGeneratedText(text=text)
 

@@ -7,6 +7,7 @@ import io
 import json
 import shutil
 import sys
+import unicodedata
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,10 +29,17 @@ def deny_network(event: str, _args: tuple[object, ...]) -> None:
 
 def slide_text(shapes: Any) -> Iterator[str]:
     from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from pptx.shapes.graphfrm import GraphicFrame
 
     for shape in shapes:
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
             yield from slide_text(shape.shapes)
+        elif shape.has_chart or (
+            isinstance(shape, GraphicFrame)
+            and shape.element.graphicData_uri
+            == "http://schemas.microsoft.com/office/drawing/2014/chartex"
+        ):
+            raise PptxError("PPTX_UNSUPPORTED_CHART")
         elif shape.has_text_frame and shape.text.strip():
             yield shape.text.strip()
         elif shape.has_table:
@@ -86,9 +94,11 @@ def read_deck(data: bytes) -> str:
 
 
 def report_text(value: Any, limit: int) -> str:
-    if isinstance(value, str):
+    if isinstance(value, str) and all(
+        character.isprintable() or unicodedata.category(character) == "Zs" for character in value
+    ):
         text = value.strip()
-        if 1 <= len(text) <= limit and text.isprintable():
+        if 1 <= len(text) <= limit:
             return text
     raise PptxError("PPTX_INVALID_REPORT")
 

@@ -428,7 +428,7 @@ _embedding_inference_lock = threading.Lock()
 _embedding_instance: tuple[str, str, Any] | None = None
 
 
-def _build_text_embedding(model: str) -> Any:
+def _build_text_embedding(model: str, *, local_only: bool = False) -> Any:
     from fastembed import TextEmbedding
 
     cache = embedding_models_dir()
@@ -441,10 +441,12 @@ def _build_text_embedding(model: str) -> Any:
             specific_model_path=str(local_snapshot),
             local_files_only=True,
         )
+    if local_only:
+        raise RuntimeError("local embedding model files are unavailable")
     return TextEmbedding(model_name=model, cache_dir=str(cache), threads=2)
 
 
-def embed_texts(model: str, texts: Sequence[str]) -> list[list[float]]:
+def embed_texts(model: str, texts: Sequence[str], *, local_only: bool = False) -> list[list[float]]:
     global _embedding_instance
     if not texts:
         return []
@@ -458,7 +460,8 @@ def embed_texts(model: str, texts: Sequence[str]) -> list[list[float]]:
             if _embedding_instance is None or _embedding_instance[:2] != (model, cache_path):
                 # Release the old session before loading another model's weights.
                 _embedding_instance = None
-                _embedding_instance = (model, cache_path, _build_text_embedding(model))
+                embedding = _build_text_embedding(model, local_only=local_only)
+                _embedding_instance = (model, cache_path, embedding)
             vectors = [
                 [float(x) for x in vec]
                 for vec in _embedding_instance[2].embed([text], batch_size=1)

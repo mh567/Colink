@@ -13,9 +13,12 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib
+import posixpath
 import re
 import site
+import stat
 import sys
+import zipfile
 from pathlib import Path
 
 _REQ_RE = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\s*==\s*(?P<ver>[^\s;#]+))?")
@@ -84,16 +87,53 @@ def _dist_version(dist_name: str) -> str | None:
         return None
 
 
+def _archive_destination(filename: str) -> str:
+    relative = filename.partition("/")[2].replace("\\", "/")
+    normalized = posixpath.normpath("/" + relative.lstrip("/"))
+    return posixpath.normpath(
+        "/".join(part.rstrip(" .") for part in normalized.split("/"))
+    ).casefold()
+
+
+def _has_current_pptx_runner(archive_path: Path, root_name: str) -> bool:
+    expected = (Path(__file__).resolve().parents[1] / "pptx" / "runner.py").read_bytes()
+    member_name = f"{root_name}/pptx/runner.py"
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            members = [
+                entry
+                for entry in archive.infolist()
+                if _archive_destination(entry.filename) == "/pptx/runner.py"
+            ]
+            if len(members) != 1 or members[0].filename != member_name:
+                return False
+            member = members[0]
+            return (
+                stat.S_IFMT(member.external_attr >> 16) in (0, stat.S_IFREG)
+                and not member.external_attr & 0x10
+                and member.file_size == len(expected)
+                and archive.read(member) == expected
+            )
+    except (OSError, RuntimeError, NotImplementedError, zipfile.BadZipFile):
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packages", required=True, type=Path)
     parser.add_argument("--requirements", required=True, type=Path)
     parser.add_argument("--overrides", type=Path, default=None)
+    parser.add_argument("--portable-zip", type=Path, default=None)
     args = parser.parse_args()
 
     packages = args.packages.resolve()
     if not packages.is_dir():
         print(f"packages/ missing: {packages}", file=sys.stderr)
+        return 1
+    if args.portable_zip and not _has_current_pptx_runner(
+        args.portable_zip, args.packages.parent.name
+    ):
+        print("Rebuild the portable package without --reuse-portable.", file=sys.stderr)
         return 1
     site.addsitedir(str(packages))
 

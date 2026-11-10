@@ -62,6 +62,175 @@ func TestEnsurePortableUsesBundledPackage(t *testing.T) {
 	}
 }
 
+func TestSameVersionPPTXWorkerUsesBundledRunnerWithoutReplacingRuntime(t *testing.T) {
+	t.Setenv("OCTOP_HOME", t.TempDir())
+	root := portableDir()
+	oldZip := filepath.Join(t.TempDir(), "old.zip")
+	writeTestGreenZip(t, oldZip, "1.0.3b3")
+	if err := unzipGreen(oldZip, root); err != nil {
+		t.Fatal(err)
+	}
+	oldRunner := filepath.Join(root, "pptx", "runner.py")
+	if err := os.Mkdir(filepath.Dir(oldRunner), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldRunner, []byte("old runner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newZip := filepath.Join(t.TempDir(), "new.zip")
+	writeTestGreenZip(t, newZip, "1.0.3b3", testGreenZipFile{"pptx/runner.py", "updated runner"})
+	t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", newZip)
+
+	script, cleanup, err := prepareLocalPPTXRunner(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if data, err := os.ReadFile(script); err != nil || string(data) != "updated runner" {
+		t.Fatalf("task runner = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(oldRunner); err != nil || string(data) != "old runner" {
+		t.Fatalf("installed runner changed: %q, %v", data, err)
+	}
+	if filepath.Dir(filepath.Dir(script)) != root || script == oldRunner {
+		t.Fatalf("task runner must use the installed packages from a separate directory: %s", script)
+	}
+	if err := os.Remove(oldRunner); err != nil {
+		t.Fatal(err)
+	}
+	missing, cleanupMissing, err := prepareLocalPPTXRunner(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupMissing()
+	if data, err := os.ReadFile(missing); err != nil || string(data) != "updated runner" {
+		t.Fatalf("runner fallback for an old install = %q, %v", data, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, portableRevisionName), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := prepareLocalPPTXRunner(root); err == nil || err.Error() != "PPTX_RUNTIME_UNAVAILABLE" {
+		t.Fatalf("stale ZIP should not fill a missing runner in a newer runtime: %v", err)
+	}
+	if err := os.WriteFile(oldRunner, []byte("newer installed runner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script, cleanupInstalled, err := prepareLocalPPTXRunner(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupInstalled()
+	if script != oldRunner {
+		t.Fatalf("stale ZIP replaced the newer installed runner: %s", script)
+	}
+	if err := os.Remove(oldRunner); err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{"pptx/./runner.py", "pptx/runner.py. "} {
+		aliasZip := filepath.Join(t.TempDir(), "alias.zip")
+		writeTestGreenZip(t, aliasZip, "1.0.3b3",
+			testGreenZipFile{portableRevisionName, "1\n"},
+			testGreenZipFile{"pptx/runner.py", "updated runner"},
+			testGreenZipFile{alias, "stale runner"})
+		t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", aliasZip)
+		if _, _, err := prepareLocalPPTXRunner(root); err == nil || err.Error() != "PPTX_RUNTIME_UNAVAILABLE" {
+			t.Fatalf("ZIP with alias %q should fail: %v", alias, err)
+		}
+	}
+}
+
+func TestEnsurePortableStartupRefreshesSameVersionOnlyWhenIdle(t *testing.T) {
+	for _, scenario := range []string{
+		"cold startup", "running", "nested data", "nested database", "user folder", "nested grant", "task",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("OCTOP_HOME", home)
+			t.Setenv("OCTOP_DATABASE_DRIVER", "sqlite")
+			t.Setenv("OCTOP_DATABASE_URL", "")
+			t.Setenv("OCTOP_DATABASE_SQLITE_PATH", "")
+			root := portableDir()
+			oldZip := filepath.Join(t.TempDir(), "old.zip")
+			writeTestGreenZip(t, oldZip, "1.0.3b3")
+			if err := unzipGreen(oldZip, root); err != nil {
+				t.Fatal(err)
+			}
+			newZip := filepath.Join(t.TempDir(), "new.zip")
+			writeTestGreenZip(t, newZip, "1.0.3b3",
+				testGreenZipFile{"PORTABLE-REVISION.txt", "1\n"},
+				testGreenZipFile{"pptx/runner.py", "updated runner"})
+			t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", newZip)
+			database := filepath.Join(home, "octop.db")
+			if scenario == "nested database" {
+				database = filepath.Join(root, "project.db")
+				t.Setenv("OCTOP_DATABASE_SQLITE_PATH", database)
+			}
+			if err := os.WriteFile(database, []byte("user data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "nested data" {
+				if err := os.Mkdir(filepath.Join(root, "data"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "user folder" || scenario == "nested grant" {
+				reports := filepath.Join(root, "Reports")
+				if scenario == "nested grant" {
+					reports = filepath.Join(root, "packages", "Reports")
+					worker := newLocalDOCX(home)
+					if err := worker.save(map[string]docxState{
+						"scope": {Grants: []directoryGrant{{Path: reports, Mode: "rw"}}},
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.MkdirAll(reports, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if _, err := os.Stat(reports); err != nil {
+						t.Errorf("user folder removed: %v", err)
+					}
+				})
+			}
+
+			backupCalls := 0
+			previousBackup := runSQLiteBackup
+			runSQLiteBackup = func(_ string, source, destination string) error {
+				if source != database {
+					t.Fatalf("backup source = %s, want %s", source, database)
+				}
+				backupCalls++
+				return os.WriteFile(destination, []byte("backup"), 0o600)
+			}
+			t.Cleanup(func() { runSQLiteBackup = previousBackup })
+
+			ensure := func(locale Locale, status func(string)) error {
+				return preparePortable(locale, status, func() bool { return scenario != "running" })
+			}
+			if scenario == "task" {
+				ensure = ensurePortable
+			}
+			for range 2 {
+				if err := ensure(LocaleZH, func(string) {}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			content, err := os.ReadFile(filepath.Join(root, "pptx", "runner.py"))
+			if scenario == "cold startup" {
+				if err != nil || string(content) != "updated runner" || backupCalls != 1 {
+					t.Fatalf("runner = %q, %v, backups = %d", content, err, backupCalls)
+				}
+			} else if !os.IsNotExist(err) || backupCalls != 0 {
+				t.Fatalf("unsafe runtime refresh: runner = %q, %v, backups = %d", content, err, backupCalls)
+			}
+			if data, err := os.ReadFile(database); err != nil || string(data) != "user data" {
+				t.Fatalf("database changed: %q, %v", data, err)
+			}
+		})
+	}
+}
+
 func TestEnsurePortableReplacesOlderRuntime(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("OCTOP_HOME", home)
@@ -600,7 +769,9 @@ func TestWaitHealthTimesOutWithFriendlyMessage(t *testing.T) {
 	}
 }
 
-func writeTestGreenZip(t *testing.T, path, version string) {
+type testGreenZipFile struct{ name, content string }
+
+func writeTestGreenZip(t *testing.T, path, version string, extras ...testGreenZipFile) {
 	t.Helper()
 	f, err := os.Create(path)
 	if err != nil {
@@ -641,6 +812,15 @@ func writeTestGreenZip(t *testing.T, path, version string) {
 			t.Fatal(err)
 		}
 		if _, err := entry.Write(content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, extra := range extras {
+		entry, err := w.Create("Octop-" + greenPlat() + "/" + extra.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte(extra.content)); err != nil {
 			t.Fatal(err)
 		}
 	}
