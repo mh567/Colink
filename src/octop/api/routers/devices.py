@@ -169,6 +169,26 @@ async def authorize_xlsx(
 
 
 @router.post(
+    "/{device_id}/pptx/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize a local PPTX read or create operation",
+    description="Requires the employee's approved native session and explicit PPTX and "
+    "file action grants. The native client enforces directory grants.",
+)
+async def authorize_pptx(
+    device_id: str,
+    body: DocxAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    server.device_manager.authorize_docx(
+        user, device_id, x_colink_device_session, body.action, format="pptx", agent_id=body.agent_id
+    )
+    return DocxAuthorization()
+
+
+@router.post(
     "/{device_id}/ocr/authorize",
     response_model=DocxAuthorization,
     summary="Authorize local scanned PDF recognition on the current native device",
@@ -244,6 +264,35 @@ async def generate_xlsx(
         format="xlsx",
     )
     return XlsxGeneratedData(text=text)
+
+
+@router.post(
+    "/{device_id}/pptx/generate",
+    response_model=DocxGeneratedText,
+    summary="Generate an editable report outline for an authorized native PPTX task",
+    description="The enterprise model receives extracted text and returns structured slides. "
+    "The original and generated presentation stay on the native client.",
+)
+async def generate_pptx(
+    device_id: str,
+    body: DocxGenerateBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxGeneratedText:
+    assert server.app_runtime is not None
+    text = await server.device_manager.generate_docx_text(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        text=body.text,
+        agent_id=body.agent_id,
+        action=body.action,
+        models=server.app_runtime.agent_registry.host_models,
+        format="pptx",
+    )
+    return DocxGeneratedText(text=text)
 
 
 def _view(manager: DeviceManager, row: DeviceRow) -> DeviceView:

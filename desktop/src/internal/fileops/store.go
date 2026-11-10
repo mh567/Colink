@@ -112,6 +112,8 @@ func managedName(name, format string, destructive bool) bool {
 	switch format {
 	case "docx", "xlsx":
 		return strings.EqualFold(ext, "."+format)
+	case "pptx":
+		return !destructive && strings.EqualFold(ext, ".pptx")
 	case "ocr":
 		return !destructive && strings.EqualFold(ext, ".txt")
 	default:

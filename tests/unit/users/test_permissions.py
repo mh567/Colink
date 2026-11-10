@@ -38,6 +38,7 @@ def test_user_has_permission_admin_bypass() -> None:
             not in {
                 "local_docx",
                 "local_xlsx",
+                "local_pptx",
                 "local_ocr",
                 "local_files_read",
                 "local_files_create",
@@ -102,6 +103,7 @@ def test_categories_match_nav_groups() -> None:
         "mobile",
         "local_docx",
         "local_xlsx",
+        "local_pptx",
         "local_ocr",
         "local_files_read",
         "local_files_create",
@@ -140,6 +142,7 @@ def test_effective_permissions_admin_gets_catalog() -> None:
         - {
             "local_docx",
             "local_xlsx",
+            "local_pptx",
             "local_ocr",
             "local_files_read",
             "local_files_create",

@@ -26,7 +26,7 @@ interface Grant {
 }
 type Operation = "run" | "overwrite" | "delete";
 interface LocalTask {
-  format?: "docx" | "xlsx" | "ocr";
+  format?: "docx" | "xlsx" | "ocr" | "pptx";
   id: string;
   instruction: string;
   agent_id?: string;
@@ -70,15 +70,20 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   const [experts, setExperts] = useState<LocalExpert[]>([]);
   const [expertId, setExpertId] = useState("");
   const [expertError, setExpertError] = useState<unknown>(null);
-  const [format, setFormat] = useState<"docx" | "xlsx" | "ocr">("docx");
+  const [format, setFormat] = useState<"docx" | "xlsx" | "ocr" | "pptx">(
+    "docx",
+  );
   const [operation, setOperation] = useState<Operation>("run");
   const [lastRequest, setLastRequest] = useState<{
     key: string;
     id: string;
   } | null>(null);
-  const contentKey = { docx: "localDocx", xlsx: "localXlsx", ocr: "localOcr" }[
-    format
-  ];
+  const contentKey = {
+    docx: "localDocx",
+    xlsx: "localXlsx",
+    ocr: "localOcr",
+    pptx: "localPptx",
+  }[format];
   const [sourceGrant, setSourceGrant] = useState("");
   const [outputGrant, setOutputGrant] = useState("");
   const [source, setSource] = useState("");
@@ -161,6 +166,8 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   const errorMessage = (message: string) =>
     /^OCR_[A-Z_]+$/.test(message)
       ? t(`localOcr.errors.${message}`, t("localOcr.errors.OCR_INTERNAL"))
+      : /^PPTX_[A-Z_]+$/.test(message)
+      ? t(`localPptx.errors.${message}`, t("localPptx.errors.PPTX_TASK_FAILED"))
       : message;
   const destructive = operation !== "run";
   const deleting = operation === "delete";
@@ -247,7 +254,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             disabled={state.busy}
             style={selectStyle}
             onChange={(event) => {
-              setFormat(event.target.value as "docx" | "xlsx" | "ocr");
+              setFormat(event.target.value as "docx" | "xlsx" | "ocr" | "pptx");
               setOperation("run");
               setExpertId("");
               setSource("");
@@ -257,12 +264,13 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           >
             <option value="docx">DOCX</option>
             <option value="xlsx">XLSX</option>
+            <option value="pptx">PPTX</option>
             <option value="ocr">
               {t("localOcr.format", "扫描 PDF（OCR）")}
             </option>
           </select>
         </div>
-        {format !== "ocr" && (
+        {(format === "docx" || format === "xlsx") && (
           <div>
             <label htmlFor={`${id}-operation`}>
               {t("localDocx.operation", "文件操作")}
@@ -550,6 +558,8 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                         ? "识别扫描 PDF"
                         : format === "xlsx"
                         ? "生成 XLSX"
+                        : format === "pptx"
+                        ? "生成 PPTX"
                         : "生成 DOCX",
                     )}
               </Button>

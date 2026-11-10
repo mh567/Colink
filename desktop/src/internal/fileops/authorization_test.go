@@ -173,3 +173,25 @@ func TestManagedFilesStayWithinTheAuthorizedFormat(t *testing.T) {
 	}
 	assertFile(t, filepath.Join(dir, "report.xlsx"), "spreadsheet")
 }
+
+func TestManagedPPTXCanCreateButCannotDelete(t *testing.T) {
+	ctx := context.Background()
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	creds := testCredentials
+	creds.Format = "pptx"
+	if !validAuthorizationRequest(creds, "create") || validAuthorizationRequest(creds, "delete") {
+		t.Error("PPTX authorization must allow create and deny delete")
+	}
+	s := testStore()
+	if err := s.create(ctx, root, 1000, "项目汇报.pptx", []byte("presentation"), creds); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.prepare(ctx, ":1.42", 1000, root, "项目汇报.pptx", "delete", creds); err == nil {
+		t.Fatal("PPTX permission prepared deletion")
+	}
+	assertFile(t, filepath.Join(root.Name(), "项目汇报.pptx"), "presentation")
+}

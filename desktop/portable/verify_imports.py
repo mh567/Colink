@@ -27,6 +27,7 @@ _SMOKE_IMPORTS = (
     "cryptography.fernet",
     "langchain_core",
     "langchain_openai",
+    "pptx",
 )
 
 
@@ -101,7 +102,7 @@ def main() -> int:
     pins = {**req_pins, **override_pins}
 
     errors: list[str] = []
-    for dist in ("langchain-core", "langchain-openai", "cryptography"):
+    for dist in ("langchain-core", "langchain-openai", "cryptography", "python-pptx"):
         expected = pins.get(dist)
         if expected is None:
             continue

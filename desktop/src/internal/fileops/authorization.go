@@ -160,7 +160,7 @@ func newServerAuthorizer(raw string, trusted *http.Client) (ServerAuthorizer, er
 func validAuthorizationRequest(creds Credentials, action string) bool {
 	switch creds.Format {
 	case "docx", "xlsx":
-	case "ocr":
+	case "ocr", "pptx":
 		if action != "read" && action != "create" {
 			return false
 		}

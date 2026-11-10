@@ -137,3 +137,9 @@ see `applyAppIcon` in `src/icons_darwin.go`.
 设备页的本机文档任务可选择 XLSX。Excelize v2.11.0 及其依赖编译进桌面程序，运行时不下载库、不启动 Python 或执行模型脚本；开发及构建仍须预取 `go.mod`/`go.sum` 的依赖。新库最低 Go 1.25，与当前桌面工具链一致。
 
 许可全文位于 [third-party-xlsx.txt](src/assets/third-party-xlsx.txt)，随 `assets/*` 嵌入桌面二进制，可由本地壳资源路径 `/third-party-xlsx.txt` 读取。实际目标平台离线安装与 Office 打开编辑仍需单独验收。支持范围及权限见[本机 XLSX 接口](../docs/api.md#本机-xlsx-任务)。
+
+## 本机 PPTX 任务
+
+设备页选择 PPTX，在只读目录选取示例文件 `项目进展.pptx`，并在读写目录生成 `项目汇报.pptx`。从任务记录查看路径，用演示文稿编辑器打开成果，核对标题和要点后修改并保存。权限和格式范围见[本机 PPTX 接口](../docs/api.md#本机-pptx-任务)。
+
+便携包随附本机处理程序，沿用 `uv.lock` 的 [python-pptx 1.0.2 及其 MIT 许可](https://github.com/scanny/python-pptx/blob/v1.0.2/LICENSE)。生成技能由 Colink 独立编写，打包时继续移除 Harness 的受限演示文稿材料。使用同一包在断公网目标环境核对安装、中文文件和编辑结果。

@@ -302,6 +302,7 @@
     "WEBAUTHN_INVALID_DOMAIN": "Passkeys need a hostname. Open Octop via http://localhost (not an IP address such as 127.0.0.1).",
     "WEBAUTHN_LOGIN_DISABLED": "Passkey sign-in on the login page is turned off. An administrator can enable it under App settings → Passkeys.",
     "LOCAL_DOCX_GENERATION_FAILED": "Document generation failed; no file was written. Check the enabled intranet OpenAI-compatible model, disable API fallback, and verify the network and model output.",
+    "LOCAL_PPTX_GENERATION_FAILED": "Report generation failed. Check the intranet model connection and try again.",
     "LOCAL_XLSX_GENERATION_FAILED": "Spreadsheet generation failed; no file was written. Check the intranet model connection and output, then retry.",
     "LOCAL_EXPERT_PRIVATE_REFERENCE": "Remove knowledge-base references before exporting the offline package. Private content is never copied.",
     "LOCAL_EXPERT_DUPLICATE_SKILL": "Selected skills include multiple versions with the same name. Keep one version per name before exporting.",
@@ -7475,6 +7476,23 @@
     "outputExample": "Example: summary.xlsx",
     "instructionExample": "Summarize amounts by department, retain details and add total formulas.",
     "run": "Generate XLSX"
+  },
+  "localPptx": {
+    "run": "Generate PPTX",
+    "privacy": "The original and report stay on this device. Extracted text is sent to the intranet model through the server.",
+    "limits": "Read a PPTX or DOCX file up to 20 MB from an authorized folder. Report titles and bullets are editable.",
+    "sourceExample": "Example: Project progress.pptx",
+    "outputExample": "Example: Project report.pptx",
+    "errors": {
+      "PPTX_FILENAME": "Enter a PPTX filename in the authorized folder without subfolders.",
+      "PPTX_CREATE_ONLY": "Choose a new filename for the report.",
+      "PPTX_INVALID_SOURCE": "The presentation could not be read. Check for damage or encryption.",
+      "PPTX_SOURCE_LIMIT": "The presentation is too large. Split it and try again.",
+      "PPTX_NO_TEXT": "No slide text was found. Choose a presentation with editable text.",
+      "PPTX_INVALID_REPORT": "The report format is invalid. Shorten the instructions and try again.",
+      "PPTX_RUNTIME_UNAVAILABLE": "Presentation components are missing. Reinstall the complete client.",
+      "PPTX_TASK_FAILED": "The presentation could not be processed. Check the device connection and try again."
+    }
   },
   "localOcr": {
     "format": "Scanned PDF (OCR)",

@@ -302,6 +302,7 @@
     "WEBAUTHN_INVALID_DOMAIN": "通行密钥需要有效域名。请通过 http://localhost 打开（不要用 127.0.0.1 等 IP 地址）。",
     "WEBAUTHN_LOGIN_DISABLED": "登录页的通行密钥登录已关闭。管理员可在「应用设置 → 通行密钥」中开启。",
     "LOCAL_DOCX_GENERATION_FAILED": "文档生成失败，未写入文件。请检查已启用的内网 OpenAI 兼容模型、关闭 API 回退，并核对网络与模型输出。",
+    "LOCAL_PPTX_GENERATION_FAILED": "汇报生成失败，请检查内网模型连接后重试。",
     "LOCAL_XLSX_GENERATION_FAILED": "表格生成失败，未写入文件。请检查内网模型连接与输出后重试。",
     "LOCAL_EXPERT_PRIVATE_REFERENCE": "请先从专家配置移除知识库引用，再导出离线包；不会复制私人资料。",
     "LOCAL_EXPERT_DUPLICATE_SKILL": "所选技能存在同名版本，请每个名称只保留一个版本后再导出。",
@@ -7475,6 +7476,23 @@
     "outputExample": "例如：汇总.xlsx",
     "instructionExample": "按部门汇总台账金额，保留明细并增加合计公式。",
     "run": "生成 XLSX"
+  },
+  "localPptx": {
+    "run": "生成 PPTX",
+    "privacy": "原件和汇报留在本机。提取的文字经服务端发送到内网模型。",
+    "limits": "读取授权目录内不超过 20 MB 的 PPTX 或 DOCX，生成标题和要点可编辑的汇报。",
+    "sourceExample": "例如：项目进展.pptx",
+    "outputExample": "例如：项目汇报.pptx",
+    "errors": {
+      "PPTX_FILENAME": "请输入授权目录内的 PPTX 文件名，不含子目录。",
+      "PPTX_CREATE_ONLY": "请选择新文件名生成汇报。",
+      "PPTX_INVALID_SOURCE": "无法读取演示文稿，请检查文件是否损坏或加密。",
+      "PPTX_SOURCE_LIMIT": "演示文稿超过处理上限，请拆分文件后重试。",
+      "PPTX_NO_TEXT": "未找到幻灯片文字，请选择包含可编辑文字的演示文稿。",
+      "PPTX_INVALID_REPORT": "汇报内容格式无效，请缩短任务描述后重试。",
+      "PPTX_RUNTIME_UNAVAILABLE": "本机演示文稿组件缺失，请重新安装完整客户端。",
+      "PPTX_TASK_FAILED": "无法处理演示文稿，请确认设备连接后重试。"
+    }
   },
   "localOcr": {
     "format": "扫描 PDF（OCR）",

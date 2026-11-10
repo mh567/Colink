@@ -41,7 +41,7 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if decoder.Decode(&extra) != io.EOF {
 		return request, errors.New("无效任务请求")
 	}
-	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" {
+	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" && request.Format != "pptx" {
 		return request, errors.New("不支持的文件类型")
 	}
 	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "run" && !isDestructiveAction(request.Action) {

@@ -142,6 +142,7 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
     for name in ("package.sh", "_common.sh"):
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
     shutil.copytree(repo / "desktop" / "portable" / "templates", portable / "templates")
+    shutil.copytree(repo / "desktop" / "pptx", checkout / "desktop" / "pptx")
     ocr = checkout / "desktop" / "ocr"
     ocr.mkdir()
     # The model boundary is stubbed here; real OCR is exercised by test_local_ocr_runner.
@@ -237,6 +238,10 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
+        assert (
+            packed.read("Octop-linux-amd64/pptx/runner.py")
+            == (repo / "desktop/pptx/runner.py").read_bytes()
+        )
         assert not any("/powerpoint/" in name for name in packed.namelist())
         assert packed.read(f"Octop-linux-amd64/packages/{DIST_INFO}/licenses/LICENSE") == (
             b"MIT license must remain\n"

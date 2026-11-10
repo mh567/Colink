@@ -15,7 +15,7 @@ from octop.infra.users.groups import RESOURCE_SKILL_PACKAGE, GroupAccess, model_
 from octop.infra.users.identity import User
 
 REVIEWED_SKILL = "reviewed_local_skill"
-Action = Literal["local_docx", "local_xlsx"]
+Action = Literal["local_docx", "local_xlsx", "local_pptx"]
 
 
 class LocalExpertConfig(BaseModel):
@@ -176,7 +176,7 @@ def local_resources(services: Any, user: User) -> dict[str, Any]:
         "models": models,
         "actions": [
             {"id": action, "name": action}
-            for action in ("local_docx", "local_xlsx")
+            for action in ("local_docx", "local_xlsx", "local_pptx")
             if action in employee.permissions
         ],
         "skills": skills,

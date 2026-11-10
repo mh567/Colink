@@ -434,7 +434,7 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" && format != "ocr" {
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
 		return errors.New("不支持的文件类型")
 	}
 	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + format + "/" + action
@@ -515,6 +515,9 @@ func (w *localDOCX) record(s docxSession, task docxTask) error {
 }
 func (w *localDOCX) run(s docxSession, request docxRequest, current func() error) (task docxTask, err error) {
 	if isDestructiveAction(request.Action) {
+		if request.Format == "pptx" {
+			return task, errors.New("PPTX_CREATE_ONLY")
+		}
 		return w.runDestructive(s, request, current)
 	}
 	if request.Action != "" && request.Action != "run" {
@@ -524,7 +527,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" && format != "ocr" {
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
 		return task, errors.New("不支持的文件类型")
 	}
 	s.Format = format
@@ -537,6 +540,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	if format == "ocr" {
 		filename, outputFilename = ocrSourceFilename, ocrOutputFilename
+	}
+	if format == "pptx" {
+		filename, outputFilename = pptxSourceFilename, pptxFilename
 	}
 	task = docxTask{AgentID: request.AgentID, Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
 	if err = filename(request.Source); err != nil {
@@ -615,6 +621,16 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 	if err = current(); err != nil {
 		return nil, err
 	}
+	if format == "pptx" && strings.EqualFold(filepath.Ext(request.Source), ".docx") {
+		sourceSession := s
+		sourceSession.Format, sourceSession.AgentID = "docx", ""
+		if err = authorizeDOCX(sourceSession, "read"); err != nil {
+			return nil, err
+		}
+		if err = current(); err != nil {
+			return nil, err
+		}
+	}
 	info, err := source.Lstat(request.Source)
 	if err != nil {
 		return nil, err
@@ -645,6 +661,8 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 	var text string
 	if format == "ocr" {
 		text, err = readLocalOCR(s.Context, f, actual.Size())
+	} else if format == "pptx" && strings.EqualFold(filepath.Ext(request.Source), ".pptx") {
+		text, err = readLocalPPTX(s.Context, f, actual.Size())
 	} else {
 		text, err = read(f, actual.Size())
 	}
@@ -667,6 +685,9 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		}
 		if err = docxCall(s, "generate", payload, &generated); err != nil {
 			return nil, err
+		}
+		if format == "pptx" {
+			return makeLocalPPTX(s.Context, generated.Text)
 		}
 		makeFile := makeDOCX
 		if format == "xlsx" {

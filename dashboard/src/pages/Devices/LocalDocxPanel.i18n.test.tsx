@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 it.each(["zh", "en"])(
-  "translates OCR status and task errors in %s while preserving existing errors",
+  "translates OCR and PPTX task errors in %s while preserving existing errors",
   async (language) => {
     const i18n = createInstance();
     await i18n.init({
@@ -54,6 +54,15 @@ it.each(["zh", "en"])(
                 status: "failed",
                 error: "Existing native error",
               },
+              {
+                id: "3",
+                format: "pptx",
+                instruction: "",
+                source: "source.pptx",
+                output: "report.pptx",
+                status: "failed",
+                error: "PPTX_INVALID_REPORT",
+              },
             ],
           },
         }),
@@ -71,6 +80,13 @@ it.each(["zh", "en"])(
         language === "zh"
           ? "识别超时，请拆分 PDF 后重试。"
           : "Recognition timed out. Split the PDF and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        language === "zh"
+          ? "汇报内容格式无效，请缩短任务描述后重试。"
+          : "The report format is invalid. Shorten the instructions and try again.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Existing native error")).toBeInTheDocument();

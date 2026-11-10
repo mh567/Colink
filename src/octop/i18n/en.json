@@ -550,6 +550,7 @@
     "WEBAUTHN_INVALID_DOMAIN": "Passkeys need a hostname. Open Octop via http://localhost (not an IP address such as 127.0.0.1).",
     "WEBAUTHN_LOGIN_DISABLED": "Passkey sign-in on the login page is turned off. An administrator can enable it under App settings → Passkeys.",
     "LOCAL_DOCX_GENERATION_FAILED": "Document generation failed; no file was written. Check the enabled intranet OpenAI-compatible model, disable API fallback, and verify the network and model output.",
+    "LOCAL_PPTX_GENERATION_FAILED": "Report generation failed. Check the intranet model connection and try again.",
     "LOCAL_XLSX_GENERATION_FAILED": "Spreadsheet generation failed; no file was written. Check the intranet model connection and output, then retry.",
     "LOCAL_EXPERT_PRIVATE_REFERENCE": "Remove knowledge-base references before exporting the offline package. Private content is never copied.",
     "LOCAL_EXPERT_DUPLICATE_SKILL": "Selected skills include multiple versions with the same name. Keep one version per name before exporting.",

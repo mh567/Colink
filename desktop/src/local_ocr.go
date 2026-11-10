@@ -28,11 +28,11 @@ func ocrSourceFilename(name string) error { return ocrFilename(name, ".pdf") }
 func ocrOutputFilename(name string) error { return ocrFilename(name, ".txt") }
 
 // Bound subprocess output before buffering; stderr must never leak source text.
-type ocrOutputBuffer struct{ bytes.Buffer }
+type localWorkerOutput struct{ bytes.Buffer }
 
-func (b *ocrOutputBuffer) Write(p []byte) (int, error) {
+func (b *localWorkerOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 400000 {
-		return 0, errors.New("OCR_TEXT_LIMIT")
+		return 0, errors.New("local worker output exceeded its limit")
 	}
 	return b.Buffer.Write(p)
 }
@@ -69,7 +69,7 @@ func runLocalOCR(ctx context.Context, reader io.ReaderAt, size int64, root strin
 	cmd := exec.CommandContext(ctx, pythonExe(root), "-I", script)
 	cmd.Dir = root
 	cmd.Stdin = io.NewSectionReader(reader, 0, size)
-	var stdout ocrOutputBuffer
+	var stdout localWorkerOutput
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard
 	// -I isolates Python imports; do not forward model or device credentials.
