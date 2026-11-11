@@ -1,3 +1,4 @@
+import LocalBrowserPanel from "./LocalBrowserPanel";
 import LocalDocxPanel from "./LocalDocxPanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -307,6 +308,17 @@ export default function DevicesPage() {
           native.event.online && (
             <LocalDocxPanel
               key={native.event.device_id}
+              deviceId={native.event.device_id}
+            />
+          )}
+        {native.available &&
+          native.busy !== "disconnect" &&
+          native.event?.type === "status" &&
+          native.event.status === "approved" &&
+          native.event.online &&
+          user?.permissions?.includes("local_browser") && (
+            <LocalBrowserPanel
+              key={`${user.id}:${native.event.device_id}`}
               deviceId={native.event.device_id}
             />
           )}

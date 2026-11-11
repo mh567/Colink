@@ -120,8 +120,10 @@ func hasNewerPortableRevision(root string) bool {
 		return false
 	}
 	defer closeArchive()
-	return bundledPortableRevision(files) > installedPortableRevision(root) &&
-		readPortableBundleFile(files, "pptx/runner.py", 64<<10) != nil
+	revision := bundledPortableRevision(files)
+	return revision > installedPortableRevision(root) &&
+		readPortableBundleFile(files, "pptx/runner.py", 64<<10) != nil &&
+		(revision < 2 || readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil)
 }
 
 func portableDataOutsideRuntime(root string) bool {
@@ -132,7 +134,7 @@ func portableDataOutsideRuntime(root string) bool {
 	// The standalone launcher and directory grants can store user data here.
 	for _, entry := range entries {
 		switch entry.Name() {
-		case "runtime", "packages", "ocr", "pptx":
+		case "runtime", "packages", "ocr", "pptx", "browser":
 			if !entry.IsDir() {
 				return false
 			}

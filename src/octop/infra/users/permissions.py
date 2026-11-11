@@ -152,6 +152,7 @@ PERMISSIONS: dict[str, PermissionDef] = {
     "local_pptx": _p("local_pptx", "control", "本机 PPTX 任务", "Local PPTX tasks"),
     "local_ocr": _p("local_ocr", "control", "本机扫描 PDF 识别", "Local scanned PDF OCR"),
     "local_docx": _p("local_docx", "control", "本机 DOCX 任务", "Local DOCX tasks"),
+    "local_browser": _p("local_browser", "control", "本机浏览器查询", "Local browser queries"),
     "local_files_read": _p(
         "local_files_read", "control", "读取本机授权文件", "Read authorized local files"
     ),
@@ -465,6 +466,7 @@ LOCAL_EXECUTION_PERMISSIONS: frozenset[str] = frozenset(
         "local_xlsx",
         "local_pptx",
         "local_ocr",
+        "local_browser",
         "local_files_read",
         "local_files_create",
         "local_files_overwrite",

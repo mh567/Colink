@@ -29,3 +29,5 @@ func killProcessTree(cmd *exec.Cmd) {
 	hideConsole(kill)
 	_ = kill.Run()
 }
+
+func forceStopBrowserWorker(cmd *exec.Cmd) { killProcessTree(cmd) }

@@ -15,3 +15,7 @@ func killProcessTree(cmd *exec.Cmd) {
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	_ = cmd.Wait()
 }
+
+func forceStopBrowserWorker(cmd *exec.Cmd) {
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+}

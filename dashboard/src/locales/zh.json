@@ -145,6 +145,7 @@
     "notImplemented": "页面建设中。"
   },
   "apiErrors": {
+    "LOCAL_BROWSER_QUERY_FAILED": "查询失败，请联系管理员检查企业模型配置。",
     "AUTH_FAILED": "认证失败。",
     "TOKEN_EXPIRED": "登录已过期，请重新登录。",
     "SETUP_REQUIRED": "需要完成初始设置。",
@@ -7429,6 +7430,44 @@
     "nameRequired": "请先填写名称",
     "failed": "润色失败，请稍后重试",
     "emptyResult": "模型未返回结果"
+  },
+  "localBrowser": {
+    "title": "本机浏览器",
+    "hint": "请在专用浏览器中自行登录并打开查询页面。返回后刷新标签页，再选择要读取的页面。",
+    "connecting": "正在连接桌面客户端…",
+    "reconnect": "重试连接桌面客户端",
+    "address": "网页地址（可选）",
+    "open": "打开专用浏览器",
+    "list": "刷新标签页",
+    "newTab": "新开标签页",
+    "close": "关闭专用浏览器",
+    "tabs": "标签页",
+    "noTabs": "没有可用标签页",
+    "untitled": "空白标签页",
+    "closeTab": "关闭选中标签页",
+    "capture": "截取当前页",
+    "question": "查询问题",
+    "queryHint": "查询会将当前页的可见文字发送给企业模型。",
+    "query": "查询当前页",
+    "result": "查询结果",
+    "source": "来源",
+    "screenshot": "当前页截图",
+    "errors": {
+      "BROWSER_INVALID_REQUEST": "无法处理浏览器操作，请刷新标签页后重试。",
+      "BROWSER_INVALID_URL": "请输入有效的 HTTP 或 HTTPS 网页地址。",
+      "BROWSER_NOT_INSTALLED": "未找到受支持的浏览器，请联系管理员部署浏览器。",
+      "BROWSER_START_FAILED": "无法启动专用浏览器，请联系管理员检查浏览器和系统依赖。",
+      "BROWSER_NOT_OPEN": "请先打开专用浏览器。",
+      "BROWSER_TAB_NOT_FOUND": "标签页已关闭，请刷新标签页。",
+      "BROWSER_READ_BLOCKED": "无法读取此页面，请在专用浏览器中打开业务页面后刷新标签页。",
+      "BROWSER_IMAGE_TOO_LARGE": "截图过大，请缩小专用浏览器窗口后重试。",
+      "BROWSER_TASK_FAILED": "无法完成浏览器操作，请重试。",
+      "BROWSER_NOT_AUTHORIZED": "请确认当前设备在线，并联系管理员核对本机浏览器权限。",
+      "BROWSER_RUNTIME_UNAVAILABLE": "请联系管理员检查桌面客户端的本机浏览器组件。",
+      "BROWSER_BUSY": "请等待当前浏览器操作完成后重试。",
+      "BROWSER_MODEL_FAILED": "查询失败，请联系管理员检查企业模型配置。",
+      "BROWSER_TIMEOUT": "未收到桌面客户端回执，请重新连接后重试。"
+    }
   },
   "localDocx": {
     "title": "本机文档任务",

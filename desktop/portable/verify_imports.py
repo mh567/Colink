@@ -31,6 +31,7 @@ _SMOKE_IMPORTS = (
     "langchain_core",
     "langchain_openai",
     "pptx",
+    "octop_browser",
 )
 
 
@@ -95,15 +96,16 @@ def _archive_destination(filename: str) -> str:
     ).casefold()
 
 
-def _has_current_pptx_runner(archive_path: Path, root_name: str) -> bool:
-    expected = (Path(__file__).resolve().parents[1] / "pptx" / "runner.py").read_bytes()
-    member_name = f"{root_name}/pptx/runner.py"
+def _has_current_worker(archive_path: Path, root_name: str, worker: str) -> bool:
+    expected = (Path(__file__).resolve().parents[1] / worker / "runner.py").read_bytes()
+    relative = f"/{worker}/runner.py"
+    member_name = f"{root_name}{relative}"
     try:
         with zipfile.ZipFile(archive_path) as archive:
             members = [
                 entry
                 for entry in archive.infolist()
-                if _archive_destination(entry.filename) == "/pptx/runner.py"
+                if _archive_destination(entry.filename) == relative
             ]
             if len(members) != 1 or members[0].filename != member_name:
                 return False
@@ -130,8 +132,9 @@ def main() -> int:
     if not packages.is_dir():
         print(f"packages/ missing: {packages}", file=sys.stderr)
         return 1
-    if args.portable_zip and not _has_current_pptx_runner(
-        args.portable_zip, args.packages.parent.name
+    if args.portable_zip and not all(
+        _has_current_worker(args.portable_zip, args.packages.parent.name, worker)
+        for worker in ("pptx", "browser")
     ):
         print("Rebuild the portable package without --reuse-portable.", file=sys.stderr)
         return 1
@@ -142,7 +145,13 @@ def main() -> int:
     pins = {**req_pins, **override_pins}
 
     errors: list[str] = []
-    for dist in ("langchain-core", "langchain-openai", "cryptography", "python-pptx"):
+    for dist in (
+        "langchain-core",
+        "langchain-openai",
+        "cryptography",
+        "python-pptx",
+        "octop-browser",
+    ):
         expected = pins.get(dist)
         if expected is None:
             continue

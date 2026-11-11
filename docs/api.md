@@ -146,6 +146,17 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 本票不新增运行依赖，复用 Go 标准库、已锁定的 WebSocket 库和 `cryptography`，运行不从公网补装。按 2026-11-06 的开发确认，T01 的真实模型任务与麒麟干净环境验收缺口继续保留，分别由 #4/#5 和 #7 补齐；本票的设备接入测试不替代这些验收。
 
+## 本机浏览器只读查询
+
+管理员在用户权限中授予“本机浏览器查询”（`local_browser`）。员工在桌面客户端接入已批准的本人设备，从设备页打开专用浏览器并亲自登录。员工可在浏览器中打开查询结果，或在面板中打开已知的查询地址。例如，打开示例订单 `DEMO-42` 的结果标签，在面板中选择该标签并询问库存数量。答案与来源一同显示，可单独截图核对。
+
+| 方法 | 路径 | 请求与结果 |
+| --- | --- | --- |
+| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作可为 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture` 或 `close`。通过时返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/browser/query` | 同上。请求 `{instruction,text}`，分别最多 8,000 和 60,000 字符。已授权的企业内网模型返回 `{text}` |
+
+原生客户端每次执行前校验会话与动作权限。查询和截图绑定选中标签的完整地址，地址变化后先刷新标签列表。界面来源省略查询参数和片段。登录配置与截图留在本机，模型只收到员工的提问和页面可见文字。结果页文字按资料处理，模型调用不开放浏览器工具。业务系统里的填表、提交和附件操作由员工在浏览器窗口内完成。
+
 ## 本机 DOCX 任务
 
 管理员须在用户权限中明确授予“本机 DOCX 任务”（`local_docx`）、“读取本机授权文件”（`local_files_read`）和“新建本机文件”（`local_files_create`）。三项默认不授予；管理身份不自动取得本人或其他员工电脑的文件执行权。

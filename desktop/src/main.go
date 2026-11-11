@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -34,13 +35,15 @@ type App struct {
 	quitting          bool
 	setTrayMenuLocale func(Locale)
 
-	trayClickMu    sync.Mutex
-	lastTrayClick  time.Time
-	trayClickTimer *time.Timer
-	drops          dropServer
-	device         *deviceClient
-	docx           *localDOCX
-	ownsListenPort bool
+	trayClickMu      sync.Mutex
+	lastTrayClick    time.Time
+	trayClickTimer   *time.Timer
+	drops            dropServer
+	device           *deviceClient
+	docx             *localDOCX
+	browser          *localBrowser
+	browserBridgeKey [32]byte
+	ownsListenPort   bool
 }
 
 func (a *App) ServiceName() string { return "desktop" }
@@ -50,6 +53,9 @@ func (a *App) ServiceStartup(context.Context, application.ServiceOptions) error 
 func (a *App) ServiceShutdown() error {
 	if a.device != nil {
 		a.device.disconnect()
+	}
+	if a.browser != nil {
+		a.browser.close()
 	}
 	a.sleep.stop()
 	a.mu.Lock()
@@ -371,10 +377,13 @@ func main() {
 	api.device = &deviceClient{emit: api.emitDeviceStatus}
 	api.docx = newLocalDOCX(octopHome())
 	api.docx.confirmDestructive = api.confirmLocalFile
+	api.browser = newLocalBrowser(octopHome())
+	rand.Read(api.browserBridgeKey[:])
 
 	app := application.New(application.Options{
-		Name:        "Octop",
-		Description: "Octop desktop",
+		Name:              "Octop",
+		Description:       "Octop desktop",
+		RawMessageHandler: api.handleBrowserMessage,
 		Services: []application.Service{
 			application.NewService(api),
 		},
