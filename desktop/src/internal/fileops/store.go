@@ -85,7 +85,11 @@ func newStore(verify, protect func(*os.File, uint32) error, syncDir func(*os.Roo
 }
 
 func (s *store) checkPermission(ctx context.Context, proof Credentials, action string) error {
-	if ctx.Err() != nil || s.server == nil || s.server(ctx, proof, action) != nil || ctx.Err() != nil {
+	return s.authorize(ctx, proof, authorizationRequest{Action: action})
+}
+
+func (s *store) authorize(ctx context.Context, proof Credentials, request authorizationRequest) error {
+	if ctx.Err() != nil || s.server == nil || s.server(ctx, proof, request) != nil || ctx.Err() != nil {
 		return errPermission
 	}
 	return nil
@@ -350,16 +354,28 @@ func (s *store) commit(ctx context.Context, sender, token, operation string, pro
 		}
 		return s.syncDir(p.root)
 	}
-	return s.write(p.root, p.uid, p.name, data, func() bool {
-		return time.Now().Before(p.deadline) && ctx.Err() == nil
-	})
+	stage := ".colink-" + rand.Text()
+	if err = s.write(p.root, p.uid, stage, data, nil); err != nil {
+		return err
+	}
+	defer p.root.Remove(stage)
+	if !time.Now().Before(p.deadline) || ctx.Err() != nil {
+		return errInactive
+	}
+	if err = p.root.Rename(stage, p.name); err != nil {
+		return err
+	}
+	return s.syncDir(p.root)
 }
 
-func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name string, data []byte, proof Credentials) error {
+func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name string, data []byte, proof Credentials, request authorizationRequest) error {
 	if !managedName(name, proof.Format, false) || len(data) > maxFileBytes {
 		return errInvalid
 	}
-	if err := s.checkPermission(ctx, proof, "create"); err != nil {
+	if proof.Format == "pptx" && request.SourceFormat != "pptx" && request.SourceFormat != "docx" {
+		return errPermission
+	}
+	if err := s.authorize(ctx, proof, request); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -370,44 +386,68 @@ func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name stri
 	if !SameDirectory(root, root.Name()) {
 		return errChanged
 	}
-	return s.write(root, uid, name, data, nil)
+	if proof.Format == "pptx" {
+		return s.publishPPTX(ctx, root, uid, name, data, proof, request)
+	}
+	if err := s.write(root, uid, name, data, nil); err != nil {
+		return err
+	}
+	return s.syncDir(root)
 }
 
-func (s *store) write(root *os.Root, uid uint32, name string, data []byte, replacementStillApproved func() bool) error {
-	entry := name
-	if replacementStillApproved != nil {
-		entry = ".colink-" + rand.Text()
+func (s *store) publishPPTX(ctx context.Context, root *os.Root, uid uint32, name string, data []byte, proof Credentials, request authorizationRequest) error {
+	stage := ".colink-" + rand.Text()
+	// Recheck permission before the staging file gets its readable ACL.
+	if err := s.write(root, uid, stage, data, func() error {
+		return s.authorize(ctx, proof, request)
+	}); err != nil {
+		return err
 	}
+	defer root.Remove(stage)
+	if ctx.Err() != nil {
+		return errInactive
+	}
+	if !SameDirectory(root, root.Name()) {
+		return errChanged
+	}
+	if err := root.Link(stage, name); err != nil {
+		return err
+	}
+	if err := root.Remove(stage); err != nil {
+		return errors.Join(err, root.Remove(name))
+	}
+	if err := s.syncDir(root); err != nil {
+		if rollbackErr := root.Remove(name); rollbackErr != nil {
+			return errors.Join(err, rollbackErr)
+		}
+		return errors.Join(err, s.syncDir(root))
+	}
+	return nil
+}
+
+func (s *store) write(root *os.Root, uid uint32, entry string, data []byte, beforeProtect func() error) (err error) {
 	f, err := root.OpenFile(entry, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if entry != "" {
+		if err != nil {
 			_ = root.Remove(entry)
 		}
 	}()
-	if _, err = f.Write(data); err == nil {
+	_, err = f.Write(data)
+	if err == nil && beforeProtect != nil {
+		err = beforeProtect()
+	}
+	if err == nil {
 		err = s.protect(f, uid)
 	}
 	if err == nil {
 		err = f.Sync()
 	}
 	closeErr := f.Close()
-	if err != nil {
-		return err
+	if err == nil {
+		err = closeErr
 	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if replacementStillApproved != nil {
-		if !replacementStillApproved() {
-			return errInactive
-		}
-		if err = root.Rename(entry, name); err != nil {
-			return err
-		}
-	}
-	entry = ""
-	return s.syncDir(root)
+	return err
 }

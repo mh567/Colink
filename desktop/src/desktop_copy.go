@@ -16,6 +16,7 @@ const (
 	copyStatusUsingExisting    = "status.using_existing"
 	copyErrorBackupFailed      = "error.backup_failed"
 	copyErrorUpgradeFailed     = "error.upgrade_failed"
+	copyErrorInvalidRuntime    = "error.invalid_runtime"
 	copyErrorNoFreePort        = "error.no_free_port"
 	copyErrorCannotBind        = "error.cannot_bind"
 	copyWait1Minute            = "wait.1_minute"
@@ -70,6 +71,7 @@ var desktopCopy = map[Locale]map[string]string{
 		copyStatusUsingExisting:    "Octop is already running. Opening it…",
 		copyErrorBackupFailed:      "Database backup failed before upgrade; the current version was preserved",
 		copyErrorUpgradeFailed:     "Desktop runtime upgrade failed; the current version was preserved",
+		copyErrorInvalidRuntime:    "Download the desktop installer again to replace the invalid runtime package.",
 		copyErrorNoFreePort:        "No free port from %d to %d. Close the program using these ports and try again.",
 		copyErrorCannotBind:        "Cannot listen on %s:%d (%s). Check bind_host in config.json.",
 		copyWait1Minute:            "1 minute",
@@ -120,6 +122,7 @@ var desktopCopy = map[Locale]map[string]string{
 		copyStatusUsingExisting:    "Octop 已在运行，正在打开…",
 		copyErrorBackupFailed:      "升级前数据库备份失败，已保留当前版本",
 		copyErrorUpgradeFailed:     "客户端运行环境升级失败，已保留当前版本",
+		copyErrorInvalidRuntime:    "内置运行环境包无效，请重新下载桌面安装包。",
 		copyErrorNoFreePort:        "从 %d 到 %d 没有空闲端口，请关闭占用这些端口的程序后再试。",
 		copyErrorCannotBind:        "无法在 %s:%d 上监听（%s）。请检查 config.json 里的 bind_host。",
 		copyWait1Minute:            "1 分钟",

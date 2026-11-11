@@ -16,6 +16,10 @@ from typing import Any
 FILE_LIMIT = 20 * 1024 * 1024
 EXPANDED_LIMIT = 64 * 1024 * 1024
 TEXT_LIMIT = 60000
+CHART_URIS = {
+    "http://schemas.openxmlformats.org/drawingml/2006/chart",
+    "http://schemas.microsoft.com/office/drawing/2014/chartex",
+}
 
 
 class PptxError(Exception):
@@ -29,17 +33,10 @@ def deny_network(event: str, _args: tuple[object, ...]) -> None:
 
 def slide_text(shapes: Any) -> Iterator[str]:
     from pptx.enum.shapes import MSO_SHAPE_TYPE
-    from pptx.shapes.graphfrm import GraphicFrame
 
     for shape in shapes:
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
             yield from slide_text(shape.shapes)
-        elif shape.has_chart or (
-            isinstance(shape, GraphicFrame)
-            and shape.element.graphicData_uri
-            == "http://schemas.microsoft.com/office/drawing/2014/chartex"
-        ):
-            raise PptxError("PPTX_UNSUPPORTED_CHART")
         elif shape.has_text_frame and shape.text.strip():
             yield shape.text.strip()
         elif shape.has_table:
@@ -49,6 +46,7 @@ def slide_text(shapes: Any) -> Iterator[str]:
 
 def read_deck(data: bytes) -> str:
     from pptx import Presentation
+    from pptx.oxml.ns import qn
 
     try:
         bounded = io.BytesIO()
@@ -70,7 +68,11 @@ def read_deck(data: bytes) -> str:
 
         paragraphs = []
         size = 0
+        graphic_data = qn("a:graphicData")
         for index, slide in enumerate(Presentation(bounded).slides, 1):
+            # Shape enumeration skips charts in markup compatibility branches.
+            if any(node.get("uri") in CHART_URIS for node in slide.element.iter(graphic_data)):
+                raise PptxError("PPTX_UNSUPPORTED_CHART")
             first = True
             for text in slide_text(slide.shapes):
                 if not text.strip():

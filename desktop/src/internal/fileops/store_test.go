@@ -13,7 +13,7 @@ import (
 var testCredentials = Credentials{Format: "docx", DeviceID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", Bearer: "test-bearer", Session: "test-session"}
 
 func testStore() *store {
-	return testStoreWithAuthorizer(func(context.Context, Credentials, string) error { return nil })
+	return testStoreWithAuthorizer(func(context.Context, Credentials, authorizationRequest) error { return nil })
 }
 
 func testStoreWithAuthorizer(authorizer ServerAuthorizer) *store {
@@ -133,10 +133,11 @@ func TestManagedCreationAndDeletionAreSeparateActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	if err = s.create(ctx, root, 1000, "report.docx", []byte("created"), testCredentials); err != nil {
+	request := authorizationRequest{Action: "create"}
+	if err = s.create(ctx, root, 1000, "report.docx", []byte("created"), testCredentials, request); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.create(ctx, root, 1000, "report.docx", []byte("collision"), testCredentials); err == nil {
+	if err = s.create(ctx, root, 1000, "report.docx", []byte("collision"), testCredentials, request); err == nil {
 		t.Fatal("create replaced a file")
 	}
 	path := filepath.Join(dir, "report.docx")

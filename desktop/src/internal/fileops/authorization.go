@@ -21,7 +21,13 @@ type Credentials struct {
 	Format, DeviceID, Bearer, Session string
 }
 
-type ServerAuthorizer func(context.Context, Credentials, string) error
+type authorizationRequest struct {
+	Action       string `json:"action"`
+	SourceFormat string `json:"source_format,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
+}
+
+type ServerAuthorizer func(context.Context, Credentials, authorizationRequest) error
 
 const (
 	authorizationTimeout      = 10 * time.Second
@@ -127,13 +133,13 @@ func newServerAuthorizer(raw string, trusted *http.Client) (ServerAuthorizer, er
 			return http.ErrUseLastResponse
 		},
 	}
-	return func(ctx context.Context, creds Credentials, action string) error {
-		if !validAuthorizationRequest(creds, action) {
+	return func(ctx context.Context, creds Credentials, authorization authorizationRequest) error {
+		if !validAuthorizationRequest(creds, authorization.Action) {
 			return errServerAuthorization
 		}
 		endpoint := base + "/api/devices/" + creds.DeviceID + "/" + creds.Format + "/authorize"
-		body := strings.NewReader(`{"action":"` + action + `"}`)
-		request, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+		body, _ := json.Marshal(authorization)
+		request, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if requestErr != nil {
 			return errServerAuthorizationCheck
 		}

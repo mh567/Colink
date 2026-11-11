@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -770,6 +771,102 @@ func TestWaitHealthTimesOutWithFriendlyMessage(t *testing.T) {
 }
 
 type testGreenZipFile struct{ name, content string }
+
+func TestUnzipGreenRejectsLinksOutsideStaging(t *testing.T) {
+	for _, absolute := range []bool{false, true} {
+		name := "relative"
+		if absolute {
+			name = "absolute"
+		}
+		t.Run(name, func(t *testing.T) {
+			parent := t.TempDir()
+			outside := filepath.Join(parent, "outside")
+			if err := os.Mkdir(outside, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := filepath.Join(outside, "report.pptx")
+			if err := os.WriteFile(sentinel, []byte("existing report"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			target := "../outside"
+			if absolute {
+				target = outside
+			}
+			data := greenZipWithLink(t, target, "alias/report.pptx")
+			extractErr := unzipGreenBytes(data, filepath.Join(parent, "staging"))
+			if content, err := os.ReadFile(sentinel); err != nil || string(content) != "existing report" {
+				t.Fatalf("extraction changed the external report: %q, %v", content, err)
+			}
+			if !errors.Is(extractErr, errInvalidPortableArchive) {
+				t.Fatalf("external symbolic link returned %v, want invalid archive", extractErr)
+			}
+		})
+	}
+}
+
+func TestEnsurePortableRejectsUnsafeFirstLaunch(t *testing.T) {
+	t.Setenv("OCTOP_HOME", t.TempDir())
+	bundle := filepath.Join(t.TempDir(), "portable.zip")
+	if err := os.WriteFile(bundle, greenZipWithLink(t, "../outside", "alias/report.pptx"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", bundle)
+	for _, locale := range []Locale{LocaleZH, LocaleEN} {
+		err := ensurePortableAtStartup(locale, func(string) {})
+		if want := desktopText(locale, copyErrorInvalidRuntime); err == nil || err.Error() != want {
+			t.Fatalf("first launch returned %v, want %q", err, want)
+		}
+		if _, err := os.Lstat(portableDir() + ".new"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("invalid bundle left a staged runtime: %v", err)
+		}
+	}
+}
+
+func TestUnzipGreenPreservesInternalRuntimeLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		probe := t.TempDir()
+		if err := os.Symlink(".", filepath.Join(probe, "link")); err != nil {
+			t.Skipf("symbolic links are unavailable: %v", err)
+		}
+	}
+	dest := filepath.Join(t.TempDir(), "staging")
+	if err := unzipGreenBytes(greenZipWithLink(t, "runtime/python3.12", "runtime/python3.12"), dest); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dest, "alias")
+	if target, err := os.Readlink(link); err != nil || filepath.ToSlash(target) != "runtime/python3.12" {
+		t.Fatalf("runtime link target = %q, error = %v", target, err)
+	}
+	if data, err := os.ReadFile(link); err != nil || string(data) != "archive contents" {
+		t.Fatalf("runtime link contents = %q, error = %v", data, err)
+	}
+}
+
+func greenZipWithLink(t *testing.T, linkTarget, fileName string) []byte {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	header := &zip.FileHeader{Name: "Octop-test/alias"}
+	header.SetMode(os.ModeSymlink | 0o755)
+	link, err := writer.CreateHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := link.Write([]byte(linkTarget)); err != nil {
+		t.Fatal(err)
+	}
+	file, err := writer.Create("Octop-test/" + fileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("archive contents")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return archive.Bytes()
+}
 
 func writeTestGreenZip(t *testing.T, path, version string, extras ...testGreenZipFile) {
 	t.Helper()

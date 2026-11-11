@@ -12,6 +12,7 @@ import pytest
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
+from pptx.oxml import parse_xml
 from pptx.util import Inches
 
 RUNNER = Path(__file__).resolve().parents[2] / "desktop" / "pptx" / "runner.py"
@@ -48,7 +49,10 @@ def test_worker_reads_visible_slide_text_and_table_cells():
 
 
 @pytest.mark.parametrize("extended_chart", [False, True])
-def test_worker_rejects_chart_instead_of_returning_only_the_slide_title(extended_chart):
+@pytest.mark.parametrize("wrapped_chart", [False, True])
+def test_worker_rejects_chart_instead_of_returning_only_the_slide_title(
+    extended_chart, wrapped_chart
+):
     source = io.BytesIO()
     deck = Presentation()
     slide = deck.slides.add_slide(deck.slide_layouts[5])
@@ -63,6 +67,13 @@ def test_worker_rejects_chart_instead_of_returning_only_the_slide_title(extended
         frame.element.graphic.graphicData.uri = (
             "http://schemas.microsoft.com/office/drawing/2014/chartex"
         )
+    if wrapped_chart:
+        wrapper = parse_xml(
+            '<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/'
+            'markup-compatibility/2006"><mc:Choice Requires="a"/></mc:AlternateContent>'
+        )
+        frame.element.addprevious(wrapper)
+        wrapper[0].append(frame.element)
     deck.save(source)
 
     code, result = run_worker("read", source.getvalue())

@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"time"
 )
+
+var errInvalidPortableArchive = errors.New("invalid portable archive")
 
 func launchReady(root string) bool {
 	if _, err := os.Stat(filepath.Join(root, "launch.py")); err != nil {
@@ -77,6 +80,9 @@ func preparePortable(locale Locale, status func(string), runtimeIdle func() bool
 		if launchReady(root) {
 			status(desktopText(locale, copyStatusUpdateFailedKeep))
 			return nil
+		}
+		if errors.Is(err, errInvalidPortableArchive) {
+			return errors.New(desktopText(locale, copyErrorInvalidRuntime))
 		}
 		return err
 	}
@@ -435,66 +441,101 @@ func unzipGreenBytes(data []byte, dest string) error {
 }
 
 func unzipGreenFiles(files []*zip.File, dest string) error {
-	_ = os.RemoveAll(dest)
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	type portableLink struct {
+		name string
+		file *zip.File
+	}
+	var links []portableLink
 	// Zip root is Octop-<plat>/… — strip that prefix.
 	for _, f := range files {
-		name := f.Name
-		parts := strings.SplitN(name, "/", 2)
-		if len(parts) < 2 {
+		_, relative, hasRoot := strings.Cut(f.Name, "/")
+		if !hasRoot || relative == "" {
 			continue
 		}
-		rel := parts[1]
-		if rel == "" {
-			continue
+		target := filepath.FromSlash(relative)
+		if !filepath.IsLocal(target) || filepath.Clean(target) == "." {
+			return fmt.Errorf("%w: invalid path %q", errInvalidPortableArchive, f.Name)
 		}
-		target := filepath.Join(dest, filepath.FromSlash(rel))
-		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) && target != filepath.Clean(dest) {
-			return fmt.Errorf("illegal zip path %s", name)
-		}
+		target = filepath.Clean(target)
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 			continue
 		}
 		if f.Mode()&os.ModeSymlink != 0 {
-			rc, err := f.Open()
-			if err != nil {
-				return err
-			}
-			linkTarget, err := io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(string(linkTarget), target); err != nil {
-				return err
-			}
+			links = append(links, portableLink{name: target, file: f})
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if !f.Mode().IsRegular() {
+			return fmt.Errorf("%w: unsupported entry %q", errInvalidPortableArchive, f.Name)
+		}
+		if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		out, err := root.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, f.Mode().Perm())
 		if err != nil {
 			rc.Close()
 			return err
 		}
 		_, err = io.Copy(out, rc)
-		out.Close()
+		closeErr := out.Close()
 		rc.Close()
 		if err != nil {
 			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+
+	// Materialize directories before any link can redirect a later entry.
+	for _, link := range links {
+		if err := root.MkdirAll(filepath.Dir(link.name), 0o755); err != nil {
+			return err
+		}
+	}
+	for _, link := range links {
+		rc, err := link.file.Open()
+		if err != nil {
+			return err
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return err
+		}
+		target := filepath.FromSlash(string(data))
+		if target == "" || filepath.IsAbs(target) || filepath.VolumeName(target) != "" ||
+			!filepath.IsLocal(filepath.Join(filepath.Dir(link.name), target)) {
+			return fmt.Errorf("%w: invalid link %q", errInvalidPortableArchive, link.file.Name)
+		}
+		if err := root.Symlink(target, link.name); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("%w: duplicate link path %q", errInvalidPortableArchive, link.file.Name)
+			}
+			return err
+		}
+	}
+	for _, link := range links {
+		if _, err := root.Stat(link.name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %v", errInvalidPortableArchive, err)
 		}
 	}
 	return nil
