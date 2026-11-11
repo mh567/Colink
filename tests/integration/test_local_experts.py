@@ -40,6 +40,48 @@ async def test_offline_release_requires_admin_review_and_preserves_versions(
     assert duplicate.status_code == 409, duplicate.text
 
 
+async def test_local_expert_can_use_all_office_actions_including_offline_roundtrip(env):
+    from tests.support.auth import seed_openai_provider
+
+    client, _server, admin = env
+    await seed_openai_provider(client, admin)
+    actions = ["local_docx", "local_xlsx", "local_pptx"]
+    employee = await create_user(
+        client, admin, username="office_employee", permissions=[*actions, "experts"]
+    )
+    root = "/api/experts/local"
+    config = {"name": "Office reports", "default_model": "openai/gpt-4o", "actions": actions}
+    created = await client.post(root, headers=employee, json=config)
+    assert created.status_code == 201, created.text
+    assert created.json()["actions"] == actions
+    agent_id = created.json()["agent_id"]
+    updated = await client.put(
+        f"{root}/{agent_id}", headers=employee, json={**config, "description": "Office reports"}
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["actions"] == actions
+    exported = await client.post(
+        f"{root}/{agent_id}/export",
+        headers=employee,
+        json={"version": "1", "source": "company", "license": "internal"},
+    )
+    assert exported.status_code == 200, exported.text
+    package = exported.json()
+    assert package["actions"] == actions
+    published = await client.post(
+        f"{root}/releases", headers=admin, json={"reviewed": True, "package": package}
+    )
+    assert published.status_code == 201, published.text
+    release_id = published.json()["id"]
+    installed = await client.post(
+        f"{root}/releases/{release_id}/install",
+        headers=employee,
+        json={**config, "name": "Installed office reports"},
+    )
+    assert installed.status_code == 201, installed.text
+    assert installed.json()["actions"] == actions
+
+
 async def test_offline_package_cannot_carry_private_references_or_executable_files(
     env: tuple[Any, Any, dict[str, str]],
 ) -> None:

@@ -299,7 +299,7 @@ def test_embed_texts_returns_vectors(monkeypatch) -> None:
                 yield [0.1, 0.2, 0.3]
 
     monkeypatch.setattr(mod, "local_embedding_deps_available", lambda: True)
-    monkeypatch.setattr(mod, "_build_text_embedding", lambda _model: FakeEmb())
+    monkeypatch.setattr(mod, "_build_text_embedding", lambda _model, **_kwargs: FakeEmb())
     vectors = mod.embed_texts("BAAI/bge-small-zh-v1.5", ["hello"])
     assert len(vectors) == 1 and len(vectors[0]) == 3
 
@@ -330,7 +330,7 @@ def test_embed_texts_bounds_batches_and_reuses_model(monkeypatch) -> None:
             batches.append(list(texts))
             yield [float(texts[0])]
 
-    def build(model):
+    def build(model, **_kwargs):
         builds.append(model)
         return FakeEmb()
 
@@ -363,7 +363,7 @@ def test_embed_texts_serializes_loading_and_inference(monkeypatch) -> None:
                 assert release.is_set(), "query inference overlapped indexing"
             yield [1.0]
 
-    def build(model):
+    def build(model, **_kwargs):
         builds.append(model)
         return FakeEmb()
 
@@ -397,7 +397,7 @@ def test_embed_texts_releases_cache_on_model_or_home_change(monkeypatch, tmp_pat
         def embed(self, texts, *, batch_size):
             yield [1.0]
 
-    def build(model):
+    def build(model, **_kwargs):
         assert mod._embedding_instance is None
         builds.append(model)
         return FakeEmb()
@@ -420,7 +420,9 @@ def test_embed_texts_rejects_incomplete_batch(monkeypatch) -> None:
     monkeypatch.setattr(mod, "require_local_embedding_deps", lambda: None)
     monkeypatch.setattr(mod, "assert_catalog_model", lambda model: model)
     monkeypatch.setattr(
-        mod, "_build_text_embedding", lambda _: SimpleNamespace(embed=lambda *_a, **_kw: [])
+        mod,
+        "_build_text_embedding",
+        lambda _, **_kwargs: SimpleNamespace(embed=lambda *_a, **_kw: []),
     )
     with pytest.raises(RuntimeError, match="embedding count mismatch"):
         mod.embed_texts("model", ["text"])

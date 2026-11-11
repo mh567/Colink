@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+from functools import partial
 from typing import Any
 
 import httpx
@@ -11,6 +13,7 @@ from octop.infra.agents.providers.onnx_service import embed_texts
 from octop.infra.agents.providers.opencode_session import ensure_opencode_session_header
 from octop.infra.agents.providers.probe import provider_headers
 from octop.infra.knowledge.params import get_embedding_limits
+from octop.infra.utils import ssrf_guard
 
 # Remote OpenAI-compatible embedding APIs cap the number of inputs per request.
 _KNOWLEDGE_EMBEDDING_BATCH_LIMIT = 20
@@ -68,6 +71,45 @@ def embed_knowledge_texts(services: Any, texts: list[str]) -> list[list[float]]:
     if backend != "remote":
         return embed_texts(model, texts)
 
+    base, headers, batch_size = _remote_embedding_request(services, texts)
+    with httpx.Client(timeout=60.0) as client:
+        return _embed_remote_batched(client, base, headers, model, texts, batch_size=batch_size)
+
+
+async def embed_intranet_knowledge_query(services: Any, query: str) -> list[list[float]]:
+    """Embed one report query locally or through a pinned intranet endpoint."""
+    settings = services.settings_repo
+    backend = (settings.get("knowledge_embedding_backend") or "onnx").strip().lower()
+    model = (settings.get("knowledge_embedding_model") or "").strip()
+    texts = [query]
+    if backend != "remote":
+        return await asyncio.get_running_loop().run_in_executor(
+            None, partial(embed_texts, model, texts, local_only=True)
+        )
+
+    base, headers, _ = _remote_embedding_request(services, texts)
+    try:
+        host, pin_ip = await ssrf_guard.resolve_intranet_endpoint(base)
+        async with httpx.AsyncClient(
+            transport=ssrf_guard.PinnedIPTransport(host, pin_ip, strict_host=True),
+            follow_redirects=False,
+            trust_env=False,
+            timeout=60.0,
+        ) as client:
+            response = await client.post(
+                f"{base}/embeddings",
+                headers=headers,
+                json={"model": model, "input": texts},
+            )
+    except (ValueError, httpx.InvalidURL, httpx.RequestError):
+        raise KnowledgeEmbeddingError(
+            "intranet knowledge embedding service is unavailable"
+        ) from None
+    return parse_embedding_response(_embedding_payload(response), 1)
+
+
+def _remote_embedding_request(services: Any, texts: list[str]) -> tuple[str, dict[str, str], int]:
+    settings = services.settings_repo
     limits = get_embedding_limits(settings.get)
     max_chars = limits["embedding_max_input_chars"]
     if max_chars and any(len(text) > max_chars for text in texts):
@@ -86,15 +128,7 @@ def embed_knowledge_texts(services: Any, texts: list[str]) -> list[list[float]]:
     )
     if extra:
         headers.update(extra)
-    with httpx.Client(timeout=60.0) as client:
-        return _embed_remote_batched(
-            client,
-            provider.base_url.rstrip("/"),
-            headers,
-            model,
-            texts,
-            batch_size=limits["embedding_batch_size"],
-        )
+    return provider.base_url.rstrip("/"), headers, limits["embedding_batch_size"]
 
 
 def _embed_remote_batched(
@@ -122,12 +156,6 @@ def _embed_remote_batched(
                 headers=headers,
                 json={"model": model, "input": batch},
             )
-            response.raise_for_status()
-            payload = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise KnowledgeEmbeddingError(
-                f"knowledge embedding service returned HTTP {exc.response.status_code}"
-            ) from None
         except httpx.RequestError:
             raise KnowledgeEmbeddingError("knowledge embedding service is unreachable") from None
         except ValueError:
@@ -136,7 +164,21 @@ def _embed_remote_batched(
             ) from None
         out.extend(
             parse_embedding_response(
-                payload, len(batch), expected_dimension=len(out[0]) if out else None
+                _embedding_payload(response),
+                len(batch),
+                expected_dimension=len(out[0]) if out else None,
             )
         )
     return out
+
+
+def _embedding_payload(response: httpx.Response) -> object:
+    try:
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise KnowledgeEmbeddingError(
+            f"knowledge embedding service returned HTTP {exc.response.status_code}"
+        ) from None
+    except ValueError:
+        raise KnowledgeEmbeddingError("knowledge embedding response is not valid JSON") from None

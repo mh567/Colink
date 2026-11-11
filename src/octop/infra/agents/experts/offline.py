@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from octop.infra.agents.experts.local_tasks import (
     REVIEWED_SKILL,
-    Action,
+    LocalActions,
     LocalExpertConfig,
     approved_skill,
     assert_local_resources,
@@ -39,7 +39,7 @@ class OfflinePackage(BaseModel):
     source: str = Field(min_length=1, max_length=2000)
     license: str = Field(min_length=1, max_length=4000)
     system_prompt: str = Field(default="", max_length=12000)
-    actions: list[Action] = Field(min_length=1, max_length=2)
+    actions: LocalActions
     skills: list[OfflineSkill] = Field(default_factory=list, max_length=20)
 
     @field_validator("skills")

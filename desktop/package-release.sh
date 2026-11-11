@@ -92,7 +92,7 @@ if [[ ! -f "$portable_python" || ! -f "$requirements" ]]; then
   exit 1
 fi
 
-verify_args=(--packages "${staging}/packages" --requirements "$requirements")
+verify_args=(--packages "${staging}/packages" --requirements "$requirements" --portable-zip "$portable_zip")
 override_file="${REPO_ROOT}/desktop/portable/overrides-${plat}.txt"
 if [[ -f "$override_file" ]]; then
   verify_args+=(--overrides "$override_file")

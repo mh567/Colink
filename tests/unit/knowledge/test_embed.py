@@ -1,10 +1,52 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
 
+from octop.infra.agents.providers import onnx_service
 from octop.infra.knowledge import embed
+
+
+async def test_intranet_knowledge_query_uses_configured_local_model(monkeypatch) -> None:
+    settings = {"knowledge_embedding_backend": "onnx", "knowledge_embedding_model": "local-model"}
+    services = SimpleNamespace(settings_repo=SimpleNamespace(get=settings.get))
+
+    def local_embedding(model, texts, *, local_only):
+        assert local_only is True
+        assert model == "local-model"
+        assert texts == ["Project status"]
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(embed, "embed_texts", local_embedding)
+    assert await embed.embed_intranet_knowledge_query(services, "Project status") == [[1.0, 0.0]]
+
+
+async def test_intranet_knowledge_query_without_snapshot_does_not_download(monkeypatch) -> None:
+    model = "BAAI/bge-small-zh-v1.5"
+    settings = {"knowledge_embedding_backend": "onnx", "knowledge_embedding_model": model}
+    services = SimpleNamespace(settings_repo=SimpleNamespace(get=settings.get))
+    loads = []
+
+    class TextEmbedding:
+        def __init__(self, **kwargs):
+            loads.append(kwargs)
+
+        def embed(self, texts, *, batch_size):
+            assert texts == ["Project status"] and batch_size == 1
+            return [[1.0, 0.0]]
+
+    monkeypatch.setitem(sys.modules, "fastembed", SimpleNamespace(TextEmbedding=TextEmbedding))
+    monkeypatch.setattr(onnx_service, "_local_model_snapshot", lambda model: None)
+    monkeypatch.setattr(onnx_service, "_embedding_instance", None)
+    with pytest.raises(RuntimeError, match="local embedding model files are unavailable"):
+        await embed.embed_intranet_knowledge_query(services, "Project status")
+    assert loads == []
+
+    assert embed.embed_knowledge_texts(services, ["Project status"]) == [[1.0, 0.0]]
+    assert await embed.embed_intranet_knowledge_query(services, "Project status") == [[1.0, 0.0]]
+    assert len(loads) == 1
 
 
 def test_remote_embedding_routes_to_provider_embeddings_endpoint(monkeypatch) -> None:

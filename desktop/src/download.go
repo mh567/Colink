@@ -3,17 +3,22 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
+
+var errInvalidPortableArchive = errors.New("invalid portable archive")
 
 func launchReady(root string) bool {
 	if _, err := os.Stat(filepath.Join(root, "launch.py")); err != nil {
@@ -34,16 +39,36 @@ func pythonExe(root string) string {
 }
 
 func ensurePortable(locale Locale, status func(string)) error {
+	return preparePortable(locale, status, nil)
+}
+
+func ensurePortableAtStartup(locale Locale, status func(string)) error {
+	return preparePortable(locale, status, func() bool {
+		host, port := resolveListen()
+		return findRunningDashboard(host, port) == ""
+	})
+}
+
+func preparePortable(locale Locale, status func(string), runtimeIdle func() bool) error {
 	root := portableDir()
+	var canSwap func() bool
 	if launchReady(root) {
 		currentVersion := portableVersion(root)
 		bundledVersion, err := bundledPortableVersion()
-		if err != nil || bundledVersion == "" ||
-			(currentVersion != "" && compareVersions(bundledVersion, currentVersion) <= 0) {
+		order := compareVersions(bundledVersion, currentVersion)
+		upgrade := currentVersion == "" || order > 0
+		refresh := runtimeIdle != nil && currentVersion != "" && order == 0 &&
+			hasNewerPortableRevision(root) && runtimeIdle() && portableDataOutsideRuntime(root)
+		if err != nil || bundledVersion == "" || (!upgrade && !refresh) {
 			status(desktopText(locale, copyStatusUsingRuntime))
 			return nil
 		}
-		status(desktopText(locale, copyStatusBackupDatabase, bundledVersion))
+		if refresh {
+			canSwap = func() bool { return runtimeIdle() && portableDataOutsideRuntime(root) }
+		}
+		if upgrade {
+			status(desktopText(locale, copyStatusBackupDatabase, bundledVersion))
+		}
 		if _, err := backupSQLiteBeforeUpgrade(root, currentVersion, bundledVersion); err != nil {
 			return fmt.Errorf("%s: %w", desktopText(locale, copyErrorBackupFailed), err)
 		}
@@ -51,10 +76,13 @@ func ensurePortable(locale Locale, status func(string)) error {
 	} else {
 		status(desktopText(locale, copyStatusFirstExtract))
 	}
-	if err := replacePortable(root); err != nil {
+	if err := replacePortable(root, canSwap); err != nil {
 		if launchReady(root) {
 			status(desktopText(locale, copyStatusUpdateFailedKeep))
 			return nil
+		}
+		if errors.Is(err, errInvalidPortableArchive) {
+			return errors.New(desktopText(locale, copyErrorInvalidRuntime))
 		}
 		return err
 	}
@@ -67,7 +95,88 @@ func ensurePortable(locale Locale, status func(string)) error {
 	return nil
 }
 
-func replacePortable(root string) error {
+const portableRevisionName = "PORTABLE-REVISION.txt"
+
+func installedPortableRevision(root string) int {
+	current, _ := os.ReadFile(filepath.Join(root, portableRevisionName))
+	return portableRevision(current)
+}
+
+func bundledPortableRevision(files []*zip.File) int {
+	return portableRevision(readPortableBundleFile(files, portableRevisionName, 32))
+}
+
+func portableRevision(value []byte) int {
+	revision, err := strconv.Atoi(strings.TrimSpace(string(value)))
+	if err != nil {
+		return 0
+	}
+	return max(0, revision)
+}
+
+func hasNewerPortableRevision(root string) bool {
+	files, closeArchive, err := bundledPortableFiles()
+	if err != nil {
+		return false
+	}
+	defer closeArchive()
+	return bundledPortableRevision(files) > installedPortableRevision(root) &&
+		readPortableBundleFile(files, "pptx/runner.py", 64<<10) != nil
+}
+
+func portableDataOutsideRuntime(root string) bool {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	// The standalone launcher and directory grants can store user data here.
+	for _, entry := range entries {
+		switch entry.Name() {
+		case "runtime", "packages", "ocr", "pptx":
+			if !entry.IsDir() {
+				return false
+			}
+		case "launch.py", "start.sh", "start.bat", "README.txt", "VERSION.txt", portableRevisionName:
+			if !entry.Type().IsRegular() {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	home := octopHome()
+	states, err := newLocalDOCX(home).load()
+	if err != nil {
+		return false
+	}
+	for _, state := range states {
+		for _, grant := range state.Grants {
+			if pathWithinPortable(root, grant.Path) {
+				return false
+			}
+		}
+	}
+	database, sqlite, err := desktopSQLitePath(home)
+	return err == nil && (!sqlite || !pathWithinPortable(root, database))
+}
+
+func pathWithinPortable(root, candidate string) bool {
+	within := func(root, candidate string) bool {
+		relative, err := filepath.Rel(root, candidate)
+		return err == nil && filepath.IsLocal(relative)
+	}
+	if within(root, candidate) {
+		return true
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	return err == nil && within(resolvedRoot, resolvedCandidate)
+}
+
+func replacePortable(root string, canSwap func() bool) error {
 	next := root + ".new"
 	previous := root + ".previous"
 	_ = os.RemoveAll(next)
@@ -78,6 +187,10 @@ func replacePortable(root string) error {
 	if !launchReady(next) {
 		_ = os.RemoveAll(next)
 		return fmt.Errorf("portable extract missing launch.py or python under %s", next)
+	}
+	if canSwap != nil && !canSwap() {
+		_ = os.RemoveAll(next)
+		return fmt.Errorf("portable runtime is in use")
 	}
 
 	_ = os.RemoveAll(previous)
@@ -131,23 +244,68 @@ func installedPackageVersion(root string) string {
 }
 
 func bundledPortableVersion() (string, error) {
+	files, closeArchive, err := bundledPortableFiles()
+	if err != nil {
+		return "", err
+	}
+	defer closeArchive()
+	return versionFromZip(files)
+}
+
+func bundledPortableFiles() ([]*zip.File, func(), error) {
 	if os.Getenv("OCTOP_DESKTOP_PORTABLE_ZIP") == "" && len(embeddedPortable) > 0 {
 		reader, err := zip.NewReader(bytes.NewReader(embeddedPortable), int64(len(embeddedPortable)))
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
-		return versionFromZip(reader.File)
+		return reader.File, func() {}, nil
 	}
 	zipPath, err := bundledPortableZip()
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return "", err
+		return nil, nil, err
+	}
+	return reader.File, func() { _ = reader.Close() }, nil
+}
+
+func readPortableBundleFile(files []*zip.File, relative string, limit int64) []byte {
+	name := "Octop-" + greenPlat() + "/" + relative
+	var member *zip.File
+	for _, file := range files {
+		if !strings.EqualFold(portableArchiveDestination(file.Name), "/"+relative) {
+			continue
+		}
+		if file.Name != name || member != nil || !file.Mode().IsRegular() || file.UncompressedSize64 == 0 ||
+			file.UncompressedSize64 > uint64(limit) {
+			return nil
+		}
+		member = file
+	}
+	if member == nil {
+		return nil
+	}
+	reader, err := member.Open()
+	if err != nil {
+		return nil
 	}
 	defer reader.Close()
-	return versionFromZip(reader.File)
+	content, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil || int64(len(content)) > limit {
+		return nil
+	}
+	return content
+}
+
+func portableArchiveDestination(name string) string {
+	_, relative, _ := strings.Cut(name, "/")
+	parts := strings.Split(path.Clean("/"+strings.ReplaceAll(relative, "\\", "/")), "/")
+	for i, part := range parts {
+		parts[i] = strings.TrimRight(part, " .")
+	}
+	return path.Clean(strings.Join(parts, "/"))
 }
 
 func versionFromZip(files []*zip.File) (string, error) {
@@ -283,66 +441,101 @@ func unzipGreenBytes(data []byte, dest string) error {
 }
 
 func unzipGreenFiles(files []*zip.File, dest string) error {
-	_ = os.RemoveAll(dest)
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	type portableLink struct {
+		name string
+		file *zip.File
+	}
+	var links []portableLink
 	// Zip root is Octop-<plat>/… — strip that prefix.
 	for _, f := range files {
-		name := f.Name
-		parts := strings.SplitN(name, "/", 2)
-		if len(parts) < 2 {
+		_, relative, hasRoot := strings.Cut(f.Name, "/")
+		if !hasRoot || relative == "" {
 			continue
 		}
-		rel := parts[1]
-		if rel == "" {
-			continue
+		target := filepath.FromSlash(relative)
+		if !filepath.IsLocal(target) || filepath.Clean(target) == "." {
+			return fmt.Errorf("%w: invalid path %q", errInvalidPortableArchive, f.Name)
 		}
-		target := filepath.Join(dest, filepath.FromSlash(rel))
-		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) && target != filepath.Clean(dest) {
-			return fmt.Errorf("illegal zip path %s", name)
-		}
+		target = filepath.Clean(target)
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 			continue
 		}
 		if f.Mode()&os.ModeSymlink != 0 {
-			rc, err := f.Open()
-			if err != nil {
-				return err
-			}
-			linkTarget, err := io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(string(linkTarget), target); err != nil {
-				return err
-			}
+			links = append(links, portableLink{name: target, file: f})
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if !f.Mode().IsRegular() {
+			return fmt.Errorf("%w: unsupported entry %q", errInvalidPortableArchive, f.Name)
+		}
+		if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		out, err := root.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, f.Mode().Perm())
 		if err != nil {
 			rc.Close()
 			return err
 		}
 		_, err = io.Copy(out, rc)
-		out.Close()
+		closeErr := out.Close()
 		rc.Close()
 		if err != nil {
 			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+
+	// Materialize directories before any link can redirect a later entry.
+	for _, link := range links {
+		if err := root.MkdirAll(filepath.Dir(link.name), 0o755); err != nil {
+			return err
+		}
+	}
+	for _, link := range links {
+		rc, err := link.file.Open()
+		if err != nil {
+			return err
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return err
+		}
+		target := filepath.FromSlash(string(data))
+		if target == "" || filepath.IsAbs(target) || filepath.VolumeName(target) != "" ||
+			!filepath.IsLocal(filepath.Join(filepath.Dir(link.name), target)) {
+			return fmt.Errorf("%w: invalid link %q", errInvalidPortableArchive, link.file.Name)
+		}
+		if err := root.Symlink(target, link.name); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("%w: duplicate link path %q", errInvalidPortableArchive, link.file.Name)
+			}
+			return err
+		}
+	}
+	for _, link := range links {
+		if _, err := root.Stat(link.name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %v", errInvalidPortableArchive, err)
 		}
 	}
 	return nil

@@ -2,12 +2,15 @@ package fileops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -64,8 +67,67 @@ func TestServerAuthorizerPostsActionOverTLSWithoutProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authorize(context.Background(), creds, "delete"); err != nil {
+	if err := authorize(context.Background(), creds, authorizationRequest{Action: "delete"}); err != nil {
 		t.Fatalf("native authorization failed: %v", err)
+	}
+}
+
+func TestManagedPPTXRechecksSourceAndExpertBeforePublishing(t *testing.T) {
+	for _, revokedField := range []string{"source_format", "agent_id"} {
+		t.Run(revokedField, func(t *testing.T) {
+			creds := sampleServerCredentials()
+			creds.Format = "pptx"
+			root, err := os.OpenRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			var checks atomic.Int32
+			const name = "report.pptx"
+			const contents = "presentation"
+			expected := authorizationRequest{Action: "create", SourceFormat: "docx", AgentID: "report-expert"}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if request["action"] != expected.Action || request["source_format"] != expected.SourceFormat ||
+					request["agent_id"] != expected.AgentID || r.URL.Path != "/api/devices/"+creds.DeviceID+"/pptx/authorize" {
+					t.Errorf("PPTX authorization lost its context: %v", request)
+				}
+				if checks.Add(1) == 2 {
+					entries, err := os.ReadDir(root.Name())
+					if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), ".colink-") {
+						t.Errorf("PPTX was not staged before the final check: %v, %v", entries, err)
+					} else if data, err := root.ReadFile(entries[0].Name()); err != nil || string(data) != contents {
+						t.Errorf("staged PPTX content: %q, %v", data, err)
+					}
+				}
+				if checks.Load() >= 2 && request[revokedField] != "" {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"allowed":true}`)
+			}))
+			defer server.Close()
+			authorize, err := newServerAuthorizer(server.URL, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := testStoreWithAuthorizer(authorize)
+			if err := s.create(context.Background(), root, 1000, name, []byte(contents), creds, expected); !errors.Is(err, errPermission) {
+				t.Errorf("create error = %v, want permission denied after revocation", err)
+			}
+			if got := checks.Load(); got != 2 {
+				t.Errorf("authorization calls = %d, want 2", got)
+			}
+			if entries, err := os.ReadDir(root.Name()); err != nil || len(entries) != 0 {
+				t.Fatalf("revoked create left directory entries: %v, %v", entries, err)
+			}
+		})
 	}
 }
 
@@ -91,18 +153,18 @@ func TestServerAuthorizerRejectsMalformedCredentialsAndActionBeforeNetwork(t *te
 	} {
 		creds := sampleServerCredentials()
 		mutate(&creds)
-		if err := authorize(context.Background(), creds, "delete"); err == nil || strings.Contains(err.Error(), "fixture") {
+		if err := authorize(context.Background(), creds, authorizationRequest{Action: "delete"}); err == nil || strings.Contains(err.Error(), "fixture") {
 			t.Error("invalid credentials were accepted or exposed")
 		}
 	}
 	ocr := sampleServerCredentials()
 	ocr.Format = "ocr"
 	for _, action := range []string{"overwrite", "delete", "execute"} {
-		if err := authorize(context.Background(), ocr, action); err == nil {
+		if err := authorize(context.Background(), ocr, authorizationRequest{Action: action}); err == nil {
 			t.Error("unsupported OCR action was accepted")
 		}
 	}
-	if err := authorize(context.Background(), sampleServerCredentials(), "execute"); err == nil {
+	if err := authorize(context.Background(), sampleServerCredentials(), authorizationRequest{Action: "execute"}); err == nil {
 		t.Error("unsupported action was accepted")
 	}
 }
@@ -133,7 +195,7 @@ func TestServerAuthorizerRejectsUnauthorizedOrInvalidReplies(t *testing.T) {
 			server.Close()
 			t.Fatal(err)
 		}
-		err = authorize(context.Background(), sampleServerCredentials(), "create")
+		err = authorize(context.Background(), sampleServerCredentials(), authorizationRequest{Action: "create"})
 		server.Close()
 		if err == nil || strings.Contains(err.Error(), "fixture-native-session") {
 			t.Errorf("invalid authorization reply was accepted or exposed (status %d, length %d)", reply.status, len(reply.body))
@@ -154,7 +216,7 @@ func TestServerAuthorizerDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authorize(context.Background(), sampleServerCredentials(), "overwrite"); err == nil {
+	if err := authorize(context.Background(), sampleServerCredentials(), authorizationRequest{Action: "overwrite"}); err == nil {
 		t.Error("redirect did not deny authorization")
 	}
 }
@@ -168,7 +230,7 @@ func TestServerAuthorizerVerifiesSystemTLSAndHidesNetworkErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = authorize(context.Background(), sampleServerCredentials(), "read")
+	err = authorize(context.Background(), sampleServerCredentials(), authorizationRequest{Action: "read"})
 	if err == nil || strings.Contains(err.Error(), server.URL) || strings.Contains(err.Error(), "certificate") {
 		t.Error("untrusted TLS was accepted or raw network errors were exposed")
 	}

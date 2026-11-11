@@ -193,6 +193,24 @@ func (s *service) Abort(sender dbus.Sender, token string) *dbus.Error {
 }
 
 func (s *service) Create(sender dbus.Sender, server, name string, proof Credentials, data []byte) *dbus.Error {
+	return s.create(sender, server, name, proof, data, authorizationRequest{Action: "create"})
+}
+
+func (s *service) CreatePPTX(sender dbus.Sender, server, name string, proof Credentials, sourceFormat, agentID string, data []byte) *dbus.Error {
+	if proof.Format != "pptx" {
+		return fileError(errInvalid)
+	}
+	request := authorizationRequest{Action: "create", SourceFormat: sourceFormat, AgentID: agentID}
+	return s.create(sender, server, name, proof, data, request)
+}
+
+func (s *service) create(sender dbus.Sender, server, name string, proof Credentials, data []byte, request authorizationRequest) *dbus.Error {
+	ctx := s.conn.Context()
+	if proof.Format == "pptx" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+	}
 	uid, err := s.verifiedUID(sender, server)
 	if err != nil {
 		return fileError(err)
@@ -202,7 +220,7 @@ func (s *service) Create(sender dbus.Sender, server, name string, proof Credenti
 		return fileError(err)
 	}
 	defer root.Close()
-	return fileError(s.store.create(s.conn.Context(), root, uid, name, data, proof))
+	return fileError(s.store.create(ctx, root, uid, name, data, proof, request))
 }
 
 func (s *service) authorize(ctx context.Context, sender dbus.Sender, operation, path string) (bool, error) {

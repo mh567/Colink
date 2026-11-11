@@ -142,6 +142,7 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
     for name in ("package.sh", "_common.sh"):
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
     shutil.copytree(repo / "desktop" / "portable" / "templates", portable / "templates")
+    shutil.copytree(repo / "desktop" / "pptx", checkout / "desktop" / "pptx")
     ocr = checkout / "desktop" / "ocr"
     ocr.mkdir()
     # The model boundary is stubbed here; real OCR is exercised by test_local_ocr_runner.
@@ -237,7 +238,97 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
+        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"1\n"
+        assert (
+            packed.read("Octop-linux-amd64/pptx/runner.py")
+            == (repo / "desktop/pptx/runner.py").read_bytes()
+        )
         assert not any("/powerpoint/" in name for name in packed.namelist())
         assert packed.read(f"Octop-linux-amd64/packages/{DIST_INFO}/licenses/LICENSE") == (
             b"MIT license must remain\n"
         )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX packaging fixture")
+@pytest.mark.parametrize(
+    ("runner", "alias"),
+    [
+        (None, None),
+        (b"stale runner", None),
+        (b"current runner", None),
+        (b"current runner", "stale-root/pptx/runner.py"),
+        (b"current runner", "Octop-linux-amd64/pptx/./runner.py"),
+        (b"current runner", "Octop-linux-amd64/pptx/runner.py. "),
+    ],
+)
+def test_desktop_release_validates_the_reused_portable_archive(
+    tmp_path: Path, runner: bytes | None, alias: str | None
+) -> None:
+    repo = SCRIPT.parent.parent
+    desktop = tmp_path / "desktop"
+    portable = desktop / "portable"
+    portable.mkdir(parents=True)
+    for name in ("_common.sh", "verify_imports.py"):
+        shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
+    shutil.copyfile(repo / "desktop" / "package-release.sh", desktop / "package-release.sh")
+    (tmp_path / "pyproject.toml").write_text('version = "1.0.3b3"\n', encoding="utf-8")
+    (portable / "requirements-linux-amd64.txt").touch()
+
+    (desktop / "pptx").mkdir()
+    current_runner = b"current runner"
+    (desktop / "pptx/runner.py").write_bytes(current_runner)
+    staging = portable / "release/Octop-linux-amd64"
+    (staging / "pptx").mkdir(parents=True)
+    (staging / "pptx/runner.py").write_bytes(current_runner)
+    runtime = staging / "runtime/bin"
+    runtime.mkdir(parents=True)
+    (runtime / "python3").symlink_to(sys.executable)
+    packages = staging / "packages"
+    packages.mkdir()
+    for name in ("octop", "fastapi", "langchain_core", "langchain_openai", "pptx"):
+        (packages / f"{name}.py").touch()
+    (packages / "cryptography").mkdir()
+    (packages / "cryptography/__init__.py").touch()
+    (packages / "cryptography/fernet.py").touch()
+
+    with zipfile.ZipFile(
+        portable / "release/Octop-portable-linux-amd64-1.0.3b3.zip", "w"
+    ) as archive:
+        archive.writestr("Octop-linux-amd64/VERSION.txt", "octop_version=1.0.3b3\n")
+        if runner is not None:
+            archive.writestr("Octop-linux-amd64/pptx/runner.py", runner)
+        if alias is not None:
+            archive.writestr(alias, b"stale runner")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    artifact = "bin/Octop-desktop-linux-amd64-1.0.3b3.tar.gz"
+    for name, body in (
+        ("make", "exit 0"),
+        ("wails3", f"mkdir -p bin\nprintf '%s' fixture > {artifact}"),
+    ):
+        executable = bin_dir / name
+        executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        executable.chmod(0o755)
+    (desktop / "src").mkdir()
+    result = subprocess.run(
+        ["bash", str(desktop / "package-release.sh"), "linux-amd64", "--reuse-portable"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "GREEN_HOST_PLAT": "linux-amd64",
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    if runner == current_runner and alias is None:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (desktop / "src" / artifact).is_file()
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "Rebuild the portable package without --reuse-portable." in result.stderr
+        assert not (desktop / "src" / artifact).exists()

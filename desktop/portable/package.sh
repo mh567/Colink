@@ -249,6 +249,9 @@ assemble_one() {
     "$install_python" "${REPO_ROOT}/desktop/ocr/prepare.py" "$staging" --python "$install_python"
   fi
 
+  mkdir -p "${staging}/pptx"
+  cp "${REPO_ROOT}/desktop/pptx/runner.py" "${staging}/pptx/runner.py"
+
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"
   cp "${TEMPLATES}/launch.py" "${staging}/launch.py"
@@ -273,6 +276,8 @@ assemble_one() {
     sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/octop_version=\1/p' \
       "${REPO_ROOT}/pyproject.toml" | head -1
   } > "${staging}/VERSION.txt"
+  # The bundled runtime can change while the application version stays the same.
+  printf '1\n' > "${staging}/PORTABLE-REVISION.txt"
 
   rm -f "$zip_path"
   echo "[package] ${plat}: zipping → ${zip_path}"

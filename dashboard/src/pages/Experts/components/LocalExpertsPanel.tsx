@@ -300,7 +300,9 @@ export default function LocalExpertsPanel() {
           <p>{expert.description}</p>
           <Tag>{expert.default_model}</Tag>
           {expert.actions.map((action) => (
-            <Tag key={action}>{action === "local_docx" ? "DOCX" : "XLSX"}</Tag>
+            <Tag key={action}>
+              {action.replace(/^local_/, "").toUpperCase()}
+            </Tag>
           ))}
           <Typography.Text type="secondary">
             {expert.published_expert_id
@@ -380,7 +382,7 @@ export default function LocalExpertsPanel() {
                   {t("localExperts.actions", "本机动作")}:{" "}
                   {preview.actions
                     .map((action) =>
-                      action === "local_docx" ? "DOCX" : "XLSX",
+                      action.replace(/^local_/, "").toUpperCase(),
                     )
                     .join(", ")}
                 </p>

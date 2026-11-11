@@ -8,7 +8,7 @@ from typing import Any
 
 from octop.i18n import tr
 from octop.infra.knowledge.citations import append_citations_marker, citations_from_ranked
-from octop.infra.knowledge.embed import embed_knowledge_texts
+from octop.infra.knowledge.embed import embed_intranet_knowledge_query, embed_knowledge_texts
 from octop.infra.knowledge.gate import assert_knowledge_usable
 from octop.infra.knowledge.index import Hit
 from octop.infra.knowledge.plane import open_knowledge_index
@@ -28,10 +28,18 @@ async def retrieve_context(
     char_budget: int = DEFAULT_CONTEXT_CHAR_BUDGET,
     locale: str = "en",
     visible_bases: Sequence[Any] | None = None,
+    intranet_only: bool = False,
 ) -> str:
     """Return formatted readable context, reporting unavailable or failed retrieval."""
-    if not (query or "").strip() or not knowledge_base_ids or k <= 0 or char_budget <= 0:
+    query_text = (query or "").strip()
+    if not query_text or not knowledge_base_ids or k <= 0 or char_budget <= 0:
         return ""
+    query_vectors = None
+    if intranet_only:
+        assert_knowledge_usable(
+            services.settings_repo.get, getattr(services, "provider_repo", None)
+        )
+        query_vectors = await embed_intranet_knowledge_query(services, query_text)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,
@@ -39,12 +47,13 @@ async def retrieve_context(
             services,
             user_id=user_id,
             is_admin=is_admin,
-            query=query,
+            query=query_text,
             knowledge_base_ids=knowledge_base_ids,
             k=k,
             char_budget=char_budget,
             locale=locale,
             visible_bases=visible_bases,
+            query_vectors=query_vectors,
         ),
     )
 
@@ -54,15 +63,19 @@ def _retrieve_context_sync(
     *,
     user_id: int,
     is_admin: bool,
-    query: str | None,
+    query: str,
     knowledge_base_ids: Sequence[str],
     k: int,
     char_budget: int,
     locale: str,
     visible_bases: Sequence[Any] | None,
+    query_vectors: list[list[float]] | None,
 ) -> str:
-    assert_knowledge_usable(services.settings_repo.get, getattr(services, "provider_repo", None))
-    query_vectors = embed_knowledge_texts(services, [(query or "").strip()])
+    if query_vectors is None:
+        assert_knowledge_usable(
+            services.settings_repo.get, getattr(services, "provider_repo", None)
+        )
+        query_vectors = embed_knowledge_texts(services, [query])
     if not query_vectors:
         return ""
 

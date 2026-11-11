@@ -24,10 +24,18 @@ import (
 const docxTextLimit = 60000
 const docxFileLimit = 20 * 1024 * 1024
 
+var (
+	errDOCXFileLimit = errors.New("DOCX 超过 20 MB")
+	errDOCXBodyLimit = errors.New("DOCX 正文缺失或超过 20 MB")
+	errDOCXTextLimit = errors.New("DOCX 正文超过 60000 字符")
+	errDOCXNoText    = errors.New("DOCX 没有可提取的正文")
+)
+
 // Native sessions and directory handles never enter the dashboard or the model.
 type docxSession struct {
 	Base, APIPath, DeviceID, Token, Secret string
 	Format                                 string
+	SourceFormat                           string
 	AgentID                                string
 	UserID                                 int
 	Generation                             uint64
@@ -294,7 +302,7 @@ func docxFilename(name string) error {
 }
 func readDOCX(reader io.ReaderAt, size int64) (string, error) {
 	if size > docxFileLimit {
-		return "", errors.New("DOCX 超过 20 MB")
+		return "", errDOCXFileLimit
 	}
 	z, err := zip.NewReader(reader, size)
 	if err != nil {
@@ -309,8 +317,11 @@ func readDOCX(reader io.ReaderAt, size int64) (string, error) {
 			document = part
 		}
 	}
-	if document == nil || document.UncompressedSize64 > docxFileLimit {
+	if document == nil {
 		return "", errors.New("DOCX 正文缺失或超过 20 MB")
+	}
+	if document.UncompressedSize64 > docxFileLimit {
+		return "", errDOCXBodyLimit
 	}
 	stream, err := document.Open()
 	if err != nil {
@@ -356,12 +367,12 @@ func readDOCX(reader io.ReaderAt, size int64) (string, error) {
 		}
 		count += utf8.RuneCountInString(piece)
 		if count > docxTextLimit {
-			return "", errors.New("DOCX 正文超过 60000 字符")
+			return "", errDOCXTextLimit
 		}
 		output.WriteString(piece)
 	}
 	if strings.TrimSpace(output.String()) == "" {
-		return "", errors.New("DOCX 没有可提取的正文")
+		return "", errDOCXNoText
 	}
 	return output.String(), nil
 }
@@ -434,7 +445,7 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" && format != "ocr" {
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
 		return errors.New("不支持的文件类型")
 	}
 	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + format + "/" + action
@@ -481,6 +492,9 @@ func authorizeDOCX(s docxSession, action string) error {
 		Allowed bool `json:"allowed"`
 	}
 	payload := map[string]string{"action": action}
+	if s.Format == "pptx" && s.SourceFormat == "docx" && action == "create" {
+		payload["source_format"] = s.SourceFormat
+	}
 	if s.AgentID != "" {
 		payload["agent_id"] = s.AgentID
 	}
@@ -515,6 +529,9 @@ func (w *localDOCX) record(s docxSession, task docxTask) error {
 }
 func (w *localDOCX) run(s docxSession, request docxRequest, current func() error) (task docxTask, err error) {
 	if isDestructiveAction(request.Action) {
+		if request.Format == "pptx" {
+			return task, errors.New("PPTX_CREATE_ONLY")
+		}
 		return w.runDestructive(s, request, current)
 	}
 	if request.Action != "" && request.Action != "run" {
@@ -524,7 +541,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" && format != "ocr" {
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
 		return task, errors.New("不支持的文件类型")
 	}
 	s.Format = format
@@ -538,22 +555,40 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if format == "ocr" {
 		filename, outputFilename = ocrSourceFilename, ocrOutputFilename
 	}
+	if format == "pptx" {
+		filename, outputFilename = pptxSourceFilename, pptxFilename
+		if strings.EqualFold(filepath.Ext(request.Source), ".docx") {
+			s.SourceFormat = "docx"
+		}
+	}
 	task = docxTask{AgentID: request.AgentID, Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
 	if err = filename(request.Source); err != nil {
+		if format == "pptx" {
+			return task, errors.New("PPTX_SOURCE_FILENAME")
+		}
 		return task, err
 	}
 	if err = outputFilename(request.Output); err != nil {
 		return task, err
 	}
 	if format != "ocr" && (strings.TrimSpace(request.Instruction) == "" || utf8.RuneCountInString(request.Instruction) > 8000) {
+		if format == "pptx" {
+			return task, errors.New("PPTX_INSTRUCTION_REQUIRED")
+		}
 		return task, errors.New("请输入不超过 8000 字符的任务说明")
 	}
 	source, err := w.openGrant(s, request.SourceGrant, false)
 	if err != nil {
+		if format == "pptx" {
+			return task, errors.New("PPTX_SOURCE_FOLDER")
+		}
 		return task, err
 	}
 	output, err := w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
+		if format == "pptx" {
+			return task, errPPTXOutputFolder
+		}
 		return task, err
 	}
 	task.Source = filepath.Join(source.Name(), request.Source)
@@ -584,10 +619,21 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	output, err = w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
+		if format == "pptx" {
+			return task, errPPTXOutputFolder
+		}
 		return task, err
 	}
 	if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
 		return task, presentFileopsError(s.Locale, createErr)
+	}
+	if format == "pptx" {
+		return task, writeLocalPPTXOutput(s, output, request.Output, data, func() error {
+			if err := authorizeDOCX(s, "create"); err != nil {
+				return err
+			}
+			return current()
+		})
 	}
 	target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -615,38 +661,45 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 	if err = current(); err != nil {
 		return nil, err
 	}
-	info, err := source.Lstat(request.Source)
-	if err != nil {
-		return nil, err
+	if format == "pptx" && s.SourceFormat == "docx" {
+		sourceSession := s
+		sourceSession.Format, sourceSession.AgentID = "docx", ""
+		if err = authorizeDOCX(sourceSession, "read"); err != nil {
+			return nil, err
+		}
+		if err = current(); err != nil {
+			return nil, err
+		}
 	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("只允许读取普通文件，不允许符号链接")
-	}
-	f, err := source.OpenFile(request.Source, os.O_RDONLY|docxNonblock, 0)
+	f, size, err := openLocalTaskSource(source, request.Source)
 	if err != nil {
+		if format == "pptx" {
+			return nil, errors.New("PPTX_SOURCE_UNAVAILABLE")
+		}
 		return nil, err
 	}
 	defer f.Close()
-	actual, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	_, links, err := fileIdentity(f)
-	if err != nil {
-		return nil, err
-	}
-	if !actual.Mode().IsRegular() || !os.SameFile(info, actual) || links != 1 {
-		return nil, errors.New("文件已改变或存在硬链接，拒绝读取")
-	}
 	read := readDOCX
 	if format == "xlsx" {
 		read = readXLSX
 	}
 	var text string
 	if format == "ocr" {
-		text, err = readLocalOCR(s.Context, f, actual.Size())
+		text, err = readLocalOCR(s.Context, f, size)
+	} else if format == "pptx" && s.SourceFormat != "docx" {
+		text, err = readLocalPPTX(s.Context, f, size)
 	} else {
-		text, err = read(f, actual.Size())
+		text, err = read(f, size)
+		if err != nil && format == "pptx" {
+			switch err {
+			case errDOCXFileLimit, errDOCXBodyLimit, errDOCXTextLimit:
+				err = errors.New("PPTX_SOURCE_LIMIT")
+			case errDOCXNoText:
+				err = errors.New("PPTX_NO_TEXT")
+			default:
+				err = errors.New("PPTX_INVALID_SOURCE")
+			}
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -659,6 +712,9 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 			Text string `json:"text"`
 		}
 		payload := map[string]string{"instruction": request.Instruction, "text": text}
+		if format == "pptx" && s.SourceFormat == "docx" {
+			payload["source_format"] = s.SourceFormat
+		}
 		if request.Action == "overwrite" {
 			payload["action"] = "overwrite"
 		}
@@ -667,6 +723,9 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		}
 		if err = docxCall(s, "generate", payload, &generated); err != nil {
 			return nil, err
+		}
+		if format == "pptx" {
+			return makeLocalPPTX(s.Context, generated.Text)
 		}
 		makeFile := makeDOCX
 		if format == "xlsx" {
@@ -678,4 +737,33 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		}
 	}
 	return data, nil
+}
+
+func openLocalTaskSource(source *os.Root, name string) (*os.File, int64, error) {
+	info, err := source.Lstat(name)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, errors.New("只允许读取普通文件，不允许符号链接")
+	}
+	file, err := source.OpenFile(name, os.O_RDONLY|docxNonblock, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	actual, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, 0, err
+	}
+	_, links, err := fileIdentity(file)
+	if err != nil {
+		file.Close()
+		return nil, 0, err
+	}
+	if !actual.Mode().IsRegular() || !os.SameFile(info, actual) || links != 1 {
+		file.Close()
+		return nil, 0, errors.New("文件已改变或存在硬链接，拒绝读取")
+	}
+	return file, actual.Size(), nil
 }

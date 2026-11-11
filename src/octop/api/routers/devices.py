@@ -19,6 +19,7 @@ from octop.infra.control.devices import (
     DeviceStatus,
     LocalFileAction,
     LocalFileOutputAction,
+    PptxSourceFormat,
 )
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.server import OctopServer
@@ -79,6 +80,27 @@ class OcrAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["read", "create"]
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class PptxSourceBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_format: PptxSourceFormat = Field(
+        default="pptx", description="DOCX sources also require explicit DOCX read permission."
+    )
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class PptxAuthorizeBody(PptxSourceBody):
+    action: Literal["read", "create"]
+
+
+class PptxGenerateBody(PptxSourceBody):
+    action: Literal["create"] = "create"
+    instruction: str = Field(min_length=1, max_length=8000, description="Employee's report task.")
+    text: str = Field(
+        max_length=60000,
+        description="Necessary text extracted on the native client; no original file.",
+    )
 
 
 class DocxGenerateBody(BaseModel):
@@ -169,6 +191,32 @@ async def authorize_xlsx(
 
 
 @router.post(
+    "/{device_id}/pptx/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize a local PPTX read or create operation",
+    description="Requires the employee's approved native session and explicit PPTX and "
+    "file action grants. The native client enforces directory grants.",
+)
+async def authorize_pptx(
+    device_id: str,
+    body: PptxAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    server.device_manager.authorize_docx(
+        user,
+        device_id,
+        x_colink_device_session,
+        body.action,
+        format="pptx",
+        agent_id=body.agent_id,
+        source_format=body.source_format,
+    )
+    return DocxAuthorization()
+
+
+@router.post(
     "/{device_id}/ocr/authorize",
     response_model=DocxAuthorization,
     summary="Authorize local scanned PDF recognition on the current native device",
@@ -244,6 +292,36 @@ async def generate_xlsx(
         format="xlsx",
     )
     return XlsxGeneratedData(text=text)
+
+
+@router.post(
+    "/{device_id}/pptx/generate",
+    response_model=DocxGeneratedText,
+    summary="Generate an editable report outline for an authorized native PPTX task",
+    description="The enterprise model receives extracted text and returns structured slides. "
+    "The original and generated presentation stay on the native client.",
+)
+async def generate_pptx(
+    device_id: str,
+    body: PptxGenerateBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxGeneratedText:
+    assert server.app_runtime is not None
+    text = await server.device_manager.generate_docx_text(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        text=body.text,
+        agent_id=body.agent_id,
+        action=body.action,
+        models=server.app_runtime.agent_registry.host_models,
+        format="pptx",
+        source_format=body.source_format,
+    )
+    return DocxGeneratedText(text=text)
 
 
 def _view(manager: DeviceManager, row: DeviceRow) -> DeviceView:

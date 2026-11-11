@@ -488,3 +488,59 @@ it("requests the native managed directory only when the platform exposes it", as
     ),
   ).toEqual({ action: "grant_managed" });
 });
+
+it("generates a new presentation and shows the saved result", async () => {
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  render(<LocalDocxPanel deviceId="mine" />);
+  const user = userEvent.setup();
+  const grants = [
+    { id: "ro", path: "/资料", mode: "ro" },
+    { id: "rw", path: "/成果", mode: "rw", destructive: true, overwrite: true },
+  ];
+  const status = async (tasks: object[]) => {
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: { device_id: "mine", busy: false, grants, tasks },
+        }),
+      );
+    });
+  };
+  await status([]);
+  await user.selectOptions(
+    screen.getByRole("option", { name: "PPTX" }).parentElement!,
+    "pptx",
+  );
+  expect(screen.queryByRole("option", { name: "覆盖现有文件" })).toBeNull();
+  await user.selectOptions(screen.getByLabelText("资料目录"), "ro");
+  await user.selectOptions(screen.getByLabelText("成果目录"), "rw");
+  await user.type(screen.getByLabelText("源文件名"), "项目进展.pptx");
+  await user.type(screen.getByLabelText("新文件名"), "项目汇报.pptx");
+  await user.type(screen.getByLabelText("任务描述"), "整理项目进展");
+  await user.click(screen.getByRole("button", { name: "生成 PPTX" }));
+  expect(
+    JSON.parse(
+      decodeURIComponent(
+        invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+      ),
+    ),
+  ).toEqual({
+    action: "run",
+    format: "pptx",
+    source_grant: "ro",
+    source: "项目进展.pptx",
+    output_grant: "rw",
+    output: "项目汇报.pptx",
+    instruction: "整理项目进展",
+  });
+  await status([
+    {
+      id: "1",
+      format: "pptx",
+      status: "completed",
+      output: "/成果/项目汇报.pptx",
+    },
+  ]);
+  expect(screen.getByText("/成果/项目汇报.pptx")).toBeInTheDocument();
+});
