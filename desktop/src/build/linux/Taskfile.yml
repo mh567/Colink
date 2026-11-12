@@ -13,12 +13,16 @@ tasks:
     cmds:
       - go build {{.BUILD_FLAGS}} -o {{.BIN_DIR}}/{{.APP_NAME}}
     vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-buildvcs=false -gcflags=all="-l"{{end}}'
+      GTK3_TAGS:
+        sh: if pkg-config --exists gtk4 && pkg-config --exists webkitgtk-6.0; then echo ""; else echo "gtk3 webkit238"; fi
+      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}{{if .GTK3_TAGS}}-tags "production {{.GTK3_TAGS}}"{{else}}-tags production{{end}} -trimpath -buildvcs=false -ldflags="-w -s"{{else}}{{if .GTK3_TAGS}}-tags "{{.GTK3_TAGS}}" {{end}}-buildvcs=false -gcflags=all="-l"{{end}}'
     env:
       GOOS: linux
       CGO_ENABLED: 1
       GOARCH: "{{.ARCH | default ARCH}}"
       PRODUCTION: '{{.PRODUCTION | default "false"}}'
+      PKG_CONFIG_PATH:
+        sh: if [ -n "{{.GTK3_TAGS}}" ]; then echo "$(pwd)/build/linux/pkgconfig"; fi
 
   package:
     summary: Packages the desktop and managed file service for Linux
