@@ -22,10 +22,12 @@ interface BrowserReply {
   request_id: string;
   device_id: string;
   tabs?: BrowserTab[];
+  tab_id?: string;
   text?: string;
   title?: string;
   url?: string;
   image?: string;
+  incomplete?: boolean;
   error?: string;
 }
 
@@ -33,6 +35,8 @@ interface BrowserRequest {
   id: string;
   action: BrowserAction;
   tabId?: string;
+  createsTab: boolean;
+  openUrlAfterLaunch?: string;
   timeout: number;
 }
 
@@ -42,6 +46,7 @@ interface BrowserReady {
   request_id: string;
   device_id: string;
   capability: string;
+  operation_deadline?: boolean;
 }
 
 const STATUS_EVENT = "colink:browser-status";
@@ -76,19 +81,32 @@ function pageAddress(address: string) {
   }
 }
 
+function displayAddress(address = "") {
+  return address.split(/[?#]/, 1)[0];
+}
+
+function displayTitle(title = "") {
+  return title.replace(/\bhttps?:\/\/[^\s<>"]+/gi, displayAddress);
+}
+
 export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const id = useId();
   const request = useRef<BrowserRequest | null>(null);
   const hello = useRef<{ id: string; timeout: number } | null>(null);
-  const capability = useRef("");
+  const bridgeProof = useRef<Pick<
+    BrowserReady,
+    "capability" | "operation_deadline"
+  > | null>(null);
+  const tabNumbers = useRef(new Map<string, number>());
   const [bridge, setBridge] = useState<BridgeState>("connecting");
   const [busy, setBusy] = useState<BrowserAction | null>(null);
   const [opened, setOpened] = useState(false);
   const [address, setAddress] = useState("");
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [selected, setSelected] = useState("");
+  const [focusedTab, setFocusedTab] = useState("");
   const [instruction, setInstruction] = useState("");
   const [result, setResult] = useState<BrowserReply | null>(null);
   const [capture, setCapture] = useState<BrowserReply | null>(null);
@@ -96,7 +114,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
 
   const connect = useCallback(() => {
     if (hello.current) return;
-    capability.current = "";
+    bridgeProof.current = null;
     setBridge("connecting");
     setError("");
     const id = requestId();
@@ -128,7 +146,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
         return;
       window.clearTimeout(pending.timeout);
       hello.current = null;
-      capability.current = detail.capability;
+      bridgeProof.current = detail;
       setBridge("ready");
     };
     window.addEventListener(READY_EVENT, receive);
@@ -137,9 +155,71 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       window.removeEventListener(READY_EVENT, receive);
       if (hello.current) window.clearTimeout(hello.current.timeout);
       hello.current = null;
-      capability.current = "";
+      bridgeProof.current = null;
     };
   }, [connect, deviceId]);
+
+  const send = useCallback(
+    (
+      action: BrowserAction,
+      payload: Record<string, string> = {},
+      openUrlAfterLaunch?: string,
+    ) => {
+      const proof = bridgeProof.current;
+      if (!proof || request.current) return;
+      const id = requestId();
+      const timeout = window.setTimeout(
+        () => {
+          request.current = null;
+          bridgeProof.current = null;
+          setBridge("unavailable");
+          setBusy(null);
+          setFocusedTab("");
+          setError("BROWSER_NO_RESPONSE");
+        },
+        action === "query" ? 180_000 : 120_000,
+      );
+      request.current = {
+        id,
+        action,
+        tabId: payload.tab_id,
+        createsTab:
+          action === "new_tab" || (action === "open" && !!payload.url),
+        openUrlAfterLaunch,
+        timeout,
+      };
+      setError("");
+      setBusy(action);
+      if (action === "list" || action === "select_tab") setFocusedTab("");
+      if (action === "query") setResult(null);
+      if (action === "capture") setCapture(null);
+      try {
+        invokeDesktop(
+          `colink:browser:${encodeURIComponent(
+            JSON.stringify({
+              request_id: id,
+              action,
+              ...payload,
+              capability: proof.capability,
+              ...(proof.operation_deadline === true
+                ? {
+                    deadline_ms:
+                      Date.now() + (action === "query" ? 165_000 : 110_000),
+                  }
+                : {}),
+            }),
+          )}`,
+        );
+      } catch {
+        window.clearTimeout(timeout);
+        request.current = null;
+        bridgeProof.current = null;
+        setBridge("unavailable");
+        setBusy(null);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const receive = (event: Event) => {
@@ -154,49 +234,64 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       window.clearTimeout(pending.timeout);
       request.current = null;
       setBusy(null);
+      const resetBrowser = () => {
+        tabNumbers.current.clear();
+        setOpened(false);
+        setTabs([]);
+        setSelected("");
+        setFocusedTab("");
+        setResult(null);
+        setCapture(null);
+      };
       if (detail.error) {
         setError(detail.error);
         if (
           detail.error === "BROWSER_NOT_OPEN" ||
           detail.error === "BROWSER_NOT_AUTHORIZED"
         ) {
-          setOpened(false);
-          setTabs([]);
-          setSelected("");
-          setResult(null);
-          setCapture(null);
+          resetBrowser();
+        } else if (
+          detail.error === "BROWSER_READ_BLOCKED" ||
+          detail.error === "BROWSER_TAB_NOT_FOUND"
+        ) {
+          setFocusedTab("");
         }
         return;
       }
 
       if (pending.action === "close") {
-        setOpened(false);
-        setTabs([]);
-        setSelected("");
-        setResult(null);
-        setCapture(null);
+        resetBrowser();
         return;
       }
       setOpened(true);
-      if (detail.tabs) {
-        const nextTabs = detail.tabs;
-        const added = nextTabs.find(
-          (next) =>
-            (pending.action === "new_tab" ||
-              (pending.action === "open" && pageAddress(next.url))) &&
-            tabs.every((tab) => tab.id !== next.id),
-        );
+      if (detail.tabs || pending.createsTab) {
+        const nextTabs = (detail.tabs ?? []).map((tab) => {
+          const numbers = tabNumbers.current;
+          if (!numbers.has(tab.id)) numbers.set(tab.id, numbers.size + 1);
+          return {
+            ...tab,
+            title: displayTitle(tab.title),
+            url: displayAddress(tab.url),
+          };
+        });
+        const hasTab = (id?: string) => nextTabs.some((tab) => tab.id === id);
+        const focused =
+          pending.action === "select_tab" && hasTab(pending.tabId)
+            ? pending.tabId
+            : "";
+        setFocusedTab(focused ?? "");
         setTabs(nextTabs);
         setSelected((previous) => {
-          const next =
-            pending.action === "select_tab" ? pending.tabId : previous;
-          return (
-            added?.id ??
-            nextTabs.find((tab) => tab.id === next)?.id ??
-            nextTabs[0]?.id ??
-            ""
-          );
+          if (pending.createsTab) {
+            return hasTab(detail.tab_id) ? detail.tab_id ?? "" : "";
+          }
+          if (focused) return focused;
+          if (hasTab(previous)) return previous;
+          return nextTabs.length === 1 ? nextTabs[0].id : "";
         });
+      }
+      if (pending.openUrlAfterLaunch) {
+        send("new_tab", { url: pending.openUrlAfterLaunch });
       }
       if (pending.action === "query") setResult(detail);
       if (pending.action === "capture") {
@@ -206,7 +301,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     };
     window.addEventListener(STATUS_EVENT, receive);
     return () => window.removeEventListener(STATUS_EVENT, receive);
-  }, [deviceId, tabs]);
+  }, [deviceId, send]);
 
   useEffect(
     () => () => {
@@ -215,55 +310,38 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     [],
   );
 
-  const selectedTab = tabs.find((tab) => tab.id === selected);
-  const canRead = Boolean(selectedTab && pageAddress(selectedTab.url));
+  const tabOptions = tabs.map((tab) => ({
+    ...tab,
+    label:
+      tab.title && tab.url && tab.title !== tab.url
+        ? `${tab.title} (${tab.url})`
+        : tab.title || tab.url || t("localBrowser.untitled", "空白标签页"),
+  }));
+  const labelCounts = new Map<string, number>();
+  for (const { label } of tabOptions) {
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  const selectedTab = tabOptions.find((tab) => tab.id === selected);
+  const readableTab = selectedTab && pageAddress(selectedTab.url);
+  const ambiguous = Boolean(
+    readableTab && (labelCounts.get(selectedTab.label) ?? 0) > 1,
+  );
+  const needsFocus = ambiguous && focusedTab !== selected;
+  const canRead = readableTab && !needsFocus;
   const blocked = bridge !== "ready" || busy !== null;
-  const send = (
-    action: BrowserAction,
-    payload: Record<string, string> = {},
-  ) => {
-    const proof = capability.current;
-    if (!proof || request.current) return;
-    const id = requestId();
-    const timeout = window.setTimeout(
-      () => {
-        request.current = null;
-        capability.current = "";
-        setBridge("unavailable");
-        setBusy(null);
-        setError("BROWSER_TIMEOUT");
-      },
-      action === "query" ? 180_000 : 120_000,
-    );
-    request.current = { id, action, tabId: payload.tab_id, timeout };
-    setError("");
-    setBusy(action);
-    if (action === "query") setResult(null);
-    if (action === "capture") setCapture(null);
-    try {
-      invokeDesktop(
-        `colink:browser:${encodeURIComponent(
-          JSON.stringify({
-            request_id: id,
-            action,
-            ...payload,
-            capability: proof,
-          }),
-        )}`,
-      );
-    } catch {
-      window.clearTimeout(timeout);
-      request.current = null;
-      capability.current = "";
-      setBridge("unavailable");
-      setBusy(null);
-    }
-  };
-
   const open = (action: "open" | "new_tab") => {
     const url = address.trim();
     if (url && !pageAddress(url)) {
       setError("BROWSER_INVALID_URL");
+      return;
+    }
+    if (
+      action === "open" &&
+      url &&
+      bridgeProof.current?.operation_deadline !== true
+    ) {
+      // Older clients check new_tab permission only on a separate request.
+      send("open", {}, url);
       return;
     }
     send(action, url ? { url } : {});
@@ -292,7 +370,23 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       "localBrowser.errors.BROWSER_NOT_AUTHORIZED",
       "请确认当前设备在线，并联系管理员核对本机浏览器权限。",
     ),
+    BROWSER_TIMEOUT: t(
+      "localBrowser.errors.BROWSER_TIMEOUT",
+      "浏览器操作超时，请重试。",
+    ),
+    BROWSER_NO_RESPONSE: t(
+      "localBrowser.errors.BROWSER_NO_RESPONSE",
+      "未收到桌面客户端回执，请重新连接后重试。",
+    ),
+    BROWSER_SERVICE_UNAVAILABLE: t(
+      "localBrowser.errors.BROWSER_SERVICE_UNAVAILABLE",
+      "浏览器服务暂不可用，请稍后重试。",
+    ),
   };
+  const resultTitle = displayTitle(result?.title);
+  const resultUrl = displayAddress(result?.url);
+  const captureSource =
+    displayTitle(capture?.title) || displayAddress(capture?.url);
 
   return (
     <Card>
@@ -383,16 +477,25 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   padding: "7px 11px",
                 }}
               >
-                {!tabs.length && (
-                  <option value="">
-                    {t("localBrowser.noTabs", "没有可用标签页")}
+                {!selected && (
+                  <option value="" disabled>
+                    {tabs.length
+                      ? t("localBrowser.selectTab", "选择标签页")
+                      : t("localBrowser.noTabs", "没有可用标签页")}
                   </option>
                 )}
-                {tabs.map((tab) => (
+                {tabOptions.map((tab) => (
                   <option key={tab.id} value={tab.id}>
-                    {tab.title ||
-                      tab.url ||
-                      t("localBrowser.untitled", "空白标签页")}
+                    {(labelCounts.get(tab.label) ?? 0) > 1
+                      ? t(
+                          "localBrowser.numberedTab",
+                          "{{page}}（标签页 {{number}}）",
+                          {
+                            page: tab.label,
+                            number: tabNumbers.current.get(tab.id),
+                          },
+                        )
+                      : tab.label}
                   </option>
                 ))}
               </select>
@@ -401,7 +504,29 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   {selectedTab.url}
                 </Typography.Text>
               )}
+              {ambiguous && (
+                <Typography.Text type="secondary" role="status">
+                  {needsFocus
+                    ? t(
+                        "localBrowser.focusRequired",
+                        "这些标签页的标题和显示地址相同，请先在浏览器中定位选中的标签页。",
+                      )
+                    : t(
+                        "localBrowser.checkFocusedTab",
+                        "请在专用浏览器中核对当前标签页，再查询或截图。",
+                      )}
+                </Typography.Text>
+              )}
               <Space wrap>
+                {ambiguous && (
+                  <Button
+                    loading={busy === "select_tab"}
+                    disabled={blocked}
+                    onClick={() => send("select_tab", { tab_id: selected })}
+                  >
+                    {t("localBrowser.focusTab", "在浏览器中定位标签页")}
+                  </Button>
+                )}
                 <Button
                   loading={busy === "close_tab"}
                   disabled={!selectedTab || blocked}
@@ -468,22 +593,32 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
               <Typography.Title level={5}>
                 {t("localBrowser.result", "查询结果")}
               </Typography.Title>
+              {result.incomplete === true && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={t(
+                    "localBrowser.incompleteResult",
+                    "此结果仅基于部分页面内容。",
+                  )}
+                />
+              )}
               <Typography.Paragraph
                 style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
               >
                 {result.text}
               </Typography.Paragraph>
-              {(result.title || result.url) && (
+              {(resultTitle || resultUrl) && (
                 <Space direction="vertical" size={2}>
                   <Typography.Text strong>
                     {t("localBrowser.source", "来源")}
                   </Typography.Text>
-                  {result.title && (
-                    <Typography.Text>{result.title}</Typography.Text>
+                  {resultTitle && (
+                    <Typography.Text>{resultTitle}</Typography.Text>
                   )}
-                  {result.url && (
+                  {resultUrl && (
                     <Typography.Text style={{ overflowWrap: "anywhere" }}>
-                      {result.url}
+                      {resultUrl}
                     </Typography.Text>
                   )}
                 </Space>
@@ -501,12 +636,12 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   borderRadius: token.borderRadius,
                 }}
               />
-              {(capture.title || capture.url) && (
+              {captureSource && (
                 <Typography.Text
                   type="secondary"
                   style={{ overflowWrap: "anywhere" }}
                 >
-                  {capture.title || capture.url}
+                  {captureSource}
                 </Typography.Text>
               )}
             </figure>

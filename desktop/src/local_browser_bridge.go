@@ -29,6 +29,7 @@ type browserRequest struct {
 	ID          string `json:"request_id"`
 	Instruction string `json:"instruction,omitempty"`
 	Capability  string `json:"capability,omitempty"`
+	DeadlineMS  int64  `json:"deadline_ms,omitempty"`
 }
 
 func browserOrigin(raw string) string {
@@ -88,6 +89,18 @@ func (a *App) hasBrowserCapability(session docxSession, value string) bool {
 	return hmac.Equal([]byte(a.browserCapability(session)), []byte(value))
 }
 
+func (a *App) withBrowserMessages(options application.Options) application.Options {
+	existing := options.RawMessageHandler
+	options.RawMessageHandler = func(window application.Window, message string, info *application.OriginInfo) {
+		if strings.HasPrefix(message, browserHelloPrefix) || strings.HasPrefix(message, browserMessagePrefix) {
+			a.handleBrowserMessage(window, message, info)
+		} else if existing != nil {
+			existing(window, message, info)
+		}
+	}
+	return options
+}
+
 func (a *App) handleBrowserMessage(window application.Window, message string, info *application.OriginInfo) {
 	hello, isHello := strings.CutPrefix(message, browserHelloPrefix)
 	raw, isOperation := strings.CutPrefix(message, browserMessagePrefix)
@@ -104,8 +117,9 @@ func (a *App) handleBrowserMessage(window application.Window, message string, in
 	}
 	if isHello {
 		if validDestructiveID(hello) {
-			a.emitBrowserEvent(session, origin, "colink:browser-ready", map[string]string{
+			a.emitBrowserEvent(session, origin, "colink:browser-ready", map[string]any{
 				"request_id": hello, "device_id": session.DeviceID, "capability": a.browserCapability(session),
+				"operation_deadline": true,
 			})
 		}
 		return
@@ -138,7 +152,7 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 	decoder := json.NewDecoder(strings.NewReader(decoded))
 	decoder.DisallowUnknownFields()
 	var extra any
-	if decoder.Decode(&request) != nil || decoder.Decode(&extra) != io.EOF || !validDestructiveID(request.ID) {
+	if decoder.Decode(&request) != nil || decoder.Decode(&extra) != io.EOF || !validDestructiveID(request.ID) || request.DeadlineMS < 0 {
 		return request, invalid
 	}
 	if request.URL != "" && !browserHTTPURL(request.URL) {

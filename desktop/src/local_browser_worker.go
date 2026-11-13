@@ -12,22 +12,28 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const browserReplyLimit = 5 << 20
 
 type browserWorker struct {
-	cmd    *exec.Cmd
-	input  io.WriteCloser
-	output *os.File
-	lines  *bufio.Scanner
-	done   chan struct{}
-	once   sync.Once
+	terminateTree func()
+	terminateOnce sync.Once
+	active        atomic.Bool
+	input         io.WriteCloser
+	output        *os.File
+	lines         *bufio.Scanner
+	done          chan struct{}
+	once          sync.Once
 }
 
-func startBrowserWorker(session docxSession, profile string) (browserProcess, error) {
+func startBrowserWorker(ctx context.Context, session docxSession, profile string) (browserProcess, error) {
 	unavailable := errors.New("BROWSER_RUNTIME_UNAVAILABLE")
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if err := ensurePortable(session.Locale, func(string) {}); err != nil {
 		return nil, unavailable
 	}
@@ -49,7 +55,10 @@ func startBrowserWorker(session docxSession, profile string) (browserProcess, er
 			cleanup()
 		}
 	}()
-	cmd := exec.Command(pythonExe(root), "-I", runner, "--profile", profile)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	cmd := exec.Command(pythonExe(root), "-I", runner, "--private-debug-pipe", "--profile", profile)
 	cmd.Dir = root
 	cmd.Env = browserWorkerEnvironment()
 	configureProcGroup(cmd)
@@ -65,26 +74,44 @@ func startBrowserWorker(session docxSession, profile string) (browserProcess, er
 	}
 	defer outputWriter.Close()
 	cmd.Stdout = outputWriter
+	if ctx.Err() != nil {
+		_ = input.Close()
+		_ = output.Close()
+		return nil, ctx.Err()
+	}
 	if err := cmd.Start(); err != nil {
 		_ = input.Close()
 		_ = output.Close()
 		return nil, unavailable
 	}
+	// The worker waits for input before launching Chromium.
+	terminateTree, err := ownBrowserWorker(cmd)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = input.Close()
+		_ = output.Close()
+		_ = cmd.Wait()
+		return nil, unavailable
+	}
 	started = true
 	lines := bufio.NewScanner(output)
 	lines.Buffer(make([]byte, 65536), browserReplyLimit)
-	worker := &browserWorker{cmd: cmd, input: input, output: output, lines: lines, done: make(chan struct{})}
+	worker := &browserWorker{
+		terminateTree: terminateTree, input: input, output: output, lines: lines, done: make(chan struct{}),
+	}
+	cancelOnDisconnect := context.AfterFunc(session.Context, func() {
+		if worker.active.Load() {
+			worker.abort()
+		} else {
+			worker.stop()
+		}
+	})
 	go func() {
 		_ = cmd.Wait()
+		worker.terminateOnce.Do(worker.terminateTree)
+		cancelOnDisconnect()
 		cleanup()
 		close(worker.done)
-	}()
-	go func() {
-		select {
-		case <-session.Context.Done():
-			worker.stop()
-		case <-worker.done:
-		}
 	}()
 	return worker, nil
 }
@@ -104,10 +131,12 @@ func browserWorkerEnvironment() []string {
 }
 
 func (w *browserWorker) perform(ctx context.Context, action browserAction) (browserResult, error) {
+	w.active.Store(true)
+	defer w.active.Store(false)
 	failed := errors.New("BROWSER_TASK_FAILED")
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
-	stop := context.AfterFunc(ctx, w.stop)
+	stop := context.AfterFunc(ctx, w.abort)
 	defer stop()
 	if ctx.Err() != nil || json.NewEncoder(w.input).Encode(action) != nil || !w.lines.Scan() {
 		return browserResult{}, failed
@@ -123,6 +152,12 @@ func (w *browserWorker) perform(ctx context.Context, action browserAction) (brow
 	return result, nil
 }
 
+func (w *browserWorker) abort() {
+	w.terminateOnce.Do(w.terminateTree)
+	_ = w.input.Close()
+	_ = w.output.Close()
+}
+
 func (w *browserWorker) stop() {
 	w.once.Do(func() {
 		_ = w.input.Close()
@@ -131,7 +166,8 @@ func (w *browserWorker) stop() {
 		select {
 		case <-w.done:
 		case <-timer.C:
-			forceStopBrowserWorker(w.cmd)
+			w.abort()
+			<-w.done
 		}
 		_ = w.output.Close()
 	})

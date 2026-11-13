@@ -7442,14 +7442,20 @@
     "newTab": "新开标签页",
     "close": "关闭专用浏览器",
     "tabs": "标签页",
+    "selectTab": "选择标签页",
     "noTabs": "没有可用标签页",
     "untitled": "空白标签页",
+    "numberedTab": "{{page}}（标签页 {{number}}）",
+    "focusRequired": "这些标签页的标题和显示地址相同，请先在浏览器中定位选中的标签页。",
+    "focusTab": "在浏览器中定位标签页",
+    "checkFocusedTab": "请在专用浏览器中核对当前标签页，再查询或截图。",
     "closeTab": "关闭选中标签页",
     "capture": "截取当前页",
     "question": "查询问题",
     "queryHint": "查询会将当前页的可见文字发送给企业模型。",
     "query": "查询当前页",
     "result": "查询结果",
+    "incompleteResult": "此结果仅基于部分页面内容。",
     "source": "来源",
     "screenshot": "当前页截图",
     "errors": {
@@ -7466,7 +7472,9 @@
       "BROWSER_RUNTIME_UNAVAILABLE": "请联系管理员检查桌面客户端的本机浏览器组件。",
       "BROWSER_BUSY": "请等待当前浏览器操作完成后重试。",
       "BROWSER_MODEL_FAILED": "查询失败，请联系管理员检查企业模型配置。",
-      "BROWSER_TIMEOUT": "未收到桌面客户端回执，请重新连接后重试。"
+      "BROWSER_SERVICE_UNAVAILABLE": "浏览器服务暂不可用，请稍后重试。",
+      "BROWSER_TIMEOUT": "浏览器操作超时，请重试。",
+      "BROWSER_NO_RESPONSE": "未收到桌面客户端回执，请重新连接后重试。"
     }
   },
   "localDocx": {

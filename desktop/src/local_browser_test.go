@@ -51,7 +51,7 @@ func TestLocalBrowserAuthorizesBeforeLaunchingAndBeforeReading(t *testing.T) {
 		}
 		return nil
 	}
-	service.start = func(_ docxSession, _ string) (browserProcess, error) {
+	service.start = func(_ context.Context, _ docxSession, _ string) (browserProcess, error) {
 		launches++
 		return worker, nil
 	}
@@ -91,7 +91,7 @@ func TestLocalBrowserProfilesFollowTheEmployeeAndDevice(t *testing.T) {
 	service.authorize = func(_ docxSession, _ string) error { return nil }
 	var profiles []string
 	var workers []*browserTestProcess
-	service.start = func(_ docxSession, profile string) (browserProcess, error) {
+	service.start = func(_ context.Context, _ docxSession, profile string) (browserProcess, error) {
 		profiles = append(profiles, profile)
 		worker := &browserTestProcess{}
 		workers = append(workers, worker)

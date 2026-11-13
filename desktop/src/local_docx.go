@@ -435,7 +435,15 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	return deviceTaskCall(s, format, action, body, result)
 }
 
+type deviceTaskResponseError struct {
+	status  int
+	message string
+}
+
+func (e *deviceTaskResponseError) Error() string { return e.message }
+
 func deviceTaskCall(s docxSession, feature, action string, body any, result any) error {
+	operationContext := s.Context
 	s, err := refreshDOCXSession(s)
 	if err != nil {
 		return err
@@ -459,7 +467,10 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(s.Context, 2*time.Minute)
+	if feature != "browser" {
+		operationContext = s.Context
+	}
+	ctx, cancel := context.WithTimeout(operationContext, 2*time.Minute)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(data))
 	if err != nil {
@@ -481,10 +492,11 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 			} `json:"error"`
 		}
 		json.NewDecoder(io.LimitReader(response.Body, 16384)).Decode(&envelope)
-		if envelope.Error.Message != "" {
-			return errors.New(envelope.Error.Message)
+		message := envelope.Error.Message
+		if message == "" {
+			message = fmt.Sprintf("任务服务拒绝操作（%d）", response.StatusCode)
 		}
-		return fmt.Errorf("任务服务拒绝操作（%d）", response.StatusCode)
+		return &deviceTaskResponseError{status: response.StatusCode, message: message}
 	}
 	if err = json.NewDecoder(io.LimitReader(response.Body, 400000)).Decode(result); err != nil {
 		return errors.New("任务服务返回无效结果")

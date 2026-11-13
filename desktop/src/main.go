@@ -380,10 +380,9 @@ func main() {
 	api.browser = newLocalBrowser(octopHome())
 	rand.Read(api.browserBridgeKey[:])
 
-	app := application.New(application.Options{
-		Name:              "Octop",
-		Description:       "Octop desktop",
-		RawMessageHandler: api.handleBrowserMessage,
+	app := application.New(api.withBrowserMessages(application.Options{
+		Name:        "Octop",
+		Description: "Octop desktop",
 		Services: []application.Service{
 			application.NewService(api),
 		},
@@ -399,7 +398,7 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
-	})
+	}))
 	api.app = app
 	attachOpenURLEventListener(app, api.OpenExternal)
 	attachFileDropEventListener(app, api)

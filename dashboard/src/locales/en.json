@@ -7442,14 +7442,20 @@
     "newTab": "Open new tab",
     "close": "Close dedicated browser",
     "tabs": "Tabs",
+    "selectTab": "Select a tab",
     "noTabs": "No tabs available",
     "untitled": "Blank tab",
+    "numberedTab": "{{page}} (Tab {{number}})",
+    "focusRequired": "These tabs have the same title and displayed address. Locate the selected tab in the browser first.",
+    "focusTab": "Locate tab in browser",
+    "checkFocusedTab": "Check the active tab in the dedicated browser before querying or capturing it.",
     "closeTab": "Close selected tab",
     "capture": "Capture current page",
     "question": "Query question",
     "queryHint": "The query sends the visible text on the current page to your enterprise model.",
     "query": "Query current page",
     "result": "Query result",
+    "incompleteResult": "This result uses only part of the page content.",
     "source": "Source",
     "screenshot": "Screenshot of the current page",
     "errors": {
@@ -7466,7 +7472,9 @@
       "BROWSER_RUNTIME_UNAVAILABLE": "Ask your administrator to check the desktop client’s local browser components.",
       "BROWSER_BUSY": "Wait for the current browser operation to finish and try again.",
       "BROWSER_MODEL_FAILED": "The query failed. Ask your administrator to check the enterprise model configuration.",
-      "BROWSER_TIMEOUT": "The desktop client did not respond. Reconnect and try again."
+      "BROWSER_SERVICE_UNAVAILABLE": "The browser service is temporarily unavailable. Try again shortly.",
+      "BROWSER_TIMEOUT": "The browser operation timed out. Try again.",
+      "BROWSER_NO_RESPONSE": "The desktop client did not respond. Reconnect and try again."
     }
   },
   "localDocx": {

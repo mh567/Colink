@@ -242,7 +242,7 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
-        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"2\n"
+        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"3\n"
         for worker in ("pptx", "browser"):
             assert (
                 packed.read(f"Octop-linux-amd64/{worker}/runner.py")

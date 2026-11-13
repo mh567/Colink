@@ -13,16 +13,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, TextIO
 from urllib.parse import SplitResult, urlsplit
-
-if TYPE_CHECKING:
-    from octop_browser.cdp.client import CDPClient
-
 
 REQUEST_LIMIT = 16 * 1024
 ACTIONS = {
-    "open": {"url"},
+    "open": set(),
     "list": set(),
     "new_tab": {"url"},
     "select_tab": {"tab_id"},
@@ -81,16 +77,16 @@ def request_args(line: bytes) -> tuple[str, str, str]:
 
 
 START_TIMEOUT = 12
+COMMAND_TIMEOUT = 5
+MESSAGE_LIMIT = 16 * 1024 * 1024
 TEXT_LIMIT = 60000
 IMAGE_LIMIT = 3 * 1024 * 1024
 LOOPBACK = "127.0.0.1"
-BROWSER_PATH = re.compile(
-    r"/devtools/browser/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE
-)
 TAB_ID = re.compile(r"[0-9a-zA-Z_-]{1,128}")
 FORBIDDEN_FLAGS = {
     "--headless",
-    "--remote-debugging-pipe",
+    "--remote-debugging-port",
+    "--remote-debugging-address",
     "--remote-allow-origins",
     "--no-sandbox",
     "--no-zygote",
@@ -101,31 +97,76 @@ FORBIDDEN_FLAGS = {
     "--disable-gpu-sandbox",
     "--single-process",
 }
-INSPECT_PAGE = """
+INSPECT_PAGE = r"""
 (() => {
-    const visible = (element) => element.getClientRects().length > 0 &&
-        getComputedStyle(element).visibility === "visible" &&
-        getComputedStyle(element).opacity !== "0";
     let opaqueFrame = false;
-    const hasPassword = (doc) => {
-        for (const input of doc.querySelectorAll("input[type=password i]")) {
-            if (visible(input)) return true;
-        }
-        for (const frame of doc.querySelectorAll("iframe, frame")) {
-            if (!visible(frame)) continue;
-            if (!frame.contentDocument) opaqueFrame = true;
-            else if (hasPassword(frame.contentDocument)) return true;
-        }
-        return false;
+    let sensitive = false;
+    let truncated = false;
+    let text = "";
+    const limit = TEXT_BUDGET;
+    const ready = (doc) => doc.readyState !== "loading" && Boolean(doc.body);
+    const append = (part) => {
+        const remaining = limit - text.length;
+        if (part.length > remaining && part.slice(remaining).trim()) truncated = true;
+        text += part.slice(0, remaining);
     };
-    const sensitive = hasPassword(document);
-    const ready = document.readyState !== "loading" && Boolean(document.body);
+    const lineBreak = () => {
+        if (READ_TEXT && text && !text.endsWith("\n") && !truncated) append("\n");
+    };
+    const scan = (element, view, range) => {
+        const style = view.getComputedStyle(element);
+        if (style.display === "none" || style.opacity === "0" ||
+            style.contentVisibility === "hidden") return;
+
+        const visible = style.visibility === "visible";
+        const tag = element.localName;
+        if (tag === "input" && element.type === "password" && visible &&
+            element.getClientRects().length) {
+            sensitive = true;
+            return;
+        }
+        if (tag === "iframe" || tag === "frame") {
+            if (!visible || !element.getClientRects().length) return;
+            const doc = element.contentDocument;
+            const pendingNavigation = doc?.URL === "about:blank" &&
+                !element.hasAttribute("srcdoc") && element.getAttribute("src") &&
+                element.src !== "about:blank";
+            if (!doc || !ready(doc) || pendingNavigation) {
+                opaqueFrame = true;
+                return;
+            }
+            lineBreak();
+            scan(doc.documentElement, doc.defaultView, doc.createRange());
+            lineBreak();
+            return;
+        }
+        if (tag === "textarea" || tag === "select") return;
+        const separate = tag === "br" ||
+            (style.display !== "contents" && !style.display.startsWith("inline"));
+        if (separate) lineBreak();
+        const assigned = tag === "slot" ? element.assignedNodes() : [];
+        const nodes = element.shadowRoot ? element.shadowRoot.childNodes
+            : assigned.length ? assigned : element.childNodes;
+        for (const node of nodes) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                scan(node, view, range);
+                if (sensitive) return;
+            } else if (READ_TEXT && !truncated && visible && node.nodeType === Node.TEXT_NODE) {
+                range.selectNodeContents(node);
+                if (range.getClientRects().length) {
+                    append(style.whiteSpaceCollapse === "collapse"
+                        ? node.data.replace(/\s+/g, " ") : node.data);
+                }
+            }
+        }
+        if (separate) lineBreak();
+    };
+    if (document.documentElement) scan(document.documentElement, window, document.createRange());
     return {
-        url: location.href, title: document.title, sensitive, opaqueFrame, ready,
+        url: location.href, title: document.title, sensitive, opaqueFrame,
+        ready: ready(document) && document.readyState === "complete",
         document: performance.timeOrigin,
-        text: READ_TEXT && ready && !sensitive && visible(document.body)
-            ? document.body.innerText.slice(0, 120000)
-            : "",
+        text: truncated ? text.replace(/[\uD800-\uDBFF]$/, "") : text, truncated,
     };
 })()
 """
@@ -158,38 +199,162 @@ def browser_executable() -> Path | None:
     return next((path for path in candidates if path.is_absolute() and path.is_file()), None)
 
 
-def active_port_file(path: Path) -> bytes:
-    if path.is_symlink() or path.is_junction():
-        raise BrowserError("BROWSER_START_FAILED")
-    try:
-        if not path.is_file():
-            return b""
-        with path.open("rb") as stream:
-            return stream.read(256)
-    except OSError:
-        return b""
+# Map the inherited descriptors in a single-threaded process before replacing it
+# with Chromium. Popen's preexec_fn is unsafe with the worker's asyncio threads.
+POSIX_PIPE_EXEC = """
+import fcntl
+import os
+import signal
+import sys
+
+inherited = [int(arg) for arg in sys.argv[1:3]]
+copies = [fcntl.fcntl(fd, fcntl.F_DUPFD, 5) for fd in inherited]
+for fd in inherited:
+    os.close(fd)
+for source, destination in zip(copies, (3, 4)):
+    os.dup2(source, destination)
+    os.close(source)
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+os.execv(sys.argv[3], sys.argv[3:])
+"""
 
 
-def debug_endpoint(data: bytes) -> tuple[int, str] | None:
-    try:
-        port, path = data.decode("ascii").splitlines()
-        if port.isdecimal() and 0 < int(port) < 65536 and BROWSER_PATH.fullmatch(path):
-            return int(port), path
-    except ValueError:
-        pass
-    return None
+class PipeClient:
+    def __init__(self, reader: BinaryIO, writer: BinaryIO):
+        self.reader = reader
+        self.writer = writer
+        self.buffer = bytearray()
+        self.next_id = 0
+        self.usable = True
+
+    def exchange(self, command: dict[str, Any]) -> dict[str, Any]:
+        payload = memoryview(json.dumps(command).encode("utf-8") + b"\0")
+        while payload:
+            count = self.writer.write(payload)
+            if not count:
+                raise OSError("DevTools pipe closed")
+            payload = payload[count:]
+        offset = 0
+        while True:
+            end = self.buffer.find(b"\0", offset)
+            if end == -1:
+                offset = len(self.buffer)
+                chunk = self.reader.read(65536)
+                if not chunk or offset + len(chunk) > MESSAGE_LIMIT:
+                    raise OSError("DevTools pipe message unavailable")
+                self.buffer.extend(chunk)
+                continue
+            message = json.loads(self.buffer[:end])
+            del self.buffer[: end + 1]
+            offset = 0
+            if not isinstance(message, dict):
+                raise ValueError("Invalid DevTools pipe message")
+            if message.get("id") == command["id"] and message.get("sessionId") == command.get(
+                "sessionId"
+            ):
+                return message
+
+    async def send(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        session_id: str = "",
+        timeout: float = COMMAND_TIMEOUT,
+    ) -> dict[str, Any]:
+        from octop_browser.cdp.client import CDPSessionError
+
+        if not self.usable:
+            raise CDPSessionError(method)
+        self.next_id += 1
+        command = {"id": self.next_id, "method": method, "params": params or {}}
+        if session_id:
+            command["sessionId"] = session_id
+        try:
+            async with asyncio.timeout(timeout):
+                response = await asyncio.to_thread(self.exchange, command)
+        except (OSError, ValueError, TimeoutError):
+            self.usable = False
+            raise CDPSessionError(method) from None
+        except asyncio.CancelledError:
+            self.usable = False
+            raise
+        if "error" in response:
+            raise CDPSessionError(method)
+        return response["result"]
+
+
+class PageSession:
+    def __init__(self, client: PipeClient, session_id: str):
+        self.client = client
+        self.session_id = session_id
+
+    async def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self.client.send(method, params, session_id=self.session_id)
+
+
+def launch_browser(args: list[str]) -> tuple[subprocess.Popen[bytes], PipeClient, list[str]]:
+    with contextlib.ExitStack() as pipes:
+        child_read_fd, write_fd = os.pipe()
+        pipes.callback(os.close, child_read_fd)
+        writer = pipes.enter_context(os.fdopen(write_fd, "wb", buffering=0))
+        read_fd, child_write_fd = os.pipe()
+        pipes.callback(os.close, child_write_fd)
+        reader = pipes.enter_context(os.fdopen(read_fd, "rb", buffering=0))
+
+        extra_flags = []
+        child_fds = (child_read_fd, child_write_fd)
+        options: dict[str, Any] = {"close_fds": True}
+        if sys.platform == "win32":
+            import msvcrt
+
+            handles = [msvcrt.get_osfhandle(fd) for fd in child_fds]
+            startup = subprocess.STARTUPINFO()
+            startup.lpAttributeList = {"handle_list": handles}
+            options["startupinfo"] = startup
+            extra_flags = [f"--remote-debugging-io-pipes={handles[0]},{handles[1]}"]
+            command = [*args[:-1], *extra_flags, args[-1]]
+            for handle in handles:
+                os.set_handle_inheritable(handle, True)
+        else:
+            options["pass_fds"] = child_fds
+            command = [
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                POSIX_PIPE_EXEC,
+                *map(str, child_fds),
+                *args,
+            ]
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **options,
+        )
+        # Keep only the worker ends open so browser exit produces EOF.
+        pipes.pop_all()
+        os.close(child_read_fd)
+        os.close(child_write_fd)
+        return process, PipeClient(reader, writer), extra_flags
 
 
 class LocalBrowser:
     def __init__(self, profile: Path):
         self.profile = profile
         self.process: subprocess.Popen[bytes] | None = None
-        self.client: CDPClient | None = None
-        self.port = 0
+        self.client: PipeClient | None = None
         self.listed_urls: dict[str, str] = {}
 
     async def start(self) -> None:
-        if self.process is not None and self.process.poll() is None:
+        if (
+            self.client is not None
+            and self.client.usable
+            and self.process is not None
+            and self.process.poll() is None
+        ):
             return
         await self.close()
         executable = browser_executable()
@@ -197,21 +362,16 @@ class LocalBrowser:
             raise BrowserError("BROWSER_NOT_INSTALLED")
         client = None
         try:
-            from octop_browser.cdp.client import CDPClient
-
             if self.profile != self.profile.resolve():
                 raise BrowserError("BROWSER_START_FAILED")
             self.profile.mkdir(mode=0o700, parents=True, exist_ok=True)
             if self.profile != self.profile.resolve(strict=True):
                 raise BrowserError("BROWSER_START_FAILED")
-            active_port = self.profile / "DevToolsActivePort"
-            previous = active_port_file(active_port)
-            self.process = subprocess.Popen(
+            self.process, client, extra_flags = launch_browser(
                 [
                     str(executable),
                     f"--user-data-dir={self.profile}",
-                    "--remote-debugging-port=0",
-                    f"--remote-debugging-address={LOOPBACK}",
+                    "--remote-debugging-pipe",
                     "--enable-automation",
                     "--no-first-run",
                     "--no-default-browser-check",
@@ -219,35 +379,32 @@ class LocalBrowser:
                     "--disable-sync",
                     "about:blank",
                 ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
             )
             async with asyncio.timeout(START_TIMEOUT):
-                while self.process.poll() is None:
-                    current = active_port_file(active_port)
-                    endpoint = debug_endpoint(current) if current != previous else None
-                    if endpoint:
-                        break
-                    await asyncio.sleep(0.05)
-                else:
-                    raise BrowserError("BROWSER_START_FAILED")
-                self.port, path = endpoint
-                client = CDPClient(timeout=5)
-                await client.connect(self.address(path))
-                result = await client.send("Browser.getBrowserCommandLine")
+                result = await client.send("Browser.getBrowserCommandLine", timeout=START_TIMEOUT)
                 arguments = result.get("arguments", [])
-                expected_flags = {
-                    "--user-data-dir": str(self.profile),
-                    "--remote-debugging-port": "0",
-                    "--remote-debugging-address": LOOPBACK,
-                }
+                expected_flags = [
+                    f"--user-data-dir={self.profile}",
+                    "--remote-debugging-pipe",
+                    *extra_flags,
+                ]
                 if (
                     "--enable-automation" not in arguments
                     or any(
-                        [arg for arg in arguments if arg.partition("=")[0] == name]
-                        != [f"{name}={value}"]
-                        for name, value in expected_flags.items()
+                        [
+                            arg
+                            for arg in arguments
+                            if arg.partition("=")[0] == flag.partition("=")[0]
+                        ]
+                        != [flag]
+                        for flag in expected_flags
+                    )
+                    or (
+                        not extra_flags
+                        and any(
+                            arg.partition("=")[0] == "--remote-debugging-io-pipes"
+                            for arg in arguments
+                        )
                     )
                     or self.profile != self.profile.resolve(strict=True)
                     or any(argument.partition("=")[0] in FORBIDDEN_FLAGS for argument in arguments)
@@ -258,16 +415,18 @@ class LocalBrowser:
                 await client.send("Browser.setDownloadBehavior", {"behavior": "deny"})
         except Exception:
             if client is not None and self.client is None:
-                with contextlib.suppress(Exception):
-                    await client.close()
+                client.usable = False
+                self.client = client
             await self.close()
             raise BrowserError("BROWSER_START_FAILED") from None
 
-    def address(self, path: str) -> str:
-        return f"ws://{LOOPBACK}:{self.port}{path}"
-
-    def connection(self) -> CDPClient:
-        if self.client is None or self.process is None or self.process.poll() is not None:
+    def connection(self) -> PipeClient:
+        if (
+            self.client is None
+            or not self.client.usable
+            or self.process is None
+            or self.process.poll() is not None
+        ):
             raise BrowserError("BROWSER_NOT_OPEN")
         return self.client
 
@@ -277,10 +436,7 @@ class LocalBrowser:
         for target in result.get("targetInfos", []):
             if target["type"] != "page" or not TAB_ID.fullmatch(target["targetId"]):
                 continue
-            try:
-                url = target["url"] if display_url(self.target_url(target["url"])) else ""
-            except BrowserError:
-                url = ""
+            url = target["url"] if display_url(target["url"]) else ""
             tabs.append(
                 {
                     "id": target["targetId"],
@@ -301,18 +457,9 @@ class LocalBrowser:
                 return tab
         raise BrowserError("BROWSER_TAB_NOT_FOUND")
 
-    def target_url(self, url: str) -> str:
-        if not url:
-            return "about:blank"
-        parsed = page_url(url)
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        if port == self.port:
-            raise BrowserError("BROWSER_INVALID_URL")
-        return url
-
     async def inspect(self, tab_id: str, expected: str, *, capture: bool) -> dict[str, Any]:
         from octop_browser.actions.capture import screenshot
-        from octop_browser.cdp.client import CDPClient, CDPSessionError
+        from octop_browser.cdp.client import CDPSessionError
         from octop_browser.dom.refs import RefCache
 
         expected = display_url(expected)
@@ -324,9 +471,13 @@ class LocalBrowser:
         ):
             raise BrowserError("BROWSER_READ_BLOCKED")
 
-        page = CDPClient(timeout=5)
+        client = self.connection()
+        session_id = ""
         try:
-            await page.connect(self.address(f"/devtools/page/{tab_id}"))
+            session_id = (
+                await client.send("Target.attachToTarget", {"targetId": tab_id, "flatten": True})
+            )["sessionId"]
+            page = PageSession(client, session_id)
             context, before = await self.wait_for_page(page, source, capture=capture)
             reply = {"title": before["title"][:512], "url": expected}
             if capture:
@@ -343,7 +494,11 @@ class LocalBrowser:
                     raise BrowserError("BROWSER_TASK_FAILED")
                 reply["image"] = base64.b64encode(image).decode("ascii")
             else:
-                reply["text"] = before["text"].strip()[:TEXT_LIMIT]
+                text = before["text"].strip()
+                reply["text"] = text[:TEXT_LIMIT]
+                reply["incomplete"] = (
+                    before["opaqueFrame"] or before["truncated"] or len(text) > TEXT_LIMIT
+                )
                 if not reply["text"]:
                     raise BrowserError("BROWSER_READ_BLOCKED")
             after = await self.inspect_page(page, context, source, read_text=False, capture=capture)
@@ -353,14 +508,18 @@ class LocalBrowser:
                 or (await self.selected_tab(tab_id))["url"] != source
             ):
                 raise BrowserError("BROWSER_READ_BLOCKED")
+            if not capture:
+                reply["incomplete"] |= after["opaqueFrame"]
             return reply
         except (CDPSessionError, TimeoutError):
             raise BrowserError("BROWSER_READ_BLOCKED") from None
         finally:
-            await page.close()
+            if session_id:
+                with contextlib.suppress(CDPSessionError):
+                    await client.send("Target.detachFromTarget", {"sessionId": session_id})
 
     async def wait_for_page(
-        self, page: CDPClient, source: str, *, capture: bool
+        self, page: PageSession, source: str, *, capture: bool
     ) -> tuple[int, dict[str, Any]]:
         # The target list can expose the requested address before the renderer commits it.
         async with asyncio.timeout(3):
@@ -382,12 +541,14 @@ class LocalBrowser:
                 await asyncio.sleep(0.05)
 
     async def inspect_page(
-        self, page: CDPClient, context: int, source: str, *, read_text: bool, capture: bool
+        self, page: PageSession, context: int, source: str, *, read_text: bool, capture: bool
     ) -> dict[str, Any]:
         inspection = await page.send(
             "Runtime.evaluate",
             {
-                "expression": INSPECT_PAGE.replace("READ_TEXT", str(read_text).lower()),
+                "expression": INSPECT_PAGE.replace("READ_TEXT", str(read_text).lower()).replace(
+                    "TEXT_BUDGET", str(TEXT_LIMIT)
+                ),
                 "contextId": context,
                 "returnByValue": True,
             },
@@ -400,7 +561,6 @@ class LocalBrowser:
             or result["url"] != source
         ):
             raise BrowserError("BROWSER_READ_BLOCKED")
-        self.target_url(result["url"])
         return result
 
     async def action(self, name: str, url: str, tab_id: str) -> dict[str, Any]:
@@ -409,8 +569,11 @@ class LocalBrowser:
             return {}
         if name == "open":
             await self.start()
-        if name == "new_tab" or (name == "open" and url):
-            await self.connection().send("Target.createTarget", {"url": self.target_url(url)})
+        if name == "new_tab":
+            created = await self.connection().send(
+                "Target.createTarget", {"url": url or "about:blank"}
+            )
+            return {"tabs": await self.tabs(), "tab_id": created["targetId"]}
         if name in {"select_tab", "close_tab"}:
             await self.selected_tab(tab_id)
             method = "Target.activateTarget" if name == "select_tab" else "Target.closeTarget"
@@ -421,14 +584,11 @@ class LocalBrowser:
 
     async def close(self) -> None:
         client, process = self.client, self.process
-        self.client, self.process, self.port = None, None, 0
+        self.client, self.process = None, None
         self.listed_urls.clear()
-        if client is not None:
-            if process is not None and process.poll() is None:
-                with contextlib.suppress(Exception):
-                    await client.send("Browser.close")
+        if client is not None and client.usable and process is not None and process.poll() is None:
             with contextlib.suppress(Exception):
-                await client.close()
+                await client.send("Browser.close", timeout=1)
         if process is not None:
             try:
                 await asyncio.to_thread(process.wait, 2)
@@ -442,6 +602,9 @@ class LocalBrowser:
                         process.kill()
                     with contextlib.suppress(subprocess.TimeoutExpired):
                         await asyncio.to_thread(process.wait, 2)
+        if client is not None:
+            client.writer.close()
+            client.reader.close()
 
 
 async def serve(profile: Path, source: BinaryIO, output: TextIO) -> None:
@@ -475,6 +638,8 @@ def local_connections_only(event: str, args: tuple[object, ...]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", required=True, type=Path)
+    # Go passes this capability marker so older packaged workers fail before launch.
+    parser.add_argument("--private-debug-pipe", action="store_true")
     args = parser.parse_args()
     if not args.profile.is_absolute():
         print(json.dumps({"error": "BROWSER_INVALID_REQUEST"}), flush=True)
