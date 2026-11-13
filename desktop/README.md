@@ -96,7 +96,13 @@ The Linux tar.gz contains the GUI binary and the optional managed file service i
 the shell sets `OCTOP_GREEN_PACKAGES`, so `octop update` upgrades the extracted
 `packages/` directory through Octop's existing `--target` logic.
 
-Linux also needs GTK4 + WebKitGTK 6 to link. macOS 12+.
+Linux links GTK4 + WebKitGTK 6 by default. When only GTK3 + WebKitGTK 4.0 is
+installed (Kylin V10 SP1 2503 ships WebKitGTK 2.38.6), the Linux build task
+selects the `gtk3 webkit238` compatibility build automatically; the printed
+build command shows the tags. That build needs `gtk+-3.0`, `webkit2gtk-4.0` and
+`libsoup-2.4` development packages. WebKitGTK 2.38 cannot deliver
+custom-scheme request bodies, so the bundled shell pages must use the native
+IPC bridge instead of the HTTP runtime transport. macOS 12+.
 
 ## Windows 本机文件确认
 

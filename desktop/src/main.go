@@ -378,6 +378,9 @@ func main() {
 		Services: []application.Service{
 			application.NewService(api),
 		},
+		RawMessageHandler: func(window application.Window, message string, origin *application.OriginInfo) {
+			api.handleRawMessage(window, message, origin)
+		},
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(assets),
 		},
