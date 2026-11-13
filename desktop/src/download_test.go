@@ -140,6 +140,25 @@ func TestSameVersionPPTXWorkerUsesBundledRunnerWithoutReplacingRuntime(t *testin
 	}
 }
 
+func TestBrowserPortableRevisionRequiresBundledWorker(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "portable")
+	archive := filepath.Join(home, "bundle.zip")
+	t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", archive)
+	files := []testGreenZipFile{
+		{"PORTABLE-REVISION.txt", "2\n"},
+		{"pptx/runner.py", "presentation worker"},
+	}
+	writeTestGreenZip(t, archive, "1.0.3b3", files...)
+	if hasNewerPortableRevision(root) {
+		t.Fatal("accepted a revision that omits the browser worker")
+	}
+	writeTestGreenZip(t, archive, "1.0.3b3", append(files, testGreenZipFile{"browser/runner.py", "browser worker"})...)
+	if !hasNewerPortableRevision(root) {
+		t.Fatal("rejected the bundled browser worker")
+	}
+}
+
 func TestEnsurePortableStartupRefreshesSameVersionOnlyWhenIdle(t *testing.T) {
 	for _, scenario := range []string{
 		"cold startup", "running", "nested data", "nested database", "user folder", "nested grant", "task",

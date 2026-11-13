@@ -40,6 +40,7 @@ def test_user_has_permission_admin_bypass() -> None:
                 "local_xlsx",
                 "local_pptx",
                 "local_ocr",
+                "local_browser",
                 "local_files_read",
                 "local_files_create",
                 "local_files_overwrite",
@@ -105,6 +106,7 @@ def test_categories_match_nav_groups() -> None:
         "local_xlsx",
         "local_pptx",
         "local_ocr",
+        "local_browser",
         "local_files_read",
         "local_files_create",
         "local_files_overwrite",
@@ -144,14 +146,18 @@ def test_effective_permissions_admin_gets_catalog() -> None:
             "local_xlsx",
             "local_pptx",
             "local_ocr",
+            "local_browser",
             "local_files_read",
             "local_files_create",
             "local_files_overwrite",
             "local_files_delete",
         }
     )
-    admin.permissions = ["local_docx", "local_files_read"]
+    assert "local_browser" not in BASELINE_PERMISSIONS
+    admin.permissions = ["local_docx", "local_files_read", "local_browser"]
     assert user_has_permission(admin, "local_docx") is True
+    assert user_has_permission(admin, "local_browser") is True
+    assert "local_browser" in effective_permissions(admin)
     assert "local_files_read" in effective_permissions(admin)
     assert "local_files_create" not in effective_permissions(admin)
 

@@ -425,6 +425,25 @@ func refreshDOCXSession(s docxSession) (docxSession, error) {
 }
 
 func docxCall(s docxSession, action string, body any, result any) error {
+	format := s.Format
+	if format == "" {
+		format = "docx"
+	}
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
+		return errors.New("不支持的文件类型")
+	}
+	return deviceTaskCall(s, format, action, body, result)
+}
+
+type deviceTaskResponseError struct {
+	status  int
+	message string
+}
+
+func (e *deviceTaskResponseError) Error() string { return e.message }
+
+func deviceTaskCall(s docxSession, feature, action string, body any, result any) error {
+	operationContext := s.Context
 	s, err := refreshDOCXSession(s)
 	if err != nil {
 		return err
@@ -441,21 +460,17 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	if err != nil || endpoint.IsAbs() || endpoint.Host != "" || endpoint.RawQuery != "" || endpoint.ForceQuery || !strings.HasPrefix(endpoint.Path, "/") || strings.HasPrefix(endpoint.Path, "//") || !strings.HasSuffix(endpoint.Path, "/api/devices/connect") {
 		return errors.New("无效设备任务接口地址")
 	}
-	format := s.Format
-	if format == "" {
-		format = "docx"
-	}
-	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
-		return errors.New("不支持的文件类型")
-	}
-	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + format + "/" + action
+	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + feature + "/" + action
 	u.RawPath = ""
 	u.RawQuery = ""
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(s.Context, 2*time.Minute)
+	if feature != "browser" {
+		operationContext = s.Context
+	}
+	ctx, cancel := context.WithTimeout(operationContext, 2*time.Minute)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(data))
 	if err != nil {
@@ -477,10 +492,11 @@ func docxCall(s docxSession, action string, body any, result any) error {
 			} `json:"error"`
 		}
 		json.NewDecoder(io.LimitReader(response.Body, 16384)).Decode(&envelope)
-		if envelope.Error.Message != "" {
-			return errors.New(envelope.Error.Message)
+		message := envelope.Error.Message
+		if message == "" {
+			message = fmt.Sprintf("任务服务拒绝操作（%d）", response.StatusCode)
 		}
-		return fmt.Errorf("任务服务拒绝操作（%d）", response.StatusCode)
+		return &deviceTaskResponseError{status: response.StatusCode, message: message}
 	}
 	if err = json.NewDecoder(io.LimitReader(response.Body, 400000)).Decode(result); err != nil {
 		return errors.New("任务服务返回无效结果")

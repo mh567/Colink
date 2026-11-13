@@ -82,6 +82,29 @@ class OcrAuthorizeBody(BaseModel):
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class BrowserAuthorizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal[
+        "open", "list", "new_tab", "select_tab", "close_tab", "query", "capture", "close"
+    ]
+
+
+class BrowserAuthorization(BaseModel):
+    allowed: Literal[True] = True
+
+
+class BrowserQueryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    instruction: str = Field(min_length=1, max_length=8000, description="Employee's question.")
+    text: str = Field(
+        min_length=1, max_length=60000, description="Necessary visible text from the current tab."
+    )
+
+
+class BrowserQueryResult(BaseModel):
+    text: str = Field(min_length=1, max_length=60000, description="Answer with page evidence.")
+
+
 class PptxSourceBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_format: PptxSourceFormat = Field(
@@ -235,6 +258,51 @@ async def authorize_ocr(
         user, device_id, x_colink_device_session, body.action, format="ocr"
     )
     return DocxAuthorization()
+
+
+@router.post(
+    "/{device_id}/browser/authorize",
+    response_model=BrowserAuthorization,
+    summary="Authorize a local browser action on the employee's current device",
+    description="Requires the employee's approved live native session and an explicit local browser grant. "
+    "The desktop client performs the authorized action on the employee's device.",
+)
+async def authorize_browser(
+    device_id: str,
+    body: BrowserAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> BrowserAuthorization:
+    server.device_manager.authorize_browser(user, device_id, x_colink_device_session)
+    return BrowserAuthorization()
+
+
+@router.post(
+    "/{device_id}/browser/query",
+    response_model=BrowserQueryResult,
+    summary="Answer a question about visible text from the employee's local browser",
+    description="Requires the employee's approved live native session and explicit local browser grant. "
+    "Sends the question and visible text to the authorized intranet model without tools. "
+    "Checks access again before releasing the answer.",
+)
+async def query_browser(
+    device_id: str,
+    body: BrowserQueryBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> BrowserQueryResult:
+    assert server.app_runtime is not None
+    text = await server.device_manager.query_browser_text(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        text=body.text,
+        models=server.app_runtime.agent_registry.host_models,
+    )
+    return BrowserQueryResult(text=text)
 
 
 @router.post(

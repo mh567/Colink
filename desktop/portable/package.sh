@@ -249,8 +249,11 @@ assemble_one() {
     "$install_python" "${REPO_ROOT}/desktop/ocr/prepare.py" "$staging" --python "$install_python"
   fi
 
-  mkdir -p "${staging}/pptx"
-  cp "${REPO_ROOT}/desktop/pptx/runner.py" "${staging}/pptx/runner.py"
+  local worker
+  for worker in pptx browser; do
+    mkdir -p "${staging}/${worker}"
+    cp "${REPO_ROOT}/desktop/${worker}/runner.py" "${staging}/${worker}/runner.py"
+  done
 
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"
@@ -277,7 +280,7 @@ assemble_one() {
       "${REPO_ROOT}/pyproject.toml" | head -1
   } > "${staging}/VERSION.txt"
   # The bundled runtime can change while the application version stays the same.
-  printf '1\n' > "${staging}/PORTABLE-REVISION.txt"
+  printf '3\n' > "${staging}/PORTABLE-REVISION.txt"
 
   rm -f "$zip_path"
   echo "[package] ${plat}: zipping → ${zip_path}"
