@@ -395,7 +395,10 @@ def test_desktop_release_validates_the_reused_portable_archive(
         for name in ("pptx", "browser"):
             data = runner if name == worker else current_runner
             if data is not None:
-                archive.writestr(f"Octop-linux-amd64/{name}/runner.py", data)
+                entry = zipfile.ZipInfo.from_file(
+                    staging / name / "runner.py", f"Octop-linux-amd64/{name}/runner.py"
+                )
+                archive.writestr(entry, data)
         if alias is not None:
             archive.writestr(alias.replace("/pptx/", f"/{worker}/"), b"stale runner")
 
