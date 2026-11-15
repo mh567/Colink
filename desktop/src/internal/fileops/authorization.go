@@ -25,6 +25,7 @@ type authorizationRequest struct {
 	Action       string `json:"action"`
 	SourceFormat string `json:"source_format,omitempty"`
 	AgentID      string `json:"agent_id,omitempty"`
+	pdfCreate    bool
 }
 
 type ServerAuthorizer func(context.Context, Credentials, authorizationRequest) error
@@ -166,7 +167,7 @@ func newServerAuthorizer(raw string, trusted *http.Client) (ServerAuthorizer, er
 func validAuthorizationRequest(creds Credentials, action string) bool {
 	switch creds.Format {
 	case "docx", "xlsx":
-	case "ocr", "pptx":
+	case "ocr", "pptx", "pdf":
 		if action != "read" && action != "create" {
 			return false
 		}

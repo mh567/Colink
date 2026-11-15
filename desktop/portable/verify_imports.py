@@ -12,11 +12,16 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import importlib
+import json
+import ntpath
+import os
 import posixpath
 import re
 import site
 import stat
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -31,6 +36,13 @@ _SMOKE_IMPORTS = (
     "langchain_core",
     "langchain_openai",
     "pptx",
+    "pypdf",
+    "pypdf._reader",
+    "reportlab",
+    "reportlab.pdfbase.ttfonts",
+    "reportlab.pdfgen.canvas",
+    "PIL",
+    "charset_normalizer",
 )
 
 
@@ -95,26 +107,219 @@ def _archive_destination(filename: str) -> str:
     ).casefold()
 
 
-def _has_current_pptx_runner(archive_path: Path, root_name: str) -> bool:
-    expected = (Path(__file__).resolve().parents[1] / "pptx" / "runner.py").read_bytes()
-    member_name = f"{root_name}/pptx/runner.py"
+def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -> bool:
+    root = packages.parent
+    desktop = Path(__file__).resolve().parents[1]
+    required = {
+        "pptx/runner.py": desktop / "pptx/runner.py",
+        "pdf/runner.py": desktop / "pdf/runner.py",
+        "pdf/NotoSansSC-Regular.ttf": desktop / "pdf/NotoSansSC-Regular.ttf",
+        "pdf/OFL.txt": desktop / "pdf/OFL.txt",
+    }
     try:
-        with zipfile.ZipFile(archive_path) as archive:
-            members = [
-                entry
-                for entry in archive.infolist()
-                if _archive_destination(entry.filename) == "/pptx/runner.py"
-            ]
-            if len(members) != 1 or members[0].filename != member_name:
+        if any(
+            (root / name).read_bytes() != source.read_bytes() for name, source in required.items()
+        ):
+            return False
+        if (root / "PORTABLE-REVISION.txt").read_bytes() != b"2\n":
+            return False
+        if not (root / "runtime").is_dir() or not (root / "launch.py").is_file():
+            return False
+        expected = {}
+        for relative in (
+            "runtime",
+            "packages",
+            "pdf",
+            *(["ocr"] if (root / "ocr").exists() else []),
+        ):
+            directory = root / relative
+            if not directory.is_dir():
                 return False
-            member = members[0]
-            return (
-                stat.S_IFMT(member.external_attr >> 16) in (0, stat.S_IFREG)
-                and not member.external_attr & 0x10
-                and member.file_size == len(expected)
-                and archive.read(member) == expected
-            )
-    except (OSError, RuntimeError, NotImplementedError, zipfile.BadZipFile):
+            for path in [directory, *directory.rglob("*")]:
+                name = path.relative_to(root).as_posix()
+                key = _archive_destination(f"{root_name}/{name}")
+                if key in expected:
+                    return False
+                expected[key] = (name, path)
+        for name in ("launch.py", "pptx/runner.py", "PORTABLE-REVISION.txt"):
+            expected[_archive_destination(f"{root_name}/{name}")] = (name, root / name)
+
+        with zipfile.ZipFile(archive_path) as archive:
+            seen = set()
+            matched = set()
+            entry_kinds = {}
+            links = {}
+            for member in archive.infolist():
+                raw = member.filename.rstrip("/")
+                parts = raw.split("/")
+                if (
+                    not parts
+                    or parts[0] != root_name
+                    or "\\" in raw
+                    or any(part in ("", ".", "..") or part.rstrip(" .") != part for part in parts)
+                ):
+                    return False
+                if len(parts) == 1:
+                    kind = (
+                        stat.S_IFMT(member.external_attr >> 16) if member.create_system == 3 else 0
+                    )
+                    if not member.is_dir() or kind not in (0, stat.S_IFDIR):
+                        return False
+                    continue
+                key = _archive_destination(member.filename)
+                if key in seen:
+                    return False
+                seen.add(key)
+                mode = member.external_attr >> 16
+                kind = stat.S_IFMT(mode) if member.create_system == 3 else 0
+                if member.is_dir():
+                    if kind not in (0, stat.S_IFDIR):
+                        return False
+                    entry_kinds[key] = "dir"
+                elif kind == stat.S_IFLNK:
+                    if member.file_size > 4096:
+                        return False
+                    target = os.fsdecode(archive.read(member))
+                    resolved = posixpath.normpath(
+                        posixpath.join(posixpath.dirname("/".join(parts[1:])), target)
+                    )
+                    if (
+                        not target
+                        or "\\" in target
+                        or ntpath.isabs(target)
+                        or ntpath.splitdrive(target)[0]
+                        or resolved == ".."
+                        or resolved.startswith("../")
+                    ):
+                        return False
+                    entry_kinds[key] = "link"
+                    links[key] = target
+                elif kind in (0, stat.S_IFREG):
+                    entry_kinds[key] = "file"
+                else:
+                    return False
+                in_scope = parts[1] in ("runtime", "packages", "pdf", "ocr") or "/".join(
+                    parts[1:]
+                ) in (
+                    "launch.py",
+                    "pptx/runner.py",
+                    "PORTABLE-REVISION.txt",
+                )
+                if not in_scope:
+                    continue
+                if key not in expected:
+                    return False
+                name, path = expected[key]
+                if raw != f"{root_name}/{name}":
+                    return False
+                matched.add(key)
+                if path.is_symlink():
+                    target = os.readlink(path)
+                    if (
+                        kind != stat.S_IFLNK
+                        or os.path.isabs(target)
+                        or ntpath.isabs(target)
+                        or ntpath.splitdrive(target)[0]
+                        or "\\" in target
+                        or not path.resolve().is_relative_to(root.resolve())
+                        or member.file_size != len(os.fsencode(target))
+                        or archive.read(member) != os.fsencode(target)
+                    ):
+                        return False
+                elif path.is_dir():
+                    if not member.is_dir() or kind not in (0, stat.S_IFDIR):
+                        return False
+                    if (
+                        os.name != "nt"
+                        and member.create_system == 3
+                        and stat.S_IMODE(mode) != stat.S_IMODE(path.stat().st_mode)
+                    ):
+                        return False
+                elif path.is_file():
+                    if (
+                        member.is_dir()
+                        or kind not in (0, stat.S_IFREG)
+                        or member.file_size != path.stat().st_size
+                    ):
+                        return False
+                    if (
+                        os.name != "nt"
+                        and member.create_system == 3
+                        and stat.S_IMODE(mode) != stat.S_IMODE(path.stat().st_mode)
+                    ):
+                        return False
+                    with archive.open(member) as zipped, path.open("rb") as staged:
+                        while chunk := staged.read(1024 * 1024):
+                            if zipped.read(len(chunk)) != chunk:
+                                return False
+                        if zipped.read(1):
+                            return False
+                else:
+                    return False
+            for key in entry_kinds:
+                parent = posixpath.dirname(key)
+                while parent != "/":
+                    if parent in entry_kinds and entry_kinds[parent] != "dir":
+                        return False
+                    parent = posixpath.dirname(parent)
+            for key, target in links.items():
+                stack = key.strip("/").split("/")[:-1]
+                pending = target.split("/")
+                hops = 0
+                while pending:
+                    part = pending.pop(0)
+                    if part in ("", "."):
+                        continue
+                    if part == "..":
+                        if not stack:
+                            return False
+                        stack.pop()
+                        continue
+                    stack.append(part)
+                    link = "/" + "/".join(stack).casefold()
+                    if link in links:
+                        stack.pop()
+                        pending = links[link].split("/") + pending
+                        hops += 1
+                        if hops > 40:
+                            return False
+            covered = set(matched)
+            for key in matched:
+                parent = posixpath.dirname(key)
+                while parent != "/":
+                    covered.add(parent)
+                    parent = posixpath.dirname(parent)
+            for key, (_name, path) in expected.items():
+                if key not in covered and "__pycache__" not in path.relative_to(root).parts:
+                    return False
+            return True
+    except (OSError, ValueError, RuntimeError, NotImplementedError, zipfile.BadZipFile):
+        return False
+
+
+def _verify_pdf_worker(python: Path, root: Path) -> bool:
+    worker = root / "pdf/runner.py"
+    sample = "便携 PDF 中文测试"
+    try:
+        created = subprocess.run(
+            [str(python), "-I", "-B", str(worker), "create"],
+            input=sample.encode("utf-8"),
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        document = base64.b64decode(json.loads(created.stdout)["document"], validate=True)
+        if not document.startswith(b"%PDF-"):
+            return False
+        read = subprocess.run(
+            [str(python), "-I", "-B", str(worker), "read"],
+            input=document,
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        return sample in json.loads(read.stdout)["text"]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return False
 
 
@@ -130,21 +335,33 @@ def main() -> int:
     if not packages.is_dir():
         print(f"packages/ missing: {packages}", file=sys.stderr)
         return 1
-    if args.portable_zip and not _has_current_pptx_runner(
-        args.portable_zip, args.packages.parent.name
+    if args.portable_zip and not _has_current_resources(
+        args.portable_zip, args.packages.parent.name, packages
     ):
         print("Rebuild the portable package without --reuse-portable.", file=sys.stderr)
         return 1
     site.addsitedir(str(packages))
+    sys.path.insert(0, str(packages))
 
     req_pins = _parse_pins(args.requirements)
     override_pins = _parse_override_pins(args.overrides)
     pins = {**req_pins, **override_pins}
 
     errors: list[str] = []
-    for dist in ("langchain-core", "langchain-openai", "cryptography", "python-pptx"):
+    for dist in (
+        "langchain-core",
+        "langchain-openai",
+        "cryptography",
+        "python-pptx",
+        "pypdf",
+        "reportlab",
+        "pillow",
+        "charset-normalizer",
+    ):
         expected = pins.get(dist)
         if expected is None:
+            if dist in ("pypdf", "reportlab", "pillow", "charset-normalizer"):
+                errors.append(f"{dist}: missing frozen requirement")
             continue
         got = _dist_version(dist)
         if got is None:
@@ -154,9 +371,19 @@ def main() -> int:
 
     for mod in _SMOKE_IMPORTS:
         try:
-            importlib.import_module(mod)
+            imported = importlib.import_module(mod)
+            if mod.split(".")[0] in (
+                "pypdf",
+                "reportlab",
+                "PIL",
+                "charset_normalizer",
+            ) and not Path(imported.__file__).resolve().is_relative_to(packages):
+                errors.append(f"import {mod}: outside packages/")
         except Exception as exc:
             errors.append(f"import {mod}: {type(exc).__name__}: {exc}")
+
+    if not _verify_pdf_worker(Path(sys.executable), packages.parent):
+        errors.append("PDF worker roundtrip failed")
 
     # Sanity: launch.py must stay importable as a file (no compile errors).
     try:

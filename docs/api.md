@@ -197,6 +197,17 @@ DOCX 客户端使用 Go 标准库 ZIP/XML，不需运行时下载或额外 Offic
 
 读取支持正文、分组文字和表格文字，源文件上限 20 MB，演示文稿解压数据上限 64 MB，提取文字上限 60,000 字符。若示例文件包含展示季度验收数量的原生图表，任务会提示在演示文稿副本中用表格替换图表后重试。自有汇报技能输出 `{"slides":[{"title":"项目进度","bullets":["已完成 12 项"]}]}`。最多 20 页，每页一条不超过 48 字符的标题及一至五条各不超过 64 字符的要点。成果使用新的版式。源文件中的图像、动画和模板样式不进入成果。
 
+### 本机文字 PDF 任务
+
+设备页选择“文字 PDF”。管理员须显式授予 `local_pdf`、`local_files_read` 和 `local_files_create`。员工选择授权资料目录与读写成果目录，填写直属 PDF 文件名和任务描述，可选择具备 `local_pdf` 动作的私人专家；未选择专家时使用企业活动模型。仅支持新建，已有同名文件时停止。
+
+| 方法 | 路径 | 请求与结果 |
+| --- | --- | --- |
+| `POST` | `/devices/{device_id}/pdf/authorize` | 员工令牌及 `X-Colink-Device-Session`；`{action: "read" 或 "create", agent_id?}`，返回 `{allowed: true}` |
+| `POST` | `/devices/{device_id}/pdf/generate` | 同样的身份和设备会话；`{instruction, text, action?, agent_id?}`，`action` 默认且仅允许 `create`。返回 `{text}` |
+
+原件和成果留在本机，仅提取的文字与任务描述经服务端发送到内网模型。源文件须为未加密 PDF，最多 20 MB、20 页和 60,000 字符；任务描述最多 8,000 字符。只提取可选文字，图片内容不会识别；含有无法提取文字的页面时任务可能失败，可使用扫描 PDF 识别。输出为新生成的基础文字 PDF，不保留原始版式。设备、权限和专家配置在执行时重新核查，任务记录显示状态和成果路径。
+
 ### 本机办公文件的覆盖与删除权限
 
 覆盖和删除 DOCX 或 XLSX 时，管理员须分别显式授予 `local_files_overwrite` 或 `local_files_delete`，同时授予相应格式的任务权限。两项操作权限彼此独立，管理身份和新建权限均不包含它们。服务端授权接口只校验本人设备会话与当前动作权限，目标路径和本次确认留在原生客户端。覆盖生成还需读取权限，生成前后都会核对读取与覆盖权限。删除无需调用模型。
@@ -826,7 +837,7 @@ dashboard mirrors every code under `apiErrors.*` in
 
 ### 本机专家与离线审核发布
 
-本机专家复用现有专家记录，但只在本人客户端的 DOCX/XLSX 受控任务中运行，不启动服务端 Harness，不开放服务端工作区或任意脚本。
+本机专家复用现有专家记录，但只在本人客户端的 DOCX/XLSX/PPTX/PDF 受控任务中运行，不启动服务端 Harness，不开放服务端工作区或任意脚本。
 
 | 接口 | 用途 |
 | --- | --- |
@@ -839,8 +850,8 @@ dashboard mirrors every code under `apiErrors.*` in
 | `GET /api/experts/local/releases` | 查看批准版本；旧版本保留 |
 | `POST /api/experts/local/releases/{release_id}/install` | 按安装者自己的模型、动作和资料权限创建私人副本 |
 
-创建／编辑字段为 `name`、`description`、`system_prompt`、`default_model`、`actions`、`skill_package_ids`、`knowledge_base_ids`。动作仅有 `local_docx`、`local_xlsx`，保存和执行均检查当前员工显式授权；管理员身份不代替本机动作权限或私人内容访问权。
+创建／编辑字段为 `name`、`description`、`system_prompt`、`default_model`、`actions`、`skill_package_ids`、`knowledge_base_ids`。动作包括 `local_docx`、`local_xlsx`、`local_pptx`、`local_pdf`，保存和执行均检查当前员工显式授权；管理员身份不代替本机动作权限或私人内容访问权。
 
-DOCX/XLSX 的 `authorize` 与 `generate` 接口均接受可选 `agent_id`。带该字段时，原生客户端在读前、写前传递专家 ID，服务端在模型调用前后复查本人归属、已选资源和模型权限；配置在调用期间改变则拒绝结果。任务历史记录专家 ID。无该字段时沿用活动模型流程。
+DOCX/XLSX/PPTX/PDF 的 `authorize` 与 `generate` 接口均接受可选 `agent_id`。带该字段时，原生客户端在读前、写前传递专家 ID，服务端在模型调用前后复查本人归属、已选资源和模型权限；配置在调用期间改变则拒绝结果。任务历史记录专家 ID。无该字段时沿用活动模型流程。
 
 旧直接发布／刷新／安装专家模板，以及专家和技能公网市场、URL 导入入口拒绝请求。发布不会改变员工、设备和动作授权。实际 API 字段与响应见 `/api/docs`。

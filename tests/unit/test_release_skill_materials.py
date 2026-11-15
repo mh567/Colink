@@ -143,6 +143,7 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
     shutil.copytree(repo / "desktop" / "portable" / "templates", portable / "templates")
     shutil.copytree(repo / "desktop" / "pptx", checkout / "desktop" / "pptx")
+    shutil.copytree(repo / "desktop" / "pdf", checkout / "desktop" / "pdf")
     ocr = checkout / "desktop" / "ocr"
     ocr.mkdir()
     # The model boundary is stubbed here; real OCR is exercised by test_local_ocr_runner.
@@ -188,6 +189,7 @@ from pathlib import Path
 import shutil
 import sys
 args = sys.argv[1:]
+assert os.environ.get("UV_OFFLINE") == "1"
 if args[0] == "build":
     output = Path(args[args.index("--out-dir") + 1])
     output.mkdir(parents=True, exist_ok=True)
@@ -238,7 +240,7 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
-        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"1\n"
+        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"2\n"
         assert (
             packed.read("Octop-linux-amd64/pptx/runner.py")
             == (repo / "desktop/pptx/runner.py").read_bytes()
@@ -251,6 +253,20 @@ PY
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX packaging fixture")
 @pytest.mark.parametrize(
+    "missing",
+    [
+        None,
+        "pdf/runner.py",
+        "pdf/NotoSansSC-Regular.ttf",
+        "pdf/OFL.txt",
+        "packages/reportlab/__init__.py",
+        "packages/pypdf/__init__.py",
+        "packages/PIL/__init__.py",
+        "packages/charset_normalizer/__init__.py",
+        "PORTABLE-REVISION.txt",
+    ],
+)
+@pytest.mark.parametrize(
     ("runner", "alias"),
     [
         (None, None),
@@ -262,7 +278,7 @@ PY
     ],
 )
 def test_desktop_release_validates_the_reused_portable_archive(
-    tmp_path: Path, runner: bytes | None, alias: str | None
+    tmp_path: Path, runner: bytes | None, alias: str | None, missing: str | None
 ) -> None:
     repo = SCRIPT.parent.parent
     desktop = tmp_path / "desktop"
@@ -272,21 +288,72 @@ def test_desktop_release_validates_the_reused_portable_archive(
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
     shutil.copyfile(repo / "desktop" / "package-release.sh", desktop / "package-release.sh")
     (tmp_path / "pyproject.toml").write_text('version = "1.0.3b3"\n', encoding="utf-8")
-    (portable / "requirements-linux-amd64.txt").touch()
+    (portable / "requirements-linux-amd64.txt").write_text(
+        "reportlab==4.4.9\npypdf==6.0\npillow==13.0\ncharset-normalizer==3.0\n"
+    )
 
+    shutil.copytree(repo / "desktop" / "pdf", desktop / "pdf")
+    # This packaging fixture checks invocation; the real worker has a separate roundtrip test.
+    (desktop / "pdf/runner.py").write_text(
+        "import base64,json,sys\n"
+        'payload = {"document": base64.b64encode(b"%PDF-fixture").decode()} '
+        'if sys.argv[1] == "create" else {"text": "便携 PDF 中文测试"}\n'
+        "print(json.dumps(payload))\n"
+    )
     (desktop / "pptx").mkdir()
     current_runner = b"current runner"
     (desktop / "pptx/runner.py").write_bytes(current_runner)
     staging = portable / "release/Octop-linux-amd64"
     (staging / "pptx").mkdir(parents=True)
     (staging / "pptx/runner.py").write_bytes(current_runner)
+    shutil.copytree(desktop / "pdf", staging / "pdf")
+    (staging / "PORTABLE-REVISION.txt").write_text("2\n")
+    (staging / "launch.py").write_text("# launcher\n")
     runtime = staging / "runtime/bin"
     runtime.mkdir(parents=True)
-    (runtime / "python3").symlink_to(sys.executable)
+    (runtime / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    (runtime / "python3").chmod(0o755)
     packages = staging / "packages"
     packages.mkdir()
     for name in ("octop", "fastapi", "langchain_core", "langchain_openai", "pptx"):
         (packages / f"{name}.py").touch()
+    for name, version in (
+        ("reportlab", "4.4.9"),
+        ("pypdf", "6.0"),
+        ("PIL", "13.0"),
+        ("charset_normalizer", "3.0"),
+    ):
+        (packages / name).mkdir()
+        (packages / name / "__init__.py").touch()
+        dist = "pillow" if name == "PIL" else name
+        metadata = packages / f"{dist}-{version}.dist-info"
+        metadata.mkdir()
+        (metadata / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n")
+        modules = (
+            ["_reader.py"]
+            if name == "pypdf"
+            else (
+                [
+                    "pdfbase/__init__.py",
+                    "pdfbase/ttfonts.py",
+                    "pdfgen/__init__.py",
+                    "pdfgen/canvas.py",
+                ]
+                if name == "reportlab"
+                else []
+            )
+        )
+        for module in modules:
+            file = packages / name / module
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.touch()
+        paths = [
+            f"{name}/__init__.py",
+            *[f"{name}/{module}" for module in modules],
+            f"{metadata.name}/METADATA",
+            f"{metadata.name}/RECORD",
+        ]
+        (metadata / "RECORD").write_text("".join(f"{path},,\n" for path in paths))
     (packages / "cryptography").mkdir()
     (packages / "cryptography/__init__.py").touch()
     (packages / "cryptography/fernet.py").touch()
@@ -295,7 +362,23 @@ def test_desktop_release_validates_the_reused_portable_archive(
         portable / "release/Octop-portable-linux-amd64-1.0.3b3.zip", "w"
     ) as archive:
         archive.writestr("Octop-linux-amd64/VERSION.txt", "octop_version=1.0.3b3\n")
-        if runner is not None:
+        if missing != "PORTABLE-REVISION.txt":
+            archive.write(
+                staging / "PORTABLE-REVISION.txt", "Octop-linux-amd64/PORTABLE-REVISION.txt"
+            )
+        archive.write(staging / "launch.py", "Octop-linux-amd64/launch.py")
+        archive.write(runtime / "python3", "Octop-linux-amd64/runtime/bin/python3")
+        for path in (staging / "pdf").iterdir():
+            if missing != f"pdf/{path.name}":
+                archive.write(path, f"Octop-linux-amd64/pdf/{path.name}")
+        for path in packages.rglob("*"):
+            if path.is_file() and missing != f"packages/{path.relative_to(packages).as_posix()}":
+                archive.write(
+                    path, f"Octop-linux-amd64/packages/{path.relative_to(packages).as_posix()}"
+                )
+        if runner == current_runner:
+            archive.write(staging / "pptx/runner.py", "Octop-linux-amd64/pptx/runner.py")
+        elif runner is not None:
             archive.writestr("Octop-linux-amd64/pptx/runner.py", runner)
         if alias is not None:
             archive.writestr(alias, b"stale runner")
@@ -325,10 +408,232 @@ def test_desktop_release_validates_the_reused_portable_archive(
         check=False,
     )
 
-    if runner == current_runner and alias is None:
+    if runner == current_runner and alias is None and missing is None:
         assert result.returncode == 0, result.stdout + result.stderr
         assert (desktop / "src" / artifact).is_file()
     else:
         assert result.returncode != 0, result.stdout + result.stderr
         assert "Rebuild the portable package without --reuse-portable." in result.stderr
         assert not (desktop / "src" / artifact).exists()
+
+
+@pytest.fixture
+def portable_integrity_fixture(tmp_path):
+    import importlib.util
+
+    repo = SCRIPT.parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "verify_portable_test", repo / "desktop/portable/verify_imports.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = tmp_path / "Octop-test"
+    for relative, data in {
+        "runtime/bin/python3": b"python runtime",
+        "packages/octop/__init__.py": b"core dependency",
+        "launch.py": b"launcher",
+        "PORTABLE-REVISION.txt": b"2\n",
+        "pptx/runner.py": (repo / "desktop/pptx/runner.py").read_bytes(),
+        "pdf/runner.py": (repo / "desktop/pdf/runner.py").read_bytes(),
+        "pdf/OFL.txt": (repo / "desktop/pdf/OFL.txt").read_bytes(),
+        "pdf/NotoSansSC-Regular.ttf": (repo / "desktop/pdf/NotoSansSC-Regular.ttf").read_bytes(),
+    }.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    for dist in ("pypdf", "reportlab", "pillow", "charset_normalizer"):
+        metadata = root / f"packages/{dist}-1.dist-info"
+        metadata.mkdir()
+        (metadata / "RECORD").write_text(f"{dist}-1.dist-info/RECORD,,\n")
+    (root / "runtime/bin/python3").chmod(0o755)
+    return module, root, tmp_path / "bundle.zip"
+
+
+def write_integrity_archive(root, archive, omit=None, extra=None):
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as result:
+        for path in root.rglob("*"):
+            relative = path.relative_to(root).as_posix()
+            if relative == omit:
+                continue
+            name = f"{root.name}/{relative}"
+            if path.is_symlink():
+                info = zipfile.ZipInfo(name)
+                info.create_system = 3
+                info.external_attr = 0o120777 << 16
+                result.writestr(info, os.readlink(path))
+            elif path.is_file():
+                result.write(path, name)
+            elif path.is_dir():
+                result.write(path, name + "/")
+        if extra:
+            result.writestr(*extra)
+
+
+@pytest.mark.parametrize(
+    "omitted", ["runtime/bin/python3", "launch.py", "packages/octop/__init__.py"]
+)
+def test_reused_archive_requires_runtime_launcher_and_core_files(
+    portable_integrity_fixture, omitted
+):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive, omit=omitted)
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+@pytest.mark.parametrize(
+    "name", ["runtime/bin/python3. ", "packages/../launch.py", "packages/octop/../../escape"]
+)
+def test_reused_archive_rejects_aliases_and_traversal(portable_integrity_fixture, name):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive, extra=(f"{root.name}/{name}", b"bad"))
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink fixture")
+def test_reused_archive_checks_safe_links(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "runtime/bin/python").symlink_to("python3")
+    write_integrity_archive(root, archive)
+    assert module._has_current_resources(archive, root.name, root / "packages")
+    (root / "runtime/bin/python").unlink()
+    (root / "runtime/bin/python").symlink_to("../../../outside")
+    write_integrity_archive(root, archive)
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_accepts_only_matching_staging(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive)
+    assert module._has_current_resources(archive, root.name, root / "packages")
+    (root / "packages/octop/__init__.py").write_text("changed")
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_pdf_smoke_executes_real_worker_with_chinese(tmp_path):
+    import importlib.util
+
+    repo = SCRIPT.parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "verify_pdf_smoke", repo / "desktop/portable/verify_imports.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    shutil.copytree(repo / "desktop/pdf", tmp_path / "pdf")
+    python = Path(os.environ.get("PDF_TEST_PYTHON", sys.executable))
+    assert module._verify_pdf_worker(python, tmp_path)
+    (tmp_path / "pdf/NotoSansSC-Regular.ttf").unlink()
+    assert not module._verify_pdf_worker(python, tmp_path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink fixture")
+def test_reused_archive_rejects_windows_absolute_link(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "runtime/bin/python").symlink_to("C:/outside")
+    write_integrity_archive(root, archive)
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_rejects_extra_file_and_wrong_mode(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive, extra=(f"{root.name}/packages/injected.py", b"bad"))
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+    write_integrity_archive(root, archive)
+    (root / "runtime/bin/python3").chmod(0o644)
+    if os.name == "posix":
+        assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_allows_post_build_bytecode_cache(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive)
+    cache = root / "packages/octop/__pycache__"
+    cache.mkdir()
+    (cache / "__init__.cpython-312.pyc").write_bytes(b"local cache")
+    assert module._has_current_resources(archive, root.name, root / "packages")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink fixture")
+def test_reused_archive_requires_directory_symlink(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "runtime/python-links").symlink_to("bin", target_is_directory=True)
+    write_integrity_archive(root, archive, omit="runtime/python-links")
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_accepts_windows_zip_without_posix_modes(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as result:
+        for path in root.rglob("*"):
+            name = f"{root.name}/{path.relative_to(root).as_posix()}"
+            if path.is_dir():
+                name += "/"
+            info = zipfile.ZipInfo(name)
+            info.create_system = 0
+            result.writestr(info, path.read_bytes() if path.is_file() else b"")
+    assert module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_requires_noncache_bytecode(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "packages/octop/plugin.pyc").write_bytes(b"bytecode")
+    write_integrity_archive(root, archive, omit="packages/octop/plugin.pyc")
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_requires_empty_directory(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "packages/octop/empty_required").mkdir()
+    write_integrity_archive(root, archive, omit="packages/octop/empty_required")
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+@pytest.mark.parametrize("missing", ["ocr/runner.py", "ocr/models/model.onnx"])
+def test_reused_archive_requires_shipped_ocr(portable_integrity_fixture, missing):
+    module, root, archive = portable_integrity_fixture
+    (root / "ocr/models").mkdir(parents=True)
+    (root / "ocr/runner.py").write_bytes(b"worker")
+    (root / "ocr/models/model.onnx").write_bytes(b"model")
+    write_integrity_archive(root, archive, omit=missing)
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_rejects_unsafe_outside_scope_link(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    info = zipfile.ZipInfo(f"{root.name}/other/link")
+    info.create_system = 3
+    info.external_attr = 0o120777 << 16
+    write_integrity_archive(root, archive, extra=(info, "/tmp/outside"))
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_rejects_unsupported_outside_scope_type(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    info = zipfile.ZipInfo(f"{root.name}/other/pipe")
+    info.create_system = 3
+    info.external_attr = 0o010644 << 16
+    write_integrity_archive(root, archive, extra=(info, b""))
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_accepts_implicit_parent_directory(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive, omit="packages/octop")
+    assert module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_accepts_safe_outside_scope_link(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    info = zipfile.ZipInfo(f"{root.name}/other/link")
+    info.create_system = 3
+    info.external_attr = 0o120777 << 16
+    write_integrity_archive(root, archive, extra=(info, "missing"))
+    assert module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_reused_archive_rejects_outside_scope_link_cycle(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    info = zipfile.ZipInfo(f"{root.name}/other/link")
+    info.create_system = 3
+    info.external_attr = 0o120777 << 16
+    write_integrity_archive(root, archive, extra=(info, "link"))
+    assert not module._has_current_resources(archive, root.name, root / "packages")

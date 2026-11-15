@@ -132,6 +132,24 @@ func portableDataOutsideRuntime(root string) bool {
 	// The standalone launcher and directory grants can store user data here.
 	for _, entry := range entries {
 		switch entry.Name() {
+		case "pdf":
+			if !entry.IsDir() {
+				return false
+			}
+			resources, err := os.ReadDir(filepath.Join(root, "pdf"))
+			if err != nil {
+				return false
+			}
+			for _, resource := range resources {
+				switch resource.Name() {
+				case "runner.py", "NotoSansSC-Regular.ttf", "OFL.txt":
+					if !resource.Type().IsRegular() {
+						return false
+					}
+				default:
+					return false
+				}
+			}
 		case "runtime", "packages", "ocr", "pptx":
 			if !entry.IsDir() {
 				return false

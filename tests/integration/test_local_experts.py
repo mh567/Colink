@@ -45,11 +45,13 @@ async def test_local_expert_can_use_all_office_actions_including_offline_roundtr
 
     client, _server, admin = env
     await seed_openai_provider(client, admin)
-    actions = ["local_docx", "local_xlsx", "local_pptx"]
+    actions = ["local_docx", "local_xlsx", "local_pptx", "local_pdf"]
     employee = await create_user(
         client, admin, username="office_employee", permissions=[*actions, "experts"]
     )
     root = "/api/experts/local"
+    resources = await client.get(f"{root}/resources", headers=employee)
+    assert {item["id"] for item in resources.json()["actions"]} == set(actions)
     config = {"name": "Office reports", "default_model": "openai/gpt-4o", "actions": actions}
     created = await client.post(root, headers=employee, json=config)
     assert created.status_code == 201, created.text

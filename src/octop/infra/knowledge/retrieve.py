@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from octop.i18n import tr
@@ -29,6 +29,7 @@ async def retrieve_context(
     locale: str = "en",
     visible_bases: Sequence[Any] | None = None,
     intranet_only: bool = False,
+    authorize: Callable[[], None] | None = None,
 ) -> str:
     """Return formatted readable context, reporting unavailable or failed retrieval."""
     query_text = (query or "").strip()
@@ -39,7 +40,9 @@ async def retrieve_context(
         assert_knowledge_usable(
             services.settings_repo.get, getattr(services, "provider_repo", None)
         )
-        query_vectors = await embed_intranet_knowledge_query(services, query_text)
+        query_vectors = await embed_intranet_knowledge_query(
+            services, query_text, authorize=authorize
+        )
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,

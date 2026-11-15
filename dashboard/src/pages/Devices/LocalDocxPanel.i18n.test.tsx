@@ -110,3 +110,73 @@ it.each(["zh", "en"])(
     expect(screen.queryByText("OCR_TIMEOUT")).toBeNull();
   },
 );
+
+it.each(["zh", "en"])(
+  "translates all native PDF errors in %s",
+  async (language) => {
+    const i18n = createInstance();
+    await i18n.init({
+      lng: language,
+      resources: { zh: { translation: zh }, en: { translation: en } },
+      interpolation: { escapeValue: false },
+    });
+    (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+    render(
+      <I18nextProvider i18n={i18n}>
+        <LocalDocxPanel deviceId="mine" />
+      </I18nextProvider>,
+    );
+    const codes = [
+      "PDF_CREATE_ONLY",
+      "PDF_INSTRUCTION_REQUIRED",
+      "PDF_SOURCE_FOLDER",
+      "PDF_OUTPUT_FOLDER",
+      "PDF_OUTPUT_WRITE_FAILED",
+      "PDF_SOURCE_UNAVAILABLE",
+      "PDF_FILENAME",
+      "PDF_FILE_LIMIT",
+      "PDF_PAGE_LIMIT",
+      "PDF_CONTENT_LIMIT",
+      "PDF_TEXT_LIMIT",
+      "PDF_INVALID_SOURCE",
+      "PDF_ENCRYPTED",
+      "PDF_NO_TEXT",
+      "PDF_NO_TEXT_PAGE",
+      "PDF_INVALID_TEXT",
+      "PDF_UNSUPPORTED_GLYPH",
+      "PDF_FONT_MISSING",
+      "PDF_RUNTIME_UNAVAILABLE",
+      "PDF_NETWORK_DENIED",
+      "PDF_TASK_FAILED",
+    ];
+    await act(async () =>
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: {
+            device_id: "mine",
+            busy: false,
+            grants: [],
+            error: "PDF_RUNTIME_UNAVAILABLE",
+            tasks: codes.map((error, index) => ({
+              id: String(index),
+              format: "pdf",
+              status: "failed",
+              error,
+            })),
+          },
+        }),
+      ),
+    );
+    for (const code of codes) {
+      expect(i18n.exists(`localPdf.errors.${code}`)).toBe(true);
+      expect(screen.queryByText(code)).toBeNull();
+    }
+    expect(
+      screen.getAllByText(
+        language === "zh"
+          ? /重新安装完整客户端/
+          : /reinstall the complete client/i,
+      ).length,
+    ).toBeGreaterThan(0);
+  },
+);

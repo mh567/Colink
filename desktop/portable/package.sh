@@ -26,6 +26,9 @@ source "${REPO_ROOT}/desktop/portable/_common.sh"
 
 TEMPLATES="${REPO_ROOT}/desktop/portable/templates"
 require_uv
+if [[ "${OCTOP_GREEN_OFFLINE:-0}" == "1" ]]; then
+  export UV_OFFLINE=1
+fi
 
 build_octop_wheel() {
   local wheel_dir="$1"
@@ -251,6 +254,9 @@ assemble_one() {
 
   mkdir -p "${staging}/pptx"
   cp "${REPO_ROOT}/desktop/pptx/runner.py" "${staging}/pptx/runner.py"
+  mkdir -p "${staging}/pdf"
+  cp "${REPO_ROOT}/desktop/pdf/runner.py" "${REPO_ROOT}/desktop/pdf/NotoSansSC-Regular.ttf" \
+    "${REPO_ROOT}/desktop/pdf/OFL.txt" "${staging}/pdf/"
 
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"
@@ -277,7 +283,7 @@ assemble_one() {
       "${REPO_ROOT}/pyproject.toml" | head -1
   } > "${staging}/VERSION.txt"
   # The bundled runtime can change while the application version stays the same.
-  printf '1\n' > "${staging}/PORTABLE-REVISION.txt"
+  printf '2\n' > "${staging}/PORTABLE-REVISION.txt"
 
   rm -f "$zip_path"
   echo "[package] ${plat}: zipping → ${zip_path}"

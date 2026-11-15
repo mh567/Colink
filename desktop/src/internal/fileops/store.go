@@ -73,6 +73,8 @@ func bindCredentials(proof Credentials) credentialBinding {
 
 type store struct {
 	mu      sync.Mutex
+	pdfMu   sync.Mutex
+	pdfOps  map[string]map[*pdfOperation]struct{}
 	intents map[string]*intent
 	verify  func(*os.File, uint32) error
 	protect func(*os.File, uint32) error
@@ -116,8 +118,8 @@ func managedName(name, format string, destructive bool) bool {
 	switch format {
 	case "docx", "xlsx":
 		return strings.EqualFold(ext, "."+format)
-	case "pptx":
-		return !destructive && strings.EqualFold(ext, ".pptx")
+	case "pptx", "pdf":
+		return !destructive && strings.EqualFold(ext, "."+format)
 	case "ocr":
 		return !destructive && strings.EqualFold(ext, ".txt")
 	default:
@@ -249,7 +251,41 @@ func (s *store) abort(sender, token string) {
 	}
 }
 
+type pdfOperation struct{ cancel context.CancelFunc }
+
+func (s *store) trackPDF(ctx context.Context, sender string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	op := &pdfOperation{cancel: cancel}
+	s.pdfMu.Lock()
+	if s.pdfOps == nil {
+		s.pdfOps = make(map[string]map[*pdfOperation]struct{})
+	}
+	if s.pdfOps[sender] == nil {
+		s.pdfOps[sender] = make(map[*pdfOperation]struct{})
+	}
+	s.pdfOps[sender][op] = struct{}{}
+	s.pdfMu.Unlock()
+	return ctx, func() {
+		s.pdfMu.Lock()
+		delete(s.pdfOps[sender], op)
+		if len(s.pdfOps[sender]) == 0 {
+			delete(s.pdfOps, sender)
+		}
+		cancel()
+		s.pdfMu.Unlock()
+	}
+}
+
+func (s *store) cancelPDF(sender string) {
+	s.pdfMu.Lock()
+	defer s.pdfMu.Unlock()
+	for op := range s.pdfOps[sender] {
+		op.cancel()
+	}
+}
+
 func (s *store) disconnect(sender string) {
+	s.cancelPDF(sender)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for token, p := range s.intents {
@@ -372,6 +408,9 @@ func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name stri
 	if !managedName(name, proof.Format, false) || len(data) > maxFileBytes {
 		return errInvalid
 	}
+	if proof.Format == "pdf" && !request.pdfCreate {
+		return errPermission
+	}
 	if proof.Format == "pptx" && request.SourceFormat != "pptx" && request.SourceFormat != "docx" {
 		return errPermission
 	}
@@ -386,7 +425,7 @@ func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name stri
 	if !SameDirectory(root, root.Name()) {
 		return errChanged
 	}
-	if proof.Format == "pptx" {
+	if proof.Format == "pptx" || proof.Format == "pdf" {
 		return s.publishPPTX(ctx, root, uid, name, data, proof, request)
 	}
 	if err := s.write(root, uid, name, data, nil); err != nil {
@@ -399,6 +438,11 @@ func (s *store) publishPPTX(ctx context.Context, root *os.Root, uid uint32, name
 	stage := ".colink-" + rand.Text()
 	// Recheck permission before the staging file gets its readable ACL.
 	if err := s.write(root, uid, stage, data, func() error {
+		if proof.Format == "pdf" {
+			if err := s.authorize(ctx, proof, authorizationRequest{Action: "read", AgentID: request.AgentID}); err != nil {
+				return err
+			}
+		}
 		return s.authorize(ctx, proof, request)
 	}); err != nil {
 		return err
@@ -410,7 +454,18 @@ func (s *store) publishPPTX(ctx context.Context, root *os.Root, uid uint32, name
 	if !SameDirectory(root, root.Name()) {
 		return errChanged
 	}
-	if err := root.Link(stage, name); err != nil {
+	if proof.Format == "pdf" {
+		s.pdfMu.Lock()
+		if ctx.Err() != nil {
+			s.pdfMu.Unlock()
+			return errInactive
+		}
+		err := root.Link(stage, name)
+		s.pdfMu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else if err := root.Link(stage, name); err != nil {
 		return err
 	}
 	if err := root.Remove(stage); err != nil {

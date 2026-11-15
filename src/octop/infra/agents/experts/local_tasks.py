@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -15,8 +16,8 @@ from octop.infra.users.groups import RESOURCE_SKILL_PACKAGE, GroupAccess, model_
 from octop.infra.users.identity import User
 
 REVIEWED_SKILL = "reviewed_local_skill"
-Action = Literal["local_docx", "local_xlsx", "local_pptx"]
-LocalActions = Annotated[list[Action], Field(min_length=1, max_length=3)]
+Action = Literal["local_docx", "local_xlsx", "local_pptx", "local_pdf"]
+LocalActions = Annotated[list[Action], Field(min_length=1, max_length=4)]
 
 
 class LocalExpertConfig(BaseModel):
@@ -112,6 +113,8 @@ async def local_expert_context(
     agent_id: str,
     format: str,
     instruction: str,
+    *,
+    authorize: Callable[[], None] | None = None,
 ) -> tuple[str, str]:
     from octop.infra.knowledge.retrieve import retrieve_context
 
@@ -132,13 +135,18 @@ async def local_expert_context(
                 query=instruction,
                 knowledge_base_ids=config.knowledge_base_ids,
                 locale=user.locale,
-                intranet_only=format == "pptx",
+                intranet_only=format in {"pptx", "pdf"},
+                authorize=authorize,
             )
         except RuntimeError:
-            if format != "pptx":
+            if format not in {"pptx", "pdf"}:
                 raise
             raise OctopError(
-                ErrorCode.LOCAL_PPTX_KNOWLEDGE_UNAVAILABLE,
+                (
+                    ErrorCode.LOCAL_PDF_KNOWLEDGE_UNAVAILABLE
+                    if format == "pdf"
+                    else ErrorCode.LOCAL_PPTX_KNOWLEDGE_UNAVAILABLE
+                ),
                 "report knowledge retrieval failed",
             ) from None
         parts.append(context)
@@ -185,7 +193,7 @@ def local_resources(services: Any, user: User) -> dict[str, Any]:
         "models": models,
         "actions": [
             {"id": action, "name": action}
-            for action in ("local_docx", "local_xlsx", "local_pptx")
+            for action in ("local_docx", "local_xlsx", "local_pptx", "local_pdf")
             if action in employee.permissions
         ],
         "skills": skills,
