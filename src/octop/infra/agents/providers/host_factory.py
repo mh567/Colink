@@ -105,6 +105,7 @@ class HostModelFactory:
         """Use the existing OpenAI model with an isolated, pinned HTTP client."""
         from langchain_core.messages import HumanMessage, SystemMessage
         from langchain_openai import ChatOpenAI
+        from langsmith import tracing_context
 
         from octop.infra.utils.llm_text import ainvoke_text
         from octop.infra.utils.ssrf_guard import PinnedIPTransport
@@ -144,11 +145,13 @@ class HostModelFactory:
                     "max_retries": 0,
                 }
             )
-            return await ainvoke_text(
-                scoped_model,
-                [SystemMessage(content=system), HumanMessage(content=prompt)],
-                timeout=120,
-            )
+            # Intranet prompts and answers must stay out of LangSmith, even under a parent trace.
+            with tracing_context(enabled=False, parent=False):
+                return await ainvoke_text(
+                    scoped_model,
+                    [SystemMessage(content=system), HumanMessage(content=prompt)],
+                    timeout=120,
+                )
 
 
 __all__ = ["HostModelFactory"]

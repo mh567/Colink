@@ -140,6 +140,40 @@ func TestSameVersionPPTXWorkerUsesBundledRunnerWithoutReplacingRuntime(t *testin
 	}
 }
 
+func TestPortableRevisionRequiresBundledWorkers(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "portable")
+	archive := filepath.Join(home, "bundle.zip")
+	t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", archive)
+	pptx := testGreenZipFile{"pptx/runner.py", "presentation worker"}
+	browser := testGreenZipFile{"browser/runner.py", "browser worker"}
+	pdf := testGreenZipFile{"pdf/runner.py", "PDF worker"}
+
+	for _, scenario := range []struct {
+		name     string
+		revision string
+		workers  []testGreenZipFile
+		allowed  bool
+	}{
+		{"presentation", "1", []testGreenZipFile{pptx}, true},
+		{"legacy revision without compatible workers", "2", []testGreenZipFile{pptx}, false},
+		{"legacy browser", "2", []testGreenZipFile{pptx, browser}, true},
+		{"legacy PDF", "2", []testGreenZipFile{pptx, pdf}, true},
+		{"private browser", "3", []testGreenZipFile{pptx, browser}, true},
+		{"combined missing browser", "4", []testGreenZipFile{pptx, pdf}, false},
+		{"combined missing PDF", "4", []testGreenZipFile{pptx, browser}, false},
+		{"combined workers", "4", []testGreenZipFile{pptx, browser, pdf}, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			files := append([]testGreenZipFile{{portableRevisionName, scenario.revision + "\n"}}, scenario.workers...)
+			writeTestGreenZip(t, archive, "1.0.3b3", files...)
+			if got := hasNewerPortableRevision(root); got != scenario.allowed {
+				t.Fatalf("hasNewerPortableRevision = %v, want %v", got, scenario.allowed)
+			}
+		})
+	}
+}
+
 func TestEnsurePortableStartupRefreshesSameVersionOnlyWhenIdle(t *testing.T) {
 	for _, scenario := range []string{
 		"cold startup", "running", "nested data", "nested database", "user folder", "nested grant", "task",

@@ -35,10 +35,14 @@ type pptxResult struct {
 }
 
 func prepareLocalPPTXRunner(root string) (string, func(), error) {
-	installed := filepath.Join(root, "pptx", "runner.py")
+	return prepareLocalPortableRunner(root, "pptx", "PPTX_RUNTIME_UNAVAILABLE")
+}
+
+func prepareLocalPortableRunner(root, feature, unavailable string) (string, func(), error) {
+	installed := filepath.Join(root, feature, "runner.py")
 	info, statErr := os.Stat(installed)
 	installedReady := statErr == nil && info.Mode().IsRegular()
-	bundled := sameVersionBundledPPTXRunner(root)
+	bundled := sameVersionBundledPortableRunner(root, feature)
 	if installedReady {
 		if bundled == nil {
 			return installed, func() {}, nil
@@ -50,24 +54,24 @@ func prepareLocalPPTXRunner(root string) (string, func(), error) {
 		}
 	}
 	if bundled == nil {
-		return "", nil, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+		return "", nil, errors.New(unavailable)
 	}
 
 	// Use the updated runner with existing packages without modifying the live runtime.
-	dir, err := os.MkdirTemp(root, "pptx-worker-")
+	dir, err := os.MkdirTemp(root, feature+"-worker-")
 	if err != nil {
-		return "", nil, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+		return "", nil, errors.New(unavailable)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	script := filepath.Join(dir, "runner.py")
 	if err := os.WriteFile(script, bundled, 0o600); err != nil {
 		cleanup()
-		return "", nil, errors.New("PPTX_RUNTIME_UNAVAILABLE")
+		return "", nil, errors.New(unavailable)
 	}
 	return script, cleanup, nil
 }
 
-func sameVersionBundledPPTXRunner(root string) []byte {
+func sameVersionBundledPortableRunner(root, feature string) []byte {
 	files, closeArchive, err := bundledPortableFiles()
 	if err != nil {
 		return nil
@@ -82,7 +86,7 @@ func sameVersionBundledPPTXRunner(root string) []byte {
 		return nil
 	}
 
-	return readPortableBundleFile(files, "pptx/runner.py", 64<<10)
+	return readPortableBundleFile(files, feature+"/runner.py", 64<<10)
 }
 
 func runLocalPPTX(ctx context.Context, mode string, input io.Reader) (pptxResult, error) {

@@ -142,7 +142,11 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
     for name in ("package.sh", "_common.sh"):
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
     shutil.copytree(repo / "desktop" / "portable" / "templates", portable / "templates")
-    shutil.copytree(repo / "desktop" / "pptx", checkout / "desktop" / "pptx")
+    for worker in ("pptx", "browser"):
+        source = repo / "desktop" / worker
+        target = checkout / "desktop" / worker
+        target.mkdir()
+        shutil.copyfile(source / "runner.py", target / "runner.py")
     shutil.copytree(repo / "desktop" / "pdf", checkout / "desktop" / "pdf")
     ocr = checkout / "desktop" / "ocr"
     ocr.mkdir()
@@ -240,11 +244,17 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
-        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"2\n"
-        assert (
-            packed.read("Octop-linux-amd64/pptx/runner.py")
-            == (repo / "desktop/pptx/runner.py").read_bytes()
-        )
+        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"4\n"
+        for worker in ("pptx", "browser"):
+            assert (
+                packed.read(f"Octop-linux-amd64/{worker}/runner.py")
+                == (repo / "desktop" / worker / "runner.py").read_bytes()
+            )
+        for name in ("runner.py", "NotoSansSC-Regular.ttf", "OFL.txt"):
+            assert (
+                packed.read(f"Octop-linux-amd64/pdf/{name}")
+                == (repo / "desktop/pdf" / name).read_bytes()
+            )
         assert not any("/powerpoint/" in name for name in packed.namelist())
         assert packed.read(f"Octop-linux-amd64/packages/{DIST_INFO}/licenses/LICENSE") == (
             b"MIT license must remain\n"
@@ -253,32 +263,37 @@ PY
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX packaging fixture")
 @pytest.mark.parametrize(
-    "missing",
+    ("worker", "runner", "alias", "missing"),
     [
-        None,
-        "pdf/runner.py",
-        "pdf/NotoSansSC-Regular.ttf",
-        "pdf/OFL.txt",
-        "packages/reportlab/__init__.py",
-        "packages/pypdf/__init__.py",
-        "packages/PIL/__init__.py",
-        "packages/charset_normalizer/__init__.py",
-        "PORTABLE-REVISION.txt",
-    ],
-)
-@pytest.mark.parametrize(
-    ("runner", "alias"),
-    [
-        (None, None),
-        (b"stale runner", None),
-        (b"current runner", None),
-        (b"current runner", "stale-root/pptx/runner.py"),
-        (b"current runner", "Octop-linux-amd64/pptx/./runner.py"),
-        (b"current runner", "Octop-linux-amd64/pptx/runner.py. "),
+        *(
+            (worker, runner, alias, None)
+            for worker in ("pptx", "browser")
+            for runner, alias in (
+                (None, None),
+                (b"stale runner", None),
+                (b"current runner", None),
+                (b"current runner", "stale-root/pptx/runner.py"),
+                (b"current runner", "Octop-linux-amd64/pptx/./runner.py"),
+                (b"current runner", "Octop-linux-amd64/pptx/runner.py. "),
+            )
+        ),
+        *(
+            ("browser", b"current runner", None, missing)
+            for missing in (
+                "pdf/runner.py",
+                "pdf/NotoSansSC-Regular.ttf",
+                "pdf/OFL.txt",
+                "packages/reportlab/__init__.py",
+                "packages/pypdf/__init__.py",
+                "packages/PIL/__init__.py",
+                "packages/charset_normalizer/__init__.py",
+                "PORTABLE-REVISION.txt",
+            )
+        ),
     ],
 )
 def test_desktop_release_validates_the_reused_portable_archive(
-    tmp_path: Path, runner: bytes | None, alias: str | None, missing: str | None
+    tmp_path: Path, worker: str, runner: bytes | None, alias: str | None, missing: str | None
 ) -> None:
     repo = SCRIPT.parent.parent
     desktop = tmp_path / "desktop"
@@ -300,14 +315,15 @@ def test_desktop_release_validates_the_reused_portable_archive(
         'if sys.argv[1] == "create" else {"text": "便携 PDF 中文测试"}\n'
         "print(json.dumps(payload))\n"
     )
-    (desktop / "pptx").mkdir()
     current_runner = b"current runner"
-    (desktop / "pptx/runner.py").write_bytes(current_runner)
     staging = portable / "release/Octop-linux-amd64"
-    (staging / "pptx").mkdir(parents=True)
-    (staging / "pptx/runner.py").write_bytes(current_runner)
+    for name in ("pptx", "browser"):
+        (desktop / name).mkdir()
+        (desktop / name / "runner.py").write_bytes(current_runner)
+        (staging / name).mkdir(parents=True)
+        (staging / name / "runner.py").write_bytes(current_runner)
     shutil.copytree(desktop / "pdf", staging / "pdf")
-    (staging / "PORTABLE-REVISION.txt").write_text("2\n")
+    (staging / "PORTABLE-REVISION.txt").write_text("4\n")
     (staging / "launch.py").write_text("# launcher\n")
     runtime = staging / "runtime/bin"
     runtime.mkdir(parents=True)
@@ -315,7 +331,7 @@ def test_desktop_release_validates_the_reused_portable_archive(
     (runtime / "python3").chmod(0o755)
     packages = staging / "packages"
     packages.mkdir()
-    for name in ("octop", "fastapi", "langchain_core", "langchain_openai", "pptx"):
+    for name in ("octop", "fastapi", "langchain_core", "langchain_openai", "pptx", "octop_browser"):
         (packages / f"{name}.py").touch()
     for name, version in (
         ("reportlab", "4.4.9"),
@@ -376,12 +392,15 @@ def test_desktop_release_validates_the_reused_portable_archive(
                 archive.write(
                     path, f"Octop-linux-amd64/packages/{path.relative_to(packages).as_posix()}"
                 )
-        if runner == current_runner:
-            archive.write(staging / "pptx/runner.py", "Octop-linux-amd64/pptx/runner.py")
-        elif runner is not None:
-            archive.writestr("Octop-linux-amd64/pptx/runner.py", runner)
+        for name in ("pptx", "browser"):
+            data = runner if name == worker else current_runner
+            if data is not None:
+                entry = zipfile.ZipInfo.from_file(
+                    staging / name / "runner.py", f"Octop-linux-amd64/{name}/runner.py"
+                )
+                archive.writestr(entry, data)
         if alias is not None:
-            archive.writestr(alias, b"stale runner")
+            archive.writestr(alias.replace("/pptx/", f"/{worker}/"), b"stale runner")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -432,7 +451,8 @@ def portable_integrity_fixture(tmp_path):
         "runtime/bin/python3": b"python runtime",
         "packages/octop/__init__.py": b"core dependency",
         "launch.py": b"launcher",
-        "PORTABLE-REVISION.txt": b"2\n",
+        "PORTABLE-REVISION.txt": b"4\n",
+        "browser/runner.py": (repo / "desktop/browser/runner.py").read_bytes(),
         "pptx/runner.py": (repo / "desktop/pptx/runner.py").read_bytes(),
         "pdf/runner.py": (repo / "desktop/pdf/runner.py").read_bytes(),
         "pdf/OFL.txt": (repo / "desktop/pdf/OFL.txt").read_bytes(),
@@ -469,8 +489,15 @@ def write_integrity_archive(root, archive, omit=None, extra=None):
             result.writestr(*extra)
 
 
+def test_reused_archive_accepts_current_browser_and_pdf_resources(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    write_integrity_archive(root, archive)
+    assert module._has_current_resources(archive, root.name, root / "packages")
+
+
 @pytest.mark.parametrize(
-    "omitted", ["runtime/bin/python3", "launch.py", "packages/octop/__init__.py"]
+    "omitted",
+    ["runtime/bin/python3", "launch.py", "packages/octop/__init__.py", "browser/runner.py"],
 )
 def test_reused_archive_requires_runtime_launcher_and_core_files(
     portable_integrity_fixture, omitted

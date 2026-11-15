@@ -70,6 +70,7 @@ def test_scanned_page_is_not_silently_skipped():
         ("create", b"x" * 60001, "PDF_TEXT_LIMIT"),
         ("create", "表情😀".encode(), "PDF_UNSUPPORTED_GLYPH"),
     ],
+    ids=["invalid-source", "empty-text", "text-limit", "unsupported-glyph"],
 )
 def test_errors(mode, data, error):
     code, result = run_worker(mode, data)

@@ -94,3 +94,86 @@ def test_sync_drop_closes_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(OctopError) as exc:
         host.get("auto")
     assert exc.value.code == ErrorCode.INTERNAL_ERROR
+
+
+@pytest.mark.parametrize("with_parent", [False, True], ids=["root", "nested"])
+async def test_intranet_model_does_not_send_private_content_to_enabled_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+    with_parent: bool,
+) -> None:
+    import json
+
+    import httpx
+    from langchain_core.runnables import RunnableLambda
+    from langchain_core.tracers.langchain import wait_for_all_tracers
+    from langsmith import Client, RunTree, tracing_context
+
+    from octop.infra.utils import ssrf_guard
+
+    provider = _provider("openai", "gpt-4o")
+    question = "How many items are in stock?"
+    page_text = "Internal inventory: 42 items"
+    answer = "The inventory has 42 items."
+    public_input = "Public trace control"
+    model_requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        model_requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": answer},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    def pinned(host: str, pin_ip: str, *, strict_host: bool) -> httpx.MockTransport:
+        assert (host, pin_ip, strict_host) == ("api.example.com", "10.20.30.40", True)
+        return httpx.MockTransport(respond)
+
+    trace_writes = MagicMock()
+    monkeypatch.setattr(ssrf_guard, "PinnedIPTransport", pinned)
+    monkeypatch.setattr(Client, "create_run", trace_writes)
+    monkeypatch.setattr(Client, "update_run", trace_writes)
+    tracer = Client(
+        api_url="https://trace.example.com",
+        api_key="test-key",
+        info={"version": "test"},
+        auto_batch_tracing=False,
+    )
+    parent = RunTree(name="outer", run_type="chain", client=tracer) if with_parent else None
+    factory = HostModelFactory()
+    factory.sync([provider])
+    try:
+        with tracing_context(enabled=True, parent=parent, client=tracer):
+            result = await factory.ainvoke_intranet_text(
+                "openai/gpt-4o",
+                f"{question}\n{page_text}",
+                system="Answer using the visible page text.",
+                base_url=provider.base_url,
+                host="api.example.com",
+                pin_ip="10.20.30.40",
+            )
+            await RunnableLambda(lambda text: text).ainvoke(public_input)
+            wait_for_all_tracers()
+    finally:
+        factory.close()
+
+    assert result == answer
+    assert len(model_requests) == 1
+    assert model_requests[0].url == httpx.URL("https://api.example.com/v1/chat/completions")
+    body = json.loads(model_requests[0].content)
+    assert body["messages"][-1]["content"] == f"{question}\n{page_text}"
+    trace_payloads = repr(trace_writes.call_args_list)
+    assert public_input in trace_payloads
+    for private_text in (page_text, question, answer):
+        assert private_text not in trace_payloads

@@ -120,8 +120,24 @@ func hasNewerPortableRevision(root string) bool {
 		return false
 	}
 	defer closeArchive()
-	return bundledPortableRevision(files) > installedPortableRevision(root) &&
-		readPortableBundleFile(files, "pptx/runner.py", 64<<10) != nil
+	revision := bundledPortableRevision(files)
+	if revision <= installedPortableRevision(root) ||
+		readPortableBundleFile(files, "pptx/runner.py", 64<<10) == nil {
+		return false
+	}
+	switch revision {
+	case 1:
+		return true
+	case 2:
+		// The PDF and browser branches shipped different revision 2 bundles.
+		return readPortableBundleFile(files, "pdf/runner.py", 64<<10) != nil ||
+			readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil
+	case 3:
+		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil
+	default:
+		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil &&
+			readPortableBundleFile(files, "pdf/runner.py", 64<<10) != nil
+	}
 }
 
 func portableDataOutsideRuntime(root string) bool {
@@ -150,7 +166,7 @@ func portableDataOutsideRuntime(root string) bool {
 					return false
 				}
 			}
-		case "runtime", "packages", "ocr", "pptx":
+		case "runtime", "packages", "ocr", "pptx", "browser":
 			if !entry.IsDir() {
 				return false
 			}

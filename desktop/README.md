@@ -42,7 +42,7 @@ desktop/package-release.sh
 desktop/package-release.sh darwin-arm64 --reuse-portable
 ```
 
-Rebuild without `--reuse-portable` if the archive's presentation worker differs from the current checkout.
+Rebuild without `--reuse-portable` if the archive's presentation or browser worker differs from the current checkout.
 
 Wails requires native packaging, so all six variants are produced by the CI
 matrix on macOS, Linux, and Windows runners rather than cross-compiled locally.
@@ -153,3 +153,19 @@ see `applyAppIcon` in `src/icons_darwin.go`.
 便携包随附本机处理程序，沿用 `uv.lock` 的 [python-pptx 1.0.2 及其 MIT 许可](https://github.com/scanny/python-pptx/blob/v1.0.2/LICENSE)。生成技能由 Colink 独立编写，打包时继续移除 Harness 的受限演示文稿材料。使用同一包在断公网目标环境核对安装、中文文件和编辑结果。
 
 安装同一应用版本的新便携包后，请退出正在运行的本机客户端再打开，以加载更新后的运行时。
+
+## 本机浏览器只读查询
+
+桌面客户端复用 [Octop Browser 1.0.0](https://pypi.org/project/octop-browser/1.0.0/) 的截图能力。便携包提供运行程序和 Python 依赖。部署前为 Windows 准备系统 Edge 或 Chrome，为 Linux 或 macOS 准备 Chromium，并配置目标平台的图形库、沙箱支持和中文字体。缺少浏览器或浏览器无法启动时，设备页提示检查本机安装。所用系统浏览器的二进制和更新由其发行方或企业离线软件源提供。
+
+员工从设备页打开专用浏览器，亲自登录内网系统并切到查询结果。以示例订单 `DEMO-42` 为例，选择订单结果标签，输入“还有多少库存”，核对答案与来源地址，必要时在同一标签截图。退出应用并重新连接同一账号、设备和服务器后，重新打开专用浏览器检查原登录态。换另一个员工或设备，检查需要重新登录。撤销设备后再次查询，核对设备页拒绝操作。在浏览器启动过程中撤销权限，核对待访问的业务地址没有被打开。 [接口和权限](../docs/api.md#本机浏览器只读查询)
+
+专用浏览器通过仅本机工作进程继承的管道接收调试命令。便携包须包含对应版本的浏览器工作进程。
+
+此前的 Windows 浏览器基线验证使用 Windows 10 19045 x64 与 Microsoft Edge 系统安装版 157.0.4341.46。隔离示例页通过自动化填入测试凭据，两个临时配置的登录态相互独立，重启后各自保留。调试监听为 `127.0.0.1`，且属于启动的 Edge 进程。`edge://sandbox` 显示渲染进程使用 Lockdown、Untrusted 完整性级别和 AppContainer。随机调试连接上的标签页操作、示例库存读取和截图通过，退出后旧端口不可访问。
+
+此前的 Windows 运行程序读取了示例订单并截图，来源变化或页面出现密码输入框时拒绝读取。临时桌面窗口通过原生网页来源校验和设备会话握手，使用模拟授权与模拟结果验证操作回执。实际企业账号和同一发行包的完整流程仍需验收。
+
+Windows 10 使用系统 Edge 157.0.4341.46 复测了私有管道和浏览器工作进程。测试在独立配置中打开本机示例订单，读到同源嵌入报表且排除了透明文字，生成截图，并拒绝读取密码页。Windows 进程组回归另验证工作进程异常退出后浏览器子进程能够清理。
+
+麒麟前期核验的 Playwright 路径缺少浏览器二进制，启动失败。所选系统 Chromium 路径仍需在麒麟目标桌面上用同一客户端包断公网复测，记录浏览器软件包来源及版本、启动进程、配置目录、私有调试管道、沙箱和真实页面结果。 [麒麟前期核验](../docs/T01-源码许可与麒麟早期核验.md)

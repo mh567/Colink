@@ -36,6 +36,7 @@ _SMOKE_IMPORTS = (
     "langchain_core",
     "langchain_openai",
     "pptx",
+    "octop_browser",
     "pypdf",
     "pypdf._reader",
     "reportlab",
@@ -112,6 +113,7 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
     desktop = Path(__file__).resolve().parents[1]
     required = {
         "pptx/runner.py": desktop / "pptx/runner.py",
+        "browser/runner.py": desktop / "browser/runner.py",
         "pdf/runner.py": desktop / "pdf/runner.py",
         "pdf/NotoSansSC-Regular.ttf": desktop / "pdf/NotoSansSC-Regular.ttf",
         "pdf/OFL.txt": desktop / "pdf/OFL.txt",
@@ -121,7 +123,7 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
             (root / name).read_bytes() != source.read_bytes() for name, source in required.items()
         ):
             return False
-        if (root / "PORTABLE-REVISION.txt").read_bytes() != b"2\n":
+        if (root / "PORTABLE-REVISION.txt").read_bytes() != b"4\n":
             return False
         if not (root / "runtime").is_dir() or not (root / "launch.py").is_file():
             return False
@@ -141,7 +143,13 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
                 if key in expected:
                     return False
                 expected[key] = (name, path)
-        for name in ("launch.py", "pptx/runner.py", "PORTABLE-REVISION.txt"):
+        standalone_files = (
+            "launch.py",
+            "pptx/runner.py",
+            "browser/runner.py",
+            "PORTABLE-REVISION.txt",
+        )
+        for name in standalone_files:
             expected[_archive_destination(f"{root_name}/{name}")] = (name, root / name)
 
         with zipfile.ZipFile(archive_path) as archive:
@@ -198,12 +206,9 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
                     entry_kinds[key] = "file"
                 else:
                     return False
-                in_scope = parts[1] in ("runtime", "packages", "pdf", "ocr") or "/".join(
-                    parts[1:]
-                ) in (
-                    "launch.py",
-                    "pptx/runner.py",
-                    "PORTABLE-REVISION.txt",
+                in_scope = (
+                    parts[1] in ("runtime", "packages", "pdf", "ocr")
+                    or "/".join(parts[1:]) in standalone_files
                 )
                 if not in_scope:
                     continue
@@ -353,6 +358,7 @@ def main() -> int:
         "langchain-openai",
         "cryptography",
         "python-pptx",
+        "octop-browser",
         "pypdf",
         "reportlab",
         "pillow",
