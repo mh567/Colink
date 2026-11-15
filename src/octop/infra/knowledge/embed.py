@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
@@ -76,16 +77,24 @@ def embed_knowledge_texts(services: Any, texts: list[str]) -> list[list[float]]:
         return _embed_remote_batched(client, base, headers, model, texts, batch_size=batch_size)
 
 
-async def embed_intranet_knowledge_query(services: Any, query: str) -> list[list[float]]:
+async def embed_intranet_knowledge_query(
+    services: Any, query: str, *, authorize: Callable[[], None] | None = None
+) -> list[list[float]]:
     """Embed one report query locally or through a pinned intranet endpoint."""
     settings = services.settings_repo
     backend = (settings.get("knowledge_embedding_backend") or "onnx").strip().lower()
     model = (settings.get("knowledge_embedding_model") or "").strip()
     texts = [query]
     if backend != "remote":
-        return await asyncio.get_running_loop().run_in_executor(
-            None, partial(embed_texts, model, texts, local_only=True)
-        )
+        if authorize:
+            authorize()
+        try:
+            return await asyncio.get_running_loop().run_in_executor(
+                None, partial(embed_texts, model, texts, local_only=True)
+            )
+        finally:
+            if authorize:
+                authorize()
 
     base, headers, _ = _remote_embedding_request(services, texts)
     try:
@@ -96,11 +105,17 @@ async def embed_intranet_knowledge_query(services: Any, query: str) -> list[list
             trust_env=False,
             timeout=60.0,
         ) as client:
-            response = await client.post(
-                f"{base}/embeddings",
-                headers=headers,
-                json={"model": model, "input": texts},
-            )
+            if authorize:
+                authorize()
+            try:
+                response = await client.post(
+                    f"{base}/embeddings",
+                    headers=headers,
+                    json={"model": model, "input": texts},
+                )
+            finally:
+                if authorize:
+                    authorize()
     except (ValueError, httpx.InvalidURL, httpx.RequestError):
         raise KnowledgeEmbeddingError(
             "intranet knowledge embedding service is unavailable"

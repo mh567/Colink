@@ -544,3 +544,106 @@ it("generates a new presentation and shows the saved result", async () => {
   ]);
   expect(screen.getByText("/成果/项目汇报.pptx")).toBeInTheDocument();
 });
+
+it("submits a text PDF with an eligible expert using the keyboard", async () => {
+  const { localExpertsApi } = await import("../../api/modules/localExperts");
+  const base = {
+    description: "",
+    system_prompt: "",
+    default_model: "intranet/chat",
+    skill_package_ids: [],
+    knowledge_base_ids: [],
+    published_expert_id: null,
+  };
+  vi.mocked(localExpertsApi.list).mockResolvedValueOnce([
+    { ...base, agent_id: "pdf", name: "PDF 专家", actions: ["local_pdf"] },
+    { ...base, agent_id: "docx", name: "DOCX 专家", actions: ["local_docx"] },
+  ]);
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  render(<LocalDocxPanel deviceId="mine" />);
+  await act(async () =>
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [
+            { id: "ro", path: "/资料", mode: "ro" },
+            {
+              id: "rw",
+              path: "/成果",
+              mode: "rw",
+              overwrite: true,
+              destructive: true,
+            },
+          ],
+          tasks: [],
+        },
+      }),
+    ),
+  );
+  const user = userEvent.setup();
+  await user.selectOptions(screen.getByLabelText("文件类型"), "pdf");
+  expect(screen.getByText(/仅.*可选.*文字/)).toBeInTheDocument();
+  expect(screen.queryByLabelText("文件操作")).toBeNull();
+  await screen.findByRole("option", { name: "PDF 专家" });
+  expect(screen.queryByRole("option", { name: "DOCX 专家" })).toBeNull();
+  expect(
+    screen.getByRole("option", { name: "不使用专家" }),
+  ).toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("任务专家"), "pdf");
+  await user.selectOptions(screen.getByLabelText("资料目录"), "ro");
+  expect(
+    screen.getByLabelText("成果目录").querySelector('option[value="ro"]'),
+  ).toBeNull();
+  await user.selectOptions(screen.getByLabelText("成果目录"), "rw");
+  await user.type(screen.getByLabelText("源文件名"), "source.pdf");
+  await user.type(screen.getByLabelText("新文件名"), "result.pdf");
+  await user.type(screen.getByLabelText("任务描述"), "整理内容");
+  await act(async () => {
+    screen.getByRole("button", { name: "生成 PDF" }).focus();
+  });
+  await user.keyboard("{Enter}");
+  expect(
+    JSON.parse(
+      decodeURIComponent(
+        invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+      ),
+    ),
+  ).toEqual({
+    action: "run",
+    format: "pdf",
+    source_grant: "ro",
+    source: "source.pdf",
+    output_grant: "rw",
+    output: "result.pdf",
+    instruction: "整理内容",
+    agent_id: "pdf",
+  });
+  await act(async () =>
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [],
+          tasks: [
+            {
+              id: "1",
+              format: "pdf",
+              status: "completed",
+              output: "/成果/result.pdf",
+            },
+          ],
+        },
+      }),
+    ),
+  );
+  expect(screen.getByLabelText("本机任务记录")).toHaveAttribute(
+    "aria-live",
+    "polite",
+  );
+  expect(screen.getByText("已完成")).toBeInTheDocument();
+  expect(screen.getByText("/成果/result.pdf")).toBeInTheDocument();
+});

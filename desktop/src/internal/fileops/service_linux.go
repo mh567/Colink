@@ -86,7 +86,8 @@ func Serve(ctx context.Context, serverURL string) error {
 			name, _ := signal.Body[0].(string)
 			newOwner, _ := signal.Body[2].(string)
 			if strings.HasPrefix(name, ":") && newOwner == "" {
-				svc.store.disconnect(name)
+				svc.store.cancelPDF(name)
+				go svc.store.disconnect(name)
 			}
 		}
 	}
@@ -204,12 +205,24 @@ func (s *service) CreatePPTX(sender dbus.Sender, server, name string, proof Cred
 	return s.create(sender, server, name, proof, data, request)
 }
 
+func (s *service) CreatePDF(sender dbus.Sender, server, name string, proof Credentials, agentID string, data []byte) *dbus.Error {
+	if proof.Format != "pdf" {
+		return fileError(errInvalid)
+	}
+	return s.create(sender, server, name, proof, data, authorizationRequest{Action: "create", AgentID: agentID, pdfCreate: true})
+}
+
 func (s *service) create(sender dbus.Sender, server, name string, proof Credentials, data []byte, request authorizationRequest) *dbus.Error {
 	ctx := s.conn.Context()
-	if proof.Format == "pptx" {
+	if proof.Format == "pptx" || proof.Format == "pdf" {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 12*time.Second)
 		defer cancel()
+	}
+	if proof.Format == "pdf" {
+		var finish func()
+		ctx, finish = s.store.trackPDF(ctx, string(sender))
+		defer finish()
 	}
 	uid, err := s.verifiedUID(sender, server)
 	if err != nil {

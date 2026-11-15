@@ -138,3 +138,9 @@ Linux ARM64 的 `local-ocr` 使用官方 OpenCV 4.11.0.86 wheel，其他平台�
 按更新后的 `uv.lock` 在全新目录安装识别组件，由正式 `prepare.py` 复制模型并验证，再在 `bwrap --unshare-net` 中运行正式 worker：11 项 OCR 测试通过，损坏、加密、空页、超限、缺资源及坏模型均明确失败；固定两页样本成功输出 TXT，标题、单号、金额、负责人、完整日期和两个页码共 7 项核对通过。断网探测返回 `ENETUNREACH`；测试前后 CPU 能力仍为 `AT_HWCAP=0x2fb3ffff`、`AT_HWCAP2=0x183`。本次只调整客户端依赖，没有升级内核或修改虚拟机配置，也不改写系统 CPU 能力报告。
 
 macOS ARM64 的原生任务测试另确认 TXT 落盘、只发送授权动作、防覆盖、撤销写入后拒绝产物及重启状态保留。浏览器表单与错误提示使用模拟桌面事件核查，完整 Wails 安装包联调及其他目标系统验收仍须分别完成。
+
+## 本机文字 PDF 资源
+
+各平台便携包包含 `pdf/runner.py`、ReportLab 4.4.9、pypdf、Noto Sans SC Regular 2.004 字体及 SIL OFL 1.1 许可。字体来自 Google Fonts，原始文件 SHA-256 为 `450625c8d46ab3df97b7904ded955ec2746d17ec76740cb1e91d1ba63a0f89af`，下载来源为 `https://fonts.gstatic.com/s/notosanssc/v41/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_FnYw.ttf`。运行时使用包内资源，无需系统字体或网络。
+
+读取文字 PDF 限制为 20 MiB、20 页、60000 个 Unicode 字符，每页解码后的内容流及引用表单内容合计不超过 256 KiB；无可提取文字且包含图片或文字绘制的页面返回错误，白色背景等纯绘图页可以作为空白页，混合页面仅提取可选文字，不识别图片中的文字。生成输入限 60000 字符，生成文件限 20 MiB；制表符展开为空格，缺失字形明确报错。便携资源修订号为 2，同版本桌面程序在满足原有安全刷新条件时更新运行资源。各目标系统上的完整离线安装和桌面联调须分别验收。
