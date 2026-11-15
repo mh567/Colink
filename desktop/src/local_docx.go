@@ -429,7 +429,7 @@ func docxCall(s docxSession, action string, body any, result any) error {
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" && format != "pdf" {
 		return errors.New("不支持的文件类型")
 	}
 	return deviceTaskCall(s, format, action, body, result)
@@ -479,6 +479,7 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 	request.Header.Set("Authorization", "Bearer "+s.Token)
 	request.Header.Set("X-Colink-Device-Session", s.Secret)
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept-Language", string(s.Locale))
 	client := http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("拒绝任务请求重定向") }}
 	response, err := client.Do(request)
 	if err != nil {
@@ -545,6 +546,9 @@ func (w *localDOCX) record(s docxSession, task docxTask) error {
 }
 func (w *localDOCX) run(s docxSession, request docxRequest, current func() error) (task docxTask, err error) {
 	if isDestructiveAction(request.Action) {
+		if request.Format == "pdf" {
+			return task, errors.New("PDF_CREATE_ONLY")
+		}
 		if request.Format == "pptx" {
 			return task, errors.New("PPTX_CREATE_ONLY")
 		}
@@ -557,7 +561,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if format == "" {
 		format = "docx"
 	}
-	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" {
+	if format != "docx" && format != "xlsx" && format != "ocr" && format != "pptx" && format != "pdf" {
 		return task, errors.New("不支持的文件类型")
 	}
 	s.Format = format
@@ -570,6 +574,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	if format == "ocr" {
 		filename, outputFilename = ocrSourceFilename, ocrOutputFilename
+	}
+	if format == "pdf" {
+		filename, outputFilename = pdfFilename, pdfFilename
 	}
 	if format == "pptx" {
 		filename, outputFilename = pptxSourceFilename, pptxFilename
@@ -588,6 +595,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		return task, err
 	}
 	if format != "ocr" && (strings.TrimSpace(request.Instruction) == "" || utf8.RuneCountInString(request.Instruction) > 8000) {
+		if format == "pdf" {
+			return task, errors.New("PDF_INSTRUCTION_REQUIRED")
+		}
 		if format == "pptx" {
 			return task, errors.New("PPTX_INSTRUCTION_REQUIRED")
 		}
@@ -595,6 +605,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	source, err := w.openGrant(s, request.SourceGrant, false)
 	if err != nil {
+		if format == "pdf" {
+			return task, errors.New("PDF_SOURCE_FOLDER")
+		}
 		if format == "pptx" {
 			return task, errors.New("PPTX_SOURCE_FOLDER")
 		}
@@ -602,6 +615,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	output, err := w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
+		if format == "pdf" {
+			return task, errors.New("PDF_OUTPUT_FOLDER")
+		}
 		if format == "pptx" {
 			return task, errPPTXOutputFolder
 		}
@@ -635,6 +651,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	output, err = w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
+		if format == "pdf" {
+			return task, errors.New("PDF_OUTPUT_FOLDER")
+		}
 		if format == "pptx" {
 			return task, errPPTXOutputFolder
 		}
@@ -642,6 +661,28 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	}
 	if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
 		return task, presentFileopsError(s.Locale, createErr)
+	}
+	if format == "pdf" {
+		err = writeLocalPPTXOutput(s, output, request.Output, data, func() error {
+			if err := authorizeDOCX(s, "read"); err != nil {
+				return err
+			}
+			if err := authorizeDOCX(s, "create"); err != nil {
+				return err
+			}
+			return current()
+		})
+		if err != nil {
+			switch err.Error() {
+			case "PPTX_OUTPUT_FOLDER":
+				err = errors.New("PDF_OUTPUT_FOLDER")
+			case "PPTX_OUTPUT_WRITE_FAILED":
+				err = errors.New("PDF_OUTPUT_WRITE_FAILED")
+			case "PPTX_CREATE_ONLY":
+				err = errors.New("PDF_CREATE_ONLY")
+			}
+		}
+		return task, err
 	}
 	if format == "pptx" {
 		return task, writeLocalPPTXOutput(s, output, request.Output, data, func() error {
@@ -689,6 +730,9 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 	}
 	f, size, err := openLocalTaskSource(source, request.Source)
 	if err != nil {
+		if format == "pdf" {
+			return nil, errors.New("PDF_SOURCE_UNAVAILABLE")
+		}
 		if format == "pptx" {
 			return nil, errors.New("PPTX_SOURCE_UNAVAILABLE")
 		}
@@ -700,7 +744,9 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		read = readXLSX
 	}
 	var text string
-	if format == "ocr" {
+	if format == "pdf" {
+		text, err = readLocalPDF(s.Context, f, size)
+	} else if format == "ocr" {
 		text, err = readLocalOCR(s.Context, f, size)
 	} else if format == "pptx" && s.SourceFormat != "docx" {
 		text, err = readLocalPPTX(s.Context, f, size)
@@ -739,6 +785,9 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		}
 		if err = docxCall(s, "generate", payload, &generated); err != nil {
 			return nil, err
+		}
+		if format == "pdf" {
+			return makeLocalPDF(s.Context, generated.Text)
 		}
 		if format == "pptx" {
 			return makeLocalPPTX(s.Context, generated.Text)

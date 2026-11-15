@@ -1044,7 +1044,7 @@ class AgentManager:
             or user.disabled
             or any(
                 not isinstance(action, str)
-                or action not in {"local_docx", "local_xlsx", "local_pptx"}
+                or action not in {"local_docx", "local_xlsx", "local_pptx", "local_pdf"}
                 or action not in user.permissions
                 for action in actions
             )

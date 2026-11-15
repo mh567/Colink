@@ -121,9 +121,23 @@ func hasNewerPortableRevision(root string) bool {
 	}
 	defer closeArchive()
 	revision := bundledPortableRevision(files)
-	return revision > installedPortableRevision(root) &&
-		readPortableBundleFile(files, "pptx/runner.py", 64<<10) != nil &&
-		(revision < 2 || readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil)
+	if revision <= installedPortableRevision(root) ||
+		readPortableBundleFile(files, "pptx/runner.py", 64<<10) == nil {
+		return false
+	}
+	switch revision {
+	case 1:
+		return true
+	case 2:
+		// The PDF and browser branches shipped different revision 2 bundles.
+		return readPortableBundleFile(files, "pdf/runner.py", 64<<10) != nil ||
+			readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil
+	case 3:
+		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil
+	default:
+		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil &&
+			readPortableBundleFile(files, "pdf/runner.py", 64<<10) != nil
+	}
 }
 
 func portableDataOutsideRuntime(root string) bool {
@@ -134,6 +148,24 @@ func portableDataOutsideRuntime(root string) bool {
 	// The standalone launcher and directory grants can store user data here.
 	for _, entry := range entries {
 		switch entry.Name() {
+		case "pdf":
+			if !entry.IsDir() {
+				return false
+			}
+			resources, err := os.ReadDir(filepath.Join(root, "pdf"))
+			if err != nil {
+				return false
+			}
+			for _, resource := range resources {
+				switch resource.Name() {
+				case "runner.py", "NotoSansSC-Regular.ttf", "OFL.txt":
+					if !resource.Type().IsRegular() {
+						return false
+					}
+				default:
+					return false
+				}
+			}
 		case "runtime", "packages", "ocr", "pptx", "browser":
 			if !entry.IsDir() {
 				return false

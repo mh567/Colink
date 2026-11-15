@@ -203,6 +203,10 @@ func createLocalOutput(s docxSession, root *os.Root, name string, data []byte) (
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(s.Context, 15*time.Second)
 	defer cancel()
+	if proof.Format == "pdf" {
+		err = object.CallWithContext(ctx, fileops.BusName+".CreatePDF", 0, base, name, proof, s.AgentID, data).Err
+		return true, linuxFileopsError(err)
+	}
 	if proof.Format == "pptx" {
 		sourceFormat := s.SourceFormat
 		if sourceFormat == "" {

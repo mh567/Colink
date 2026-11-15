@@ -592,7 +592,7 @@
       </div>
     </div>
     <script type="module">
-      import { Call, Events } from "/wails/runtime.js";
+      import { Events } from "/wails/runtime.js";
 
       const copy = {
         zh: {
@@ -699,8 +699,51 @@
         emitWindowAction(action);
       });
 
+      const pendingCalls = new Map();
+      let nextCallID = 0;
+
+      window.__octopDesktopReply = (id, reply) => {
+        const entry = pendingCalls.get(String(id));
+        if (!entry) return;
+        pendingCalls.delete(String(id));
+        if (reply && reply.ok) {
+          entry.resolve(reply.data);
+        } else {
+          entry.reject(new Error((reply && reply.error) || "desktop bridge error"));
+        }
+      };
+
+      function waitForDesktopBridge(timeout = 15000) {
+        return new Promise((resolve) => {
+          const started = Date.now();
+          const poll = () => {
+            if (typeof window._wails?.invoke === "function") {
+              resolve(window._wails.invoke);
+              return;
+            }
+            if (Date.now() - started >= timeout) {
+              resolve(null);
+              return;
+            }
+            setTimeout(poll, 50);
+          };
+          poll();
+        });
+      }
+
       async function call(name, ...args) {
-        return Call.ByName("main.App." + name, ...args);
+        const invoke = await waitForDesktopBridge();
+        if (!invoke) throw new Error("desktop bridge unavailable");
+        return new Promise((resolve, reject) => {
+          const id = String(++nextCallID);
+          pendingCalls.set(id, { resolve, reject });
+          try {
+            invoke("octop:ipc:" + JSON.stringify({ id, method: name, args }));
+          } catch (error) {
+            pendingCalls.delete(id);
+            reject(error);
+          }
+        });
       }
 
       const MASCOT_IMAGES = [

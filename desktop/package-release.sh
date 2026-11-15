@@ -98,7 +98,7 @@ if [[ -f "$override_file" ]]; then
   verify_args+=(--overrides "$override_file")
 fi
 echo "[desktop-release] verifying portable imports"
-PYTHONNOUSERSITE=1 "$portable_python" \
+PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 "$portable_python" -B \
   "${REPO_ROOT}/desktop/portable/verify_imports.py" "${verify_args[@]}"
 
 echo "[desktop-release] packaging Wails application"

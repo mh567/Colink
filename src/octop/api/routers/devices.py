@@ -105,6 +105,24 @@ class BrowserQueryResult(BaseModel):
     text: str = Field(min_length=1, max_length=60000, description="Answer with page evidence.")
 
 
+class PdfAuthorizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["read", "create"]
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class PdfGenerateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    action: Literal["create"] = "create"
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+    instruction: str = Field(min_length=1, max_length=8000, description="Employee's PDF task.")
+    text: str = Field(
+        min_length=1,
+        max_length=60000,
+        description="Text extracted on the native client; no original file.",
+    )
+
+
 class PptxSourceBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_format: PptxSourceFormat = Field(
@@ -237,6 +255,53 @@ async def authorize_pptx(
         source_format=body.source_format,
     )
     return DocxAuthorization()
+
+
+@router.post(
+    "/{device_id}/pdf/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize a local PDF read or create operation",
+    description="Requires an approved native session and explicit PDF and file action permissions, including for administrators.",
+)
+async def authorize_pdf(
+    device_id: str,
+    body: PdfAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    server.device_manager.authorize_docx(
+        user, device_id, x_colink_device_session, body.action, format="pdf", agent_id=body.agent_id
+    )
+    return DocxAuthorization()
+
+
+@router.post(
+    "/{device_id}/pdf/generate",
+    response_model=DocxGeneratedText,
+    summary="Generate text for an authorized local PDF task",
+    description="Requires explicit PDF, read and create permissions and an approved native session. Uses an intranet model without tools and rechecks authorization after generation. Original files stay local.",
+)
+async def generate_pdf(
+    device_id: str,
+    body: PdfGenerateBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxGeneratedText:
+    assert server.app_runtime is not None
+    text = await server.device_manager.generate_docx_text(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        text=body.text,
+        agent_id=body.agent_id,
+        action=body.action,
+        format="pdf",
+        models=server.app_runtime.agent_registry.host_models,
+    )
+    return DocxGeneratedText(text=text)
 
 
 @router.post(

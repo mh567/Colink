@@ -1,0 +1,4 @@
+Name: libsoup-3.0
+Description: Octop mapping of the libsoup 3.0 API to the installed libsoup 2.4 library
+Version: 2.70.0
+Requires: libsoup-2.4

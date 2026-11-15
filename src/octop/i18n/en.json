@@ -551,6 +551,8 @@
     "WEBAUTHN_LOGIN_DISABLED": "Passkey sign-in on the login page is turned off. An administrator can enable it under App settings → Passkeys.",
     "LOCAL_BROWSER_QUERY_FAILED": "The query failed. Ask your administrator to check the enterprise model configuration.",
     "LOCAL_DOCX_GENERATION_FAILED": "Document generation failed; no file was written. Check the enabled intranet OpenAI-compatible model, disable API fallback, and verify the network and model output.",
+    "LOCAL_PDF_GENERATION_FAILED": "PDF generation failed. Check the intranet model connection and try again.",
+    "LOCAL_PDF_KNOWLEDGE_UNAVAILABLE": "PDF knowledge is unavailable. Ask an administrator to check the local or intranet embedding model, or select an expert without a knowledge base.",
     "LOCAL_PPTX_GENERATION_FAILED": "Report generation failed. Check the intranet model connection and try again.",
     "LOCAL_PPTX_KNOWLEDGE_UNAVAILABLE": "Report knowledge is unavailable. Ask an administrator to check the local or intranet embedding model, or select an expert without a knowledge base.",
     "LOCAL_XLSX_GENERATION_FAILED": "Spreadsheet generation failed; no file was written. Check the intranet model connection and output, then retry.",

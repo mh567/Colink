@@ -328,3 +328,26 @@ def test_remote_http_error_does_not_expose_response_or_url(monkeypatch) -> None:
             client, "https://secret-user:secret-token@example.test/v1", {}, "embed", ["text"]
         )
     assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("revoked", [True, False])
+async def test_intranet_local_embedding_checks_authorization_after_failure(monkeypatch, revoked):
+    from octop.infra.errors import ErrorCode, OctopError
+
+    services = SimpleNamespace(settings_repo=SimpleNamespace(get=lambda key: "onnx"))
+    calls = 0
+
+    def authorize():
+        nonlocal calls
+        calls += 1
+        if calls == 2 and revoked:
+            raise OctopError(ErrorCode.FORBIDDEN, "revoked")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("local model failed")
+
+    monkeypatch.setattr(embed, "embed_texts", fail)
+    expected = OctopError if revoked else RuntimeError
+    with pytest.raises(expected):
+        await embed.embed_intranet_knowledge_query(services, "query", authorize=authorize)
+    assert calls == 2

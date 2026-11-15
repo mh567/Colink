@@ -140,22 +140,37 @@ func TestSameVersionPPTXWorkerUsesBundledRunnerWithoutReplacingRuntime(t *testin
 	}
 }
 
-func TestBrowserPortableRevisionRequiresBundledWorker(t *testing.T) {
+func TestPortableRevisionRequiresBundledWorkers(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "portable")
 	archive := filepath.Join(home, "bundle.zip")
 	t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", archive)
-	files := []testGreenZipFile{
-		{"PORTABLE-REVISION.txt", "2\n"},
-		{"pptx/runner.py", "presentation worker"},
-	}
-	writeTestGreenZip(t, archive, "1.0.3b3", files...)
-	if hasNewerPortableRevision(root) {
-		t.Fatal("accepted a revision that omits the browser worker")
-	}
-	writeTestGreenZip(t, archive, "1.0.3b3", append(files, testGreenZipFile{"browser/runner.py", "browser worker"})...)
-	if !hasNewerPortableRevision(root) {
-		t.Fatal("rejected the bundled browser worker")
+	pptx := testGreenZipFile{"pptx/runner.py", "presentation worker"}
+	browser := testGreenZipFile{"browser/runner.py", "browser worker"}
+	pdf := testGreenZipFile{"pdf/runner.py", "PDF worker"}
+
+	for _, scenario := range []struct {
+		name     string
+		revision string
+		workers  []testGreenZipFile
+		allowed  bool
+	}{
+		{"presentation", "1", []testGreenZipFile{pptx}, true},
+		{"legacy revision without compatible workers", "2", []testGreenZipFile{pptx}, false},
+		{"legacy browser", "2", []testGreenZipFile{pptx, browser}, true},
+		{"legacy PDF", "2", []testGreenZipFile{pptx, pdf}, true},
+		{"private browser", "3", []testGreenZipFile{pptx, browser}, true},
+		{"combined missing browser", "4", []testGreenZipFile{pptx, pdf}, false},
+		{"combined missing PDF", "4", []testGreenZipFile{pptx, browser}, false},
+		{"combined workers", "4", []testGreenZipFile{pptx, browser, pdf}, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			files := append([]testGreenZipFile{{portableRevisionName, scenario.revision + "\n"}}, scenario.workers...)
+			writeTestGreenZip(t, archive, "1.0.3b3", files...)
+			if got := hasNewerPortableRevision(root); got != scenario.allowed {
+				t.Fatalf("hasNewerPortableRevision = %v, want %v", got, scenario.allowed)
+			}
+		})
 	}
 }
 
@@ -989,5 +1004,68 @@ func writeVersionOnlyZip(t *testing.T, path, version string) {
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPortablePDFResourcesDoNotHideUserData(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OCTOP_HOME", home)
+	root := filepath.Join(home, "portable")
+	if err := os.MkdirAll(filepath.Join(root, "pdf"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pdf", "user-data.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if portableDataOutsideRuntime(root) {
+		t.Fatal("PDF user data would be replaced")
+	}
+}
+
+func TestPortablePDFResourcesRefreshOnlyWhenSafe(t *testing.T) {
+	for _, scenario := range []string{"safe", "extra data", "active runtime", "granted resources"} {
+		t.Run(scenario, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("OCTOP_HOME", home)
+			t.Setenv("OCTOP_DATABASE_DRIVER", "sqlite")
+			t.Setenv("OCTOP_DATABASE_URL", "")
+			t.Setenv("OCTOP_DATABASE_SQLITE_PATH", "")
+			root := portableDir()
+			oldZip := filepath.Join(t.TempDir(), "old.zip")
+			writeTestGreenZip(t, oldZip, "1.0.3b3", testGreenZipFile{portableRevisionName, "1\n"}, testGreenZipFile{"pdf/runner.py", "old runner"})
+			if err := unzipGreen(oldZip, root); err != nil {
+				t.Fatal(err)
+			}
+			newZip := filepath.Join(t.TempDir(), "new.zip")
+			writeTestGreenZip(t, newZip, "1.0.3b3", testGreenZipFile{portableRevisionName, "2\n"}, testGreenZipFile{"pptx/runner.py", "pptx runner"}, testGreenZipFile{"pdf/runner.py", "new runner"}, testGreenZipFile{"pdf/NotoSansSC-Regular.ttf", "font"}, testGreenZipFile{"pdf/OFL.txt", "license"})
+			t.Setenv("OCTOP_DESKTOP_PORTABLE_ZIP", newZip)
+			if scenario == "extra data" {
+				if err := os.WriteFile(filepath.Join(root, "pdf", "mine.pdf"), []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "granted resources" {
+				if err := newLocalDOCX(home).save(map[string]docxState{"scope": {Grants: []directoryGrant{{Path: filepath.Join(root, "pdf"), Mode: "rw"}}}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := preparePortable(LocaleZH, func(string) {}, func() bool { return scenario != "active runtime" }); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "pdf", "runner.py"))
+			expected := "old runner"
+			if scenario == "safe" {
+				expected = "new runner"
+			}
+			if err != nil || string(data) != expected {
+				t.Fatalf("runner=%q err=%v", data, err)
+			}
+			if scenario == "extra data" {
+				data, err := os.ReadFile(filepath.Join(root, "pdf", "mine.pdf"))
+				if err != nil || string(data) != "keep" {
+					t.Fatalf("user data changed: %q %v", data, err)
+				}
+			}
+		})
 	}
 }

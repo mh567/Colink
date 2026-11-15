@@ -1,0 +1,5 @@
+Name: webkit2gtk-4.1
+Description: Octop mapping of the WebKitGTK 4.1 API to the installed 4.0 library
+Version: 2.38.6
+Requires: webkit2gtk-4.0
+Cflags: -include ${pcfiledir}/webkit238.h
