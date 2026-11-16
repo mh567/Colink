@@ -224,119 +224,156 @@ func TestLocalDOCXChecksWritePermissionAfterModelAndSessionBeforeWriting(t *test
 }
 
 func TestLocalDOCXRevokeDuringModelCallStopsOutput(t *testing.T) {
-	enteredGenerate := make(chan struct{})
-	releaseGenerate := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/generate") {
-			close(enteredGenerate)
-			<-releaseGenerate
-			w.Write([]byte(`{"text":"结果"}`))
-			return
-		}
-		w.Write([]byte(`{"allowed":true}`))
-	}))
-	t.Cleanup(server.Close)
+	for _, revokedGrant := range []string{"source", "output"} {
+		t.Run(revokedGrant, func(t *testing.T) {
+			enteredGenerate := make(chan struct{})
+			releaseGenerate := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/generate") {
+					close(enteredGenerate)
+					<-releaseGenerate
+					w.Write([]byte(`{"text":"结果"}`))
+					return
+				}
+				w.Write([]byte(`{"allowed":true}`))
+			}))
+			t.Cleanup(server.Close)
 
-	session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Generation: 1, Context: context.Background()}
-	otherSession := session
-	otherSession.DeviceID = "other-device"
-	sourceDir, outputDir, otherDir := t.TempDir(), t.TempDir(), t.TempDir()
-	source, err := makeDOCX("原文")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(sourceDir, "input.docx"), source, 0600); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := makeDOCX("已完成内容")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(outputDir, "completed.docx"), completed, 0600); err != nil {
-		t.Fatal(err)
-	}
-	worker := newLocalDOCX(t.TempDir())
-	sourceGrant, err := worker.grant(session, sourceDir, "ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	outputGrant, err := worker.grant(session, outputDir, "rw")
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherGrant, err := worker.grant(otherSession, otherDir, "rw")
-	if err != nil {
-		t.Fatal(err)
-	}
+			session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Generation: 1, Context: context.Background()}
+			otherSession := session
+			otherSession.DeviceID = "other-device"
+			sourceDir, outputDir, otherDir := t.TempDir(), t.TempDir(), t.TempDir()
+			source, err := makeDOCX("原文")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(sourceDir, "input.docx"), source, 0600); err != nil {
+				t.Fatal(err)
+			}
+			completed, err := makeDOCX("已完成内容")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(outputDir, "completed.docx"), completed, 0600); err != nil {
+				t.Fatal(err)
+			}
+			worker := newLocalDOCX(t.TempDir())
+			sourceGrant, err := worker.grant(session, sourceDir, "ro")
+			if err != nil {
+				t.Fatal(err)
+			}
+			outputGrant, err := worker.grant(session, outputDir, "rw")
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherGrant, err := worker.grant(otherSession, otherDir, "rw")
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	app := &App{
-		store:  &settingsStore{cur: defaultSettings()},
-		device: &deviceClient{generation: 1, docx: session},
-		docx:   worker,
-	}
-	worker.mu.Lock()
-	worker.busy = true
-	worker.mu.Unlock()
-	type runResult struct {
-		task docxTask
-		err  error
-	}
-	result := make(chan runResult, 1)
-	done := make(chan struct{})
-	go func() {
-		task, runErr := worker.run(session, docxRequest{Action: "run", SourceGrant: sourceGrant.ID, Source: "input.docx", OutputGrant: outputGrant.ID, Output: "result.docx", Instruction: "整理"}, func() error { return app.device.currentDOCX(session) })
-		result <- runResult{task: task, err: runErr}
-		close(done)
-	}()
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(releaseGenerate) }) }
-	t.Cleanup(func() {
-		release()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("running task did not stop during cleanup")
-		}
-	})
-	select {
-	case <-enteredGenerate:
-	case <-time.After(5 * time.Second):
-		t.Fatal("model request did not start")
-	}
+			events := make(chan docxEvent, 8)
+			app := &App{
+				store:  &settingsStore{cur: defaultSettings()},
+				device: &deviceClient{generation: 1, docx: session},
+				docx:   worker,
+				docxStatusSink: func(event docxEvent) {
+					events <- event
+				},
+			}
+			encode := func(request docxRequest) string {
+				data, marshalErr := json.Marshal(request)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				return url.QueryEscape(string(data))
+			}
+			done := make(chan struct{})
+			go func() {
+				app.handleDOCX(encode(docxRequest{Action: "run", SourceGrant: sourceGrant.ID, Source: "input.docx", OutputGrant: outputGrant.ID, Output: "result.docx", Instruction: "整理"}))
+				close(done)
+			}()
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseGenerate) }) }
+			t.Cleanup(func() {
+				release()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("running task did not stop during cleanup")
+				}
+			})
+			select {
+			case <-enteredGenerate:
+			case <-time.After(5 * time.Second):
+				t.Fatal("model request did not start")
+			}
 
-	app.handleDOCX(url.QueryEscape(fmt.Sprintf(`{"action":"revoke","grant_id":%q}`, outputGrant.ID)))
-	if _, err = worker.openGrant(session, outputGrant.ID, true); err == nil {
-		t.Fatal("revoked output grant remained usable")
-	}
-	if _, err = worker.openGrant(session, sourceGrant.ID, false); err != nil {
-		t.Fatalf("revocation removed the source grant: %v", err)
-	}
-	if _, err = worker.openGrant(otherSession, otherGrant.ID, true); err != nil {
-		t.Fatalf("revocation affected another device: %v", err)
-	}
-	worker.mu.Lock()
-	busy := worker.busy
-	worker.mu.Unlock()
-	if !busy {
-		t.Fatal("revocation cleared the running task's busy state")
-	}
+			grant := sourceGrant
+			if revokedGrant == "output" {
+				grant = outputGrant
+			}
+			revokeDone := make(chan struct{})
+			go func() {
+				app.handleDOCX(encode(docxRequest{Action: "revoke", GrantID: grant.ID}))
+				close(revokeDone)
+			}()
+			select {
+			case <-revokeDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("revocation handler did not finish while a task was running")
+			}
+			if _, err = worker.openGrant(session, grant.ID, false); err == nil {
+				t.Fatalf("revoked %s grant remained usable", revokedGrant)
+			}
+			if revokedGrant == "source" {
+				if _, err = worker.openGrant(session, outputGrant.ID, true); err != nil {
+					t.Fatalf("source grant revocation removed output grant: %v", err)
+				}
+			} else if _, err = worker.openGrant(session, sourceGrant.ID, false); err != nil {
+				t.Fatalf("output grant revocation removed source grant: %v", err)
+			}
+			if _, err = worker.openGrant(otherSession, otherGrant.ID, true); err != nil {
+				t.Fatalf("revocation affected another device: %v", err)
+			}
+			worker.mu.Lock()
+			busy := worker.busy
+			worker.mu.Unlock()
+			if !busy {
+				t.Fatal("revocation cleared the running task's busy state")
+			}
 
-	release()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("running task did not finish after model response was released")
-	}
-	run := <-result
-	if run.err == nil || run.task.Status != "failed" {
-		t.Fatalf("revoked task was not stopped: task=%+v err=%v", run.task, run.err)
-	}
-	if _, err = os.Stat(filepath.Join(outputDir, "result.docx")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("created output after revocation: %v", err)
-	}
-	got, err := os.ReadFile(filepath.Join(outputDir, "completed.docx"))
-	if err != nil || !bytes.Equal(got, completed) {
-		t.Fatalf("changed completed output: err=%v equal=%v", err, bytes.Equal(got, completed))
+			release()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("running task did not finish after model response was released")
+			}
+			state, err := worker.state(session)
+			if err != nil || len(state.Tasks) != 1 || state.Tasks[0].Status != "failed" || state.Tasks[0].Error == "" {
+				t.Fatalf("revoked task was not recorded as failed: state=%+v err=%v", state, err)
+			}
+			if state.Tasks[0].Output != "" {
+				t.Fatalf("revoked task retained output path %q", state.Tasks[0].Output)
+			}
+			if _, err = os.Stat(filepath.Join(outputDir, "result.docx")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("created output after revocation: %v", err)
+			}
+			got, err := os.ReadFile(filepath.Join(outputDir, "completed.docx"))
+			if err != nil || !bytes.Equal(got, completed) {
+				t.Fatalf("changed completed output: err=%v equal=%v", err, bytes.Equal(got, completed))
+			}
+			var last docxEvent
+			for {
+				select {
+				case last = <-events:
+				default:
+					if last.Busy || len(last.Tasks) != 1 || last.Tasks[0].Status != "failed" {
+						t.Fatalf("final status event is incomplete: %+v", last)
+					}
+					return
+				}
+			}
+		})
 	}
 }
 

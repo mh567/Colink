@@ -105,6 +105,7 @@ export function DesktopDeviceProvider({ children }: { children: ReactNode }) {
       value={{
         available: isDesktopShell(),
         event,
+        // A user switch renders before the effect clears the previous device.
         lastApprovedDeviceId:
           lastApprovedDevice && lastApprovedDevice.userId === userId
             ? lastApprovedDevice.deviceId

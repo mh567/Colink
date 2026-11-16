@@ -677,8 +677,19 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = current(); err != nil {
 		return task, err
 	}
+	if _, err = w.openGrant(s, request.SourceGrant, false); err != nil {
+		task.Output = ""
+		if format == "pdf" {
+			return task, errors.New("PDF_SOURCE_FOLDER")
+		}
+		if format == "pptx" {
+			return task, errors.New("PPTX_SOURCE_FOLDER")
+		}
+		return task, err
+	}
 	output, err = w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
+		task.Output = ""
 		if format == "pdf" {
 			return task, errors.New("PDF_OUTPUT_FOLDER")
 		}
