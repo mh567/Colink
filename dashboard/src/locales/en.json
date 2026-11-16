@@ -7486,6 +7486,8 @@
     "grantRead": "Choose read-only folder",
     "grantWrite": "Choose read/write folder",
     "grantManaged": "Add managed folder",
+    "revoke": "Revoke",
+    "revokeGrant": "Revoke access to {{path}}",
     "refresh": "Refresh local records",
     "rw": "Read/write",
     "ro": "Read-only",

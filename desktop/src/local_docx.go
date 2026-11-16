@@ -51,6 +51,7 @@ func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s
 
 type docxRequest struct {
 	RequestID   string `json:"request_id,omitempty"`
+	GrantID     string `json:"grant_id,omitempty"`
 	AgentID     string `json:"agent_id,omitempty"`
 	Format      string `json:"format,omitempty"`
 	Action      string `json:"action"`
@@ -95,6 +96,7 @@ type docxEvent struct {
 }
 type localDOCX struct {
 	mu                 sync.Mutex
+	statusMu           sync.Mutex
 	home               string
 	roots              map[string]*os.Root
 	busy               bool
@@ -293,6 +295,32 @@ func (w *localDOCX) openGrant(s docxSession, id string, write bool) (*os.Root, e
 		return root, nil
 	}
 	return nil, errors.New("目录未获当前账号和设备授权")
+}
+func (w *localDOCX) revoke(s docxSession, grantID string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	states, err := w.load()
+	if err != nil {
+		return err
+	}
+	state := states[s.scope()]
+	for i, grant := range state.Grants {
+		if grant.ID != grantID {
+			continue
+		}
+		state.Grants = append(state.Grants[:i], state.Grants[i+1:]...)
+		states[s.scope()] = state
+		if err = w.save(states); err != nil {
+			return err
+		}
+		key := s.scope() + "\n" + grant.ID
+		if root := w.roots[key]; root != nil {
+			delete(w.roots, key)
+			return root.Close()
+		}
+		return nil
+	}
+	return fileopsCopyError(copyFileGrantNotFound)
 }
 func docxFilename(name string) error {
 	if name == "" || !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || !strings.EqualFold(filepath.Ext(name), ".docx") || strings.TrimSpace(name) != name {

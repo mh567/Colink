@@ -20,6 +20,7 @@ import {
 interface DesktopDeviceState {
   available: boolean;
   event: NativeDeviceEvent | null;
+  lastApprovedDeviceId: string | null;
   busy: "connect" | "disconnect" | null;
   connect: () => void;
   disconnect: () => void;
@@ -28,6 +29,7 @@ interface DesktopDeviceState {
 const DesktopDeviceContext = createContext<DesktopDeviceState>({
   available: false,
   event: null,
+  lastApprovedDeviceId: null,
   busy: null,
   connect: () => undefined,
   disconnect: () => undefined,
@@ -36,11 +38,16 @@ const DesktopDeviceContext = createContext<DesktopDeviceState>({
 export function DesktopDeviceProvider({ children }: { children: ReactNode }) {
   const userId = useCurrentUser()?.id;
   const [event, setEvent] = useState<NativeDeviceEvent | null>(null);
+  const [lastApprovedDevice, setLastApprovedDevice] = useState<{
+    userId: number;
+    deviceId: string;
+  } | null>(null);
   const [busy, setBusy] = useState<DesktopDeviceState["busy"]>(null);
   const accepting = useRef(false);
 
   useEffect(() => {
     setEvent(null);
+    setLastApprovedDevice(null);
     setBusy(null);
     accepting.current = false;
     const onStatus = (raw: Event) => {
@@ -49,6 +56,14 @@ export function DesktopDeviceProvider({ children }: { children: ReactNode }) {
       if (!detail || !["status", "error", "disconnected"].includes(detail.type))
         return;
       setEvent(detail);
+      if (
+        userId != null &&
+        detail.type === "status" &&
+        detail.status === "approved" &&
+        detail.online
+      ) {
+        setLastApprovedDevice({ userId, deviceId: detail.device_id });
+      }
       setBusy(null);
       if (detail.type === "disconnected") accepting.current = false;
     };
@@ -90,6 +105,10 @@ export function DesktopDeviceProvider({ children }: { children: ReactNode }) {
       value={{
         available: isDesktopShell(),
         event,
+        lastApprovedDeviceId:
+          lastApprovedDevice && lastApprovedDevice.userId === userId
+            ? lastApprovedDevice.deviceId
+            : null,
         busy,
         connect: () => run("connect"),
         disconnect: () => run("disconnect"),

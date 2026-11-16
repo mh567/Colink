@@ -330,6 +330,12 @@ func (c *deviceClient) currentDOCX(s docxSession) error {
 	return c.currentDOCXLocked(s)
 }
 
+func (c *deviceClient) sameDOCXGeneration(s docxSession) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return s.Generation != 0 && c.generation == s.Generation
+}
+
 func (c *deviceClient) currentDOCXLocked(s docxSession) error {
 	current := c.docx
 	if current.Secret == "" || current.Context == nil || current.Context.Err() != nil {

@@ -7486,6 +7486,8 @@
     "grantRead": "选择只读目录",
     "grantWrite": "选择读写目录",
     "grantManaged": "添加受管目录",
+    "revoke": "撤销",
+    "revokeGrant": "撤销 {{path}} 的目录授权",
     "refresh": "刷新本机记录",
     "rw": "读写",
     "ro": "只读",
