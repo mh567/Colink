@@ -53,6 +53,18 @@ func TestLocalFileOverwritePersistsAndReplaysTheConfirmedDocument(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
+			applyCalls := 0
+			commitHeldGrantLock := false
+			session.Apply = func(apply func() error) error {
+				applyCalls++
+				if worker.mu.TryLock() {
+					worker.mu.Unlock()
+					t.Error("destructive commit did not hold the grant lock")
+				} else {
+					commitHeldGrantLock = true
+				}
+				return apply()
+			}
 			request := docxRequest{
 				Action: "overwrite", RequestID: "0123456789abcdef0123456789abcdef", Instruction: "整理",
 				SourceGrant: grant.ID, Source: "周报.docx", OutputGrant: grant.ID, Output: "周报.docx",
@@ -83,6 +95,9 @@ func TestLocalFileOverwritePersistsAndReplaysTheConfirmedDocument(t *testing.T) 
 			if err != nil || task.Status != "completed" || task.Output != path {
 				t.Fatalf("overwrite: %+v, %v", task, err)
 			}
+			if applyCalls != 1 || !commitHeldGrantLock {
+				t.Fatalf("destructive commit calls=%d heldGrantLock=%v", applyCalls, commitHeldGrantLock)
+			}
 			if text, docErr := readDOCX(bytes.NewReader(result), int64(len(result))); docErr != nil || text != "更新后的周报\n" {
 				t.Fatalf("updated document: %q, %v", text, docErr)
 			}
@@ -98,6 +113,59 @@ func TestLocalFileOverwritePersistsAndReplaysTheConfirmedDocument(t *testing.T) 
 				t.Fatal("replay changed the document again")
 			}
 		})
+	}
+}
+
+func TestLocalFileOverwriteStopsAfterSourceGrantRevoke(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/generate") {
+			w.Write([]byte(`{"text":"更新后的周报"}`))
+			return
+		}
+		w.Write([]byte(`{"allowed":true}`))
+	}))
+	defer server.Close()
+
+	sourceDir, outputDir := t.TempDir(), t.TempDir()
+	source, err := makeDOCX("来源")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(sourceDir, "input.docx"), source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	original, err := makeDOCX("原件")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(outputDir, "report.docx")
+	if err = os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	session := docxSession{Base: server.URL, DeviceID: "device", UserID: 1, Secret: "secret", Context: context.Background()}
+	worker := newLocalDOCX(t.TempDir())
+	sourceGrant, err := worker.grant(session, sourceDir, "ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputGrant, err := worker.grant(session, outputDir, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.confirmDestructive = func(context.Context, Locale, string, string) (bool, error) {
+		return true, worker.revoke(session, sourceGrant.ID)
+	}
+	request := docxRequest{
+		Action: "overwrite", RequestID: "abcdef0123456789abcdef0123456789", Instruction: "整理",
+		SourceGrant: sourceGrant.ID, Source: "input.docx", OutputGrant: outputGrant.ID, Output: "report.docx",
+	}
+	task, err := worker.run(session, request, func() error { return nil })
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if err == nil || task.Status != "failed" || !bytes.Equal(got, original) {
+		t.Fatalf("overwrite continued after source grant revoke: task=%+v err=%v unchanged=%v", task, err, bytes.Equal(got, original))
 	}
 }
 

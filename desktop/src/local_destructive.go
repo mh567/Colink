@@ -286,9 +286,6 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}
-	if _, err = w.openGrant(s, request.OutputGrant, true); err != nil {
-		return task, err
-	}
 	if err = current(); err != nil {
 		return task, err
 	}
@@ -312,10 +309,25 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		}
 		return target.commit(ctx, data, proof)
 	}
-	if s.Apply != nil {
-		err = s.Apply(apply)
-	} else {
-		err = apply()
+	grantChecked, sourceGrantInvalid := false, false
+	err = w.withGrant(s, request.OutputGrant, true, func(*os.Root) error {
+		grantChecked = true
+		if request.Action == "overwrite" {
+			if _, err := w.openGrantLocked(s, request.SourceGrant, false); err != nil {
+				sourceGrantInvalid = true
+				return err
+			}
+		}
+		if err := current(); err != nil {
+			return err
+		}
+		if s.Apply != nil {
+			return s.Apply(apply)
+		}
+		return apply()
+	})
+	if err != nil && (!grantChecked || sourceGrantInvalid) {
+		task.Output = ""
 	}
 	if err != nil && !errors.Is(err, errDestructiveTargetChanged) {
 		task.Status = "interrupted"

@@ -223,6 +223,48 @@ func TestLocalDOCXChecksWritePermissionAfterModelAndSessionBeforeWriting(t *test
 	}
 }
 
+func TestLocalDOCXOutputWriteHoldsGrantLock(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/generate") {
+			w.Write([]byte(`{"text":"结果"}`))
+			return
+		}
+		w.Write([]byte(`{"allowed":true}`))
+	}))
+	defer server.Close()
+
+	directory := t.TempDir()
+	source, err := makeDOCX("原文")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(directory, "input.docx"), source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	worker := newLocalDOCX(t.TempDir())
+	session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
+	grant, err := worker.grant(session, directory, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyCalls := 0
+	session.Apply = func(apply func() error) error {
+		applyCalls++
+		if worker.mu.TryLock() {
+			worker.mu.Unlock()
+			t.Error("output write did not hold the grant lock")
+		}
+		return apply()
+	}
+	_, err = worker.run(session, docxRequest{SourceGrant: grant.ID, Source: "input.docx", OutputGrant: grant.ID, Output: "output.docx", Instruction: "整理"}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applyCalls != 1 {
+		t.Fatalf("output write ran through Apply %d times, want 1", applyCalls)
+	}
+}
+
 func TestLocalDOCXRevokeDuringModelCallStopsOutput(t *testing.T) {
 	for _, revokedGrant := range []string{"source", "output"} {
 		t.Run(revokedGrant, func(t *testing.T) {
