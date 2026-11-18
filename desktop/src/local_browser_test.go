@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,6 +36,15 @@ func (p *browserTestProcess) perform(_ context.Context, action browserAction) (b
 	p.actions = append(p.actions, action)
 	if action.Action == "query" {
 		return browserResult{Text: "DEMO-42 库存 7", Title: "库存", URL: "https://intranet.test/result"}, nil
+	}
+	if action.Action == "upload" {
+		return browserResult{File: filepath.Base(action.FilePath), URL: action.URL, Title: "订单"}, nil
+	}
+	if action.Action == "download" {
+		if action.DownloadPath != "" {
+			_ = os.WriteFile(filepath.Join(action.DownloadPath, "export.xlsx"), []byte("downloaded-content"), 0600)
+		}
+		return browserResult{URL: action.URL, Title: "订单"}, nil
 	}
 	return browserResult{}, nil
 }
@@ -129,5 +141,201 @@ func TestLocalBrowserProfilesFollowTheEmployeeAndDevice(t *testing.T) {
 		if !worker.stopped {
 			t.Fatal("previous employee or device still has a running browser")
 		}
+	}
+}
+
+func TestBrowserRequestUploadAndDownloadValidation(t *testing.T) {
+	requestID := strings.Repeat("a", 32)
+	validUpload := fmt.Sprintf(`{"request_id":"%s","action":"upload","tab_id":"%s","url":"https://intranet.test","grant_id":"grant-1","file":"doc.pdf","selector":"input[type=file]"}`, requestID, sampleBrowserTab)
+	req, err := parseBrowserRequest(url.QueryEscape(validUpload))
+	if err != nil || req.Action != "upload" || req.GrantID != "grant-1" || req.File != "doc.pdf" || req.Selector != "input[type=file]" {
+		t.Fatalf("valid upload failed: req=%+v, err=%v", req, err)
+	}
+
+	validDownload := fmt.Sprintf(`{"request_id":"%s","action":"download","tab_id":"%s","url":"https://intranet.test","grant_id":"grant-2","file":"export.xlsx","download_url":"https://intranet.test/dl","selector":"#download-btn"}`, requestID, sampleBrowserTab)
+	req, err = parseBrowserRequest(url.QueryEscape(validDownload))
+	if err != nil || req.Action != "download" || req.GrantID != "grant-2" || req.File != "export.xlsx" || req.DownloadURL != "https://intranet.test/dl" || req.Selector != "#download-btn" {
+		t.Fatalf("valid download failed: req=%+v, err=%v", req, err)
+	}
+
+	invalidRequests := []string{
+		fmt.Sprintf(`{"request_id":"%s","action":"upload","tab_id":"%s","url":"https://intranet.test","grant_id":"g1","file":"../escape.txt"}`, requestID, sampleBrowserTab),
+		fmt.Sprintf(`{"request_id":"%s","action":"upload","tab_id":"%s","url":"https://intranet.test","grant_id":"g1","file":"/etc/passwd"}`, requestID, sampleBrowserTab),
+		fmt.Sprintf(`{"request_id":"%s","action":"upload","tab_id":"%s","url":"https://intranet.test","grant_id":"g1","file":"sub/dir.txt"}`, requestID, sampleBrowserTab),
+		fmt.Sprintf(`{"request_id":"%s","action":"upload","tab_id":"%s","url":"https://intranet.test","grant_id":"","file":"doc.pdf"}`, requestID, sampleBrowserTab),
+		fmt.Sprintf(`{"request_id":"%s","action":"download","tab_id":"%s","url":"https://intranet.test","grant_id":"g1","file":".."}`, requestID, sampleBrowserTab),
+		fmt.Sprintf(`{"request_id":"%s","action":"download","tab_id":"%s","url":"https://intranet.test","grant_id":"g1","file":""}`, requestID, sampleBrowserTab),
+	}
+	for _, body := range invalidRequests {
+		if _, err := parseBrowserRequest(url.QueryEscape(body)); err == nil {
+			t.Fatalf("accepted invalid browser file request: %s", body)
+		}
+	}
+}
+
+func TestLocalBrowserUploadRequiresDirectoryGrant(t *testing.T) {
+	tempHome := t.TempDir()
+	grantDir := t.TempDir()
+	testFile := filepath.Join(grantDir, "upload.pdf")
+	if err := os.WriteFile(testFile, []byte("pdf-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := &browserTestProcess{}
+	service := newLocalBrowser(tempHome)
+	service.authorize = func(_ docxSession, _ string) error { return nil }
+	service.start = func(_ context.Context, _ docxSession, _ string) (browserProcess, error) {
+		return worker, nil
+	}
+	session := docxSession{
+		Base: "https://colink.test", UserID: 1, DeviceID: "laptop", Secret: "session",
+		Context: context.Background(),
+	}
+	current := func() error { return nil }
+
+	// 1. Without grant -> fails
+	reqNoGrant := browserRequest{
+		browserAction: browserAction{Action: "upload", TabID: sampleBrowserTab, URL: "https://intranet.test"},
+		GrantID:       "nonexistent-grant",
+		File:          "upload.pdf",
+	}
+	if _, err := service.run(session, reqNoGrant, current); err == nil {
+		t.Fatal("expected upload without grant to fail")
+	}
+
+	// Add grant
+	grant, err := service.docx.grant(session, grantDir, "ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Missing file inside valid grant -> fails
+	reqMissingFile := browserRequest{
+		browserAction: browserAction{Action: "upload", TabID: sampleBrowserTab, URL: "https://intranet.test"},
+		GrantID:       grant.ID,
+		File:          "missing.pdf",
+	}
+	if _, err := service.run(session, reqMissingFile, current); err == nil {
+		t.Fatal("expected upload of missing file to fail")
+	}
+
+	// 3. Valid file inside grant -> succeeds
+	reqValid := browserRequest{
+		browserAction: browserAction{Action: "upload", TabID: sampleBrowserTab, URL: "https://intranet.test"},
+		GrantID:       grant.ID,
+		File:          "upload.pdf",
+		Selector:      "input[type=file]",
+	}
+	res, err := service.run(session, reqValid, current)
+	if err != nil {
+		t.Fatalf("valid upload failed: %v", err)
+	}
+	if res.File != "upload.pdf" {
+		t.Fatalf("expected result file upload.pdf, got %s", res.File)
+	}
+	if len(worker.actions) == 0 || worker.actions[len(worker.actions)-1].FilePath != testFile {
+		t.Fatalf("worker did not receive full file path: %+v", worker.actions)
+	}
+
+	// 4. Permission denied by server
+	service.authorize = func(_ docxSession, action string) error {
+		if action == "upload" {
+			return errBrowserDenied
+		}
+		return nil
+	}
+	if _, err := service.run(session, reqValid, current); !errors.Is(err, errBrowserDenied) {
+		t.Fatalf("expected errBrowserDenied, got %v", err)
+	}
+}
+
+func TestLocalBrowserDownloadConfirmsOverwriteAndWritesToGrant(t *testing.T) {
+	tempHome := t.TempDir()
+	grantDir := t.TempDir()
+
+	worker := &browserTestProcess{}
+	service := newLocalBrowser(tempHome)
+	service.authorize = func(_ docxSession, _ string) error { return nil }
+	service.start = func(_ context.Context, _ docxSession, _ string) (browserProcess, error) {
+		return worker, nil
+	}
+	session := docxSession{
+		Base: "https://colink.test", UserID: 1, DeviceID: "laptop", Secret: "session",
+		Context: context.Background(),
+	}
+	current := func() error { return nil }
+
+	// Add rw grant
+	grant, err := service.docx.grant(session, grantDir, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initial download to new file
+	reqDownload := browserRequest{
+		browserAction: browserAction{Action: "download", TabID: sampleBrowserTab, URL: "https://intranet.test"},
+		GrantID:       grant.ID,
+		File:          "export.xlsx",
+		DownloadURL:   "https://intranet.test/export.xlsx",
+	}
+	res, err := service.run(session, reqDownload, current)
+	if err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if res.File != "export.xlsx" || res.Size != int64(len("downloaded-content")) {
+		t.Fatalf("unexpected download result: %+v", res)
+	}
+	savedContent, err := os.ReadFile(filepath.Join(grantDir, "export.xlsx"))
+	if err != nil || string(savedContent) != "downloaded-content" {
+		t.Fatalf("unexpected saved file content: %s, err: %v", string(savedContent), err)
+	}
+
+	// 2. Overwrite download with confirmation REJECTED
+	confirmationCalled := false
+	service.confirmDestructive = func(_ context.Context, _ Locale, action, path string) (bool, error) {
+		confirmationCalled = true
+		if action != "overwrite" || path != filepath.Join(grantDir, "export.xlsx") {
+			t.Fatalf("unexpected confirm args: action=%s, path=%s", action, path)
+		}
+		return false, nil // user rejects overwrite
+	}
+
+	if _, err := service.run(session, reqDownload, current); !errors.Is(err, errDestructiveCancelled) {
+		t.Fatalf("expected errDestructiveCancelled, got %v", err)
+	}
+	if !confirmationCalled {
+		t.Fatal("confirmDestructive was not called on overwrite")
+	}
+	// Verify original file content is untouched!
+	savedContent, err = os.ReadFile(filepath.Join(grantDir, "export.xlsx"))
+	if err != nil || string(savedContent) != "downloaded-content" {
+		t.Fatalf("file was modified after cancellation: %s", string(savedContent))
+	}
+
+	// 3. Overwrite download with confirmation ACCEPTED
+	service.confirmDestructive = func(_ context.Context, _ Locale, action, path string) (bool, error) {
+		return true, nil // user accepts
+	}
+	res, err = service.run(session, reqDownload, current)
+	if err != nil {
+		t.Fatalf("confirmed overwrite failed: %v", err)
+	}
+	if res.File != "export.xlsx" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+
+	// 4. Read-only grant rejected for download
+	roDir := t.TempDir()
+	roGrant, err := service.docx.grant(session, roDir, "ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqRODownload := browserRequest{
+		browserAction: browserAction{Action: "download", TabID: sampleBrowserTab, URL: "https://intranet.test"},
+		GrantID:       roGrant.ID,
+		File:          "export.xlsx",
+	}
+	if _, err := service.run(session, reqRODownload, current); err == nil {
+		t.Fatal("expected download into read-only grant to fail")
 	}
 }

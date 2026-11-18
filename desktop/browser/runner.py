@@ -25,6 +25,8 @@ ACTIONS = {
     "close_tab": {"tab_id"},
     "query": {"tab_id", "url"},
     "capture": {"tab_id", "url"},
+    "upload": {"tab_id", "url", "file_path", "selector"},
+    "download": {"tab_id", "url", "download_path", "download_url", "selector"},
     "close": set(),
 }
 
@@ -51,7 +53,7 @@ def page_url(url: str) -> SplitResult:
     raise BrowserError("BROWSER_INVALID_URL")
 
 
-def request_args(line: bytes) -> tuple[str, str, str]:
+def request_args(line: bytes) -> tuple[str, str, str, dict[str, Any]]:
     try:
         value = json.loads(line.decode("utf-8"))
     except (ValueError, RecursionError):
@@ -71,9 +73,50 @@ def request_args(line: bytes) -> tuple[str, str, str]:
         raise BrowserError("BROWSER_INVALID_REQUEST")
     if "tab_id" in ACTIONS[action] and not tab_id:
         raise BrowserError("BROWSER_INVALID_REQUEST")
-    if action in {"query", "capture"} or url:
+    if action in {"query", "capture", "upload", "download"} or url:
         page_url(url)
-    return action, url, tab_id
+    extra: dict[str, Any] = {}
+    if action == "upload":
+        file_path = value.get("file_path", "")
+        if not isinstance(file_path, str) or not file_path:
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        path = Path(file_path)
+        if not path.is_absolute() or not path.is_file():
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        extra["file_path"] = str(path.resolve(strict=True))
+        selector = value.get("selector", "")
+        if selector:
+            if (
+                not isinstance(selector, str)
+                or len(selector) > 1024
+                or any(ord(c) < 32 for c in selector)
+            ):
+                raise BrowserError("BROWSER_INVALID_REQUEST")
+            extra["selector"] = selector
+    elif action == "download":
+        download_path = value.get("download_path", "")
+        if not isinstance(download_path, str) or not download_path:
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        path = Path(download_path)
+        if not path.is_absolute() or not path.is_dir():
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        extra["download_path"] = str(path.resolve(strict=True))
+        download_url = value.get("download_url", "")
+        if download_url:
+            if not isinstance(download_url, str):
+                raise BrowserError("BROWSER_INVALID_REQUEST")
+            page_url(download_url)
+            extra["download_url"] = download_url
+        selector = value.get("selector", "")
+        if selector:
+            if (
+                not isinstance(selector, str)
+                or len(selector) > 1024
+                or any(ord(c) < 32 for c in selector)
+            ):
+                raise BrowserError("BROWSER_INVALID_REQUEST")
+            extra["selector"] = selector
+    return action, url, tab_id, extra
 
 
 START_TIMEOUT = 12
@@ -179,7 +222,88 @@ def display_url(url: str) -> str:
         return ""
 
 
+def _chrome_for_testing_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    pw_roots: list[Path] = []
+    if env_pw := os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        pw_roots.append(Path(env_pw))
+    if sys.platform == "darwin":
+        pw_roots.extend([
+            Path.home() / "Library" / "Caches" / "ms-playwright",
+            Path("/Library/Caches/ms-playwright"),
+        ])
+        candidates.extend([
+            Path(
+                "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+            ),
+            Path.home()
+            / "Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        ])
+    elif sys.platform == "win32":
+        if local := os.environ.get("LOCALAPPDATA"):
+            pw_roots.append(Path(local) / "ms-playwright")
+        for root_name in (
+            "ProgramW6432",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "LOCALAPPDATA",
+        ):
+            if root_val := os.environ.get(root_name):
+                candidates.append(
+                    Path(root_val) / "Google/Chrome for Testing/Application/chrome.exe"
+                )
+    elif sys.platform.startswith("linux"):
+        pw_roots.extend([
+            Path.home() / ".cache" / "ms-playwright",
+            Path("/root/.cache/ms-playwright"),
+        ])
+        candidates.append(Path("/usr/bin/google-chrome-for-testing"))
+
+    for root in pw_roots:
+        if root.is_dir():
+            try:
+                cdirs = sorted(
+                    [p for p in root.glob("chromium-*") if p.is_dir()],
+                    key=lambda p: (
+                        int(p.name.rsplit("-", 1)[-1])
+                        if p.name.rsplit("-", 1)[-1].isdigit()
+                        else -1
+                    ),
+                    reverse=True,
+                )
+                for cdir in cdirs:
+                    if sys.platform == "darwin":
+                        cft = (
+                            "Google Chrome for Testing.app",
+                            "Contents",
+                            "MacOS",
+                            "Google Chrome for Testing",
+                        )
+                        candidates.extend([
+                            cdir.joinpath("chrome-mac-arm64", *cft),
+                            cdir.joinpath("chrome-mac-x64", *cft),
+                            cdir.joinpath(
+                                "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"
+                            ),
+                        ])
+                    elif sys.platform == "win32":
+                        candidates.extend([
+                            cdir / "chrome-win64" / "chrome.exe",
+                            cdir / "chrome-win" / "chrome.exe",
+                        ])
+                    else:
+                        candidates.extend([
+                            cdir / "chrome-linux64" / "chrome",
+                            cdir / "chrome-linux" / "chrome",
+                        ])
+            except OSError:
+                pass
+
+    return candidates
+
+
 def browser_executable() -> Path | None:
+    cft = _chrome_for_testing_candidates()
     if sys.platform == "win32":
         roots = [
             os.environ.get(name)
@@ -189,13 +313,13 @@ def browser_executable() -> Path | None:
             Path("Google/Chrome/Application/chrome.exe"),
             Path("Microsoft/Edge/Application/msedge.exe"),
         )
-        candidates = [Path(root) / suffix for root in roots if root for suffix in suffixes]
+        candidates = [*cft, *[Path(root) / suffix for root in roots if root for suffix in suffixes]]
     elif sys.platform == "darwin":
-        candidates = [Path("/Applications/Chromium.app/Contents/MacOS/Chromium")]
+        candidates = [*cft, Path("/Applications/Chromium.app/Contents/MacOS/Chromium")]
     elif sys.platform.startswith("linux"):
-        candidates = [Path("/usr/bin/chromium"), Path("/usr/bin/chromium-browser")]
+        candidates = [*cft, Path("/usr/bin/chromium"), Path("/usr/bin/chromium-browser")]
     else:
-        candidates = []
+        candidates = [*cft]
     return next((path for path in candidates if path.is_absolute() and path.is_file()), None)
 
 
@@ -563,7 +687,9 @@ class LocalBrowser:
             raise BrowserError("BROWSER_READ_BLOCKED")
         return result
 
-    async def action(self, name: str, url: str, tab_id: str) -> dict[str, Any]:
+    async def action(
+        self, name: str, url: str, tab_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         if name == "close":
             await self.close()
             return {}
@@ -580,7 +706,212 @@ class LocalBrowser:
             await self.connection().send(method, {"targetId": tab_id})
         if name in {"query", "capture"}:
             return await self.inspect(tab_id, url, capture=name == "capture")
+        if name == "upload":
+            return await self.upload(
+                tab_id,
+                url,
+                file_path=kwargs["file_path"],
+                selector=kwargs.get("selector", ""),
+            )
+        if name == "download":
+            return await self.download(
+                tab_id,
+                url,
+                download_path=kwargs["download_path"],
+                download_url=kwargs.get("download_url", ""),
+                selector=kwargs.get("selector", ""),
+            )
         return {"tabs": await self.tabs()}
+
+    async def upload(
+        self, tab_id: str, expected: str, *, file_path: str, selector: str = ""
+    ) -> dict[str, Any]:
+        from octop_browser.cdp.client import CDPSessionError
+
+        expected = display_url(expected)
+        source = (await self.selected_tab(tab_id))["url"]
+        if (
+            not expected
+            or display_url(source) != expected
+            or self.listed_urls.get(tab_id) != source
+        ):
+            raise BrowserError("BROWSER_READ_BLOCKED")
+
+        client = self.connection()
+        session_id = ""
+        try:
+            session_id = (
+                await client.send("Target.attachToTarget", {"targetId": tab_id, "flatten": True})
+            )["sessionId"]
+            page = PageSession(client, session_id)
+            context, before = await self.wait_for_page(page, source, capture=False)
+
+            target_selector = selector or 'input[type="file"]'
+            eval_result = await page.send(
+                "Runtime.evaluate",
+                {
+                    "expression": f"document.querySelector({json.dumps(target_selector)})",
+                    "contextId": context,
+                    "returnByValue": False,
+                },
+            )
+            remote_object = eval_result.get("result", {})
+            object_id = remote_object.get("objectId")
+            if not object_id or remote_object.get("subtype") == "null":
+                raise BrowserError("BROWSER_ELEMENT_NOT_FOUND")
+
+            await page.send(
+                "DOM.setFileInputFiles",
+                {
+                    "files": [file_path],
+                    "objectId": object_id,
+                },
+            )
+            await page.send(
+                "Runtime.callFunctionOn",
+                {
+                    "objectId": object_id,
+                    "functionDeclaration": """function() {
+                        this.dispatchEvent(new Event('input', { bubbles: true }));
+                        this.dispatchEvent(new Event('change', { bubbles: true }));
+                    }""",
+                    "returnByValue": True,
+                },
+            )
+            after = await self.inspect_page(page, context, source, read_text=False, capture=False)
+            if (
+                not after["ready"]
+                or before["document"] != after["document"]
+                or (await self.selected_tab(tab_id))["url"] != source
+            ):
+                raise BrowserError("BROWSER_READ_BLOCKED")
+            return {
+                "uploaded": True,
+                "file": Path(file_path).name,
+                "url": expected,
+                "title": before["title"][:512],
+            }
+        except (CDPSessionError, TimeoutError):
+            raise BrowserError("BROWSER_TASK_FAILED") from None
+        finally:
+            if session_id:
+                with contextlib.suppress(CDPSessionError):
+                    await client.send("Target.detachFromTarget", {"sessionId": session_id})
+
+    async def download(
+        self,
+        tab_id: str,
+        expected: str,
+        *,
+        download_path: str,
+        download_url: str = "",
+        selector: str = "",
+    ) -> dict[str, Any]:
+        from octop_browser.cdp.client import CDPSessionError
+
+        expected = display_url(expected)
+        source = (await self.selected_tab(tab_id))["url"]
+        if (
+            not expected
+            or display_url(source) != expected
+            or self.listed_urls.get(tab_id) != source
+        ):
+            raise BrowserError("BROWSER_READ_BLOCKED")
+
+        target_dir = Path(download_path)
+        existing = set(target_dir.iterdir()) if target_dir.exists() else set()
+
+        client = self.connection()
+        session_id = ""
+        try:
+            session_id = (
+                await client.send("Target.attachToTarget", {"targetId": tab_id, "flatten": True})
+            )["sessionId"]
+            page = PageSession(client, session_id)
+            context, before = await self.wait_for_page(page, source, capture=False)
+
+            await page.send(
+                "Page.setDownloadBehavior",
+                {
+                    "behavior": "allow",
+                    "downloadPath": str(target_dir),
+                },
+            )
+
+            if selector:
+                eval_result = await page.send(
+                    "Runtime.evaluate",
+                    {
+                        "expression": f"document.querySelector({json.dumps(selector)})",
+                        "contextId": context,
+                        "returnByValue": False,
+                    },
+                )
+                remote_object = eval_result.get("result", {})
+                object_id = remote_object.get("objectId")
+                if not object_id or remote_object.get("subtype") == "null":
+                    raise BrowserError("BROWSER_ELEMENT_NOT_FOUND")
+                await page.send(
+                    "Runtime.callFunctionOn",
+                    {
+                        "objectId": object_id,
+                        "functionDeclaration": "function() { this.click(); }",
+                        "returnByValue": True,
+                    },
+                )
+            elif download_url:
+                await page.send(
+                    "Runtime.evaluate",
+                    {
+                        "expression": f"""(() => {{
+                            const a = document.createElement('a');
+                            a.href = {json.dumps(download_url)};
+                            a.download = '';
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                        }})()""",
+                        "contextId": context,
+                        "returnByValue": True,
+                    },
+                )
+
+            downloaded: Path | None = None
+            async with asyncio.timeout(COMMAND_TIMEOUT):
+                while True:
+                    current_files = set(target_dir.iterdir()) if target_dir.exists() else set()
+                    new_files = [
+                        f
+                        for f in (current_files - existing)
+                        if not f.name.endswith(".crdownload") and not f.name.startswith(".")
+                    ]
+                    in_progress = [f for f in current_files if f.name.endswith(".crdownload")]
+                    if new_files and not in_progress:
+                        downloaded = new_files[0]
+                        break
+                    await asyncio.sleep(0.05)
+
+            if downloaded is None or not downloaded.is_file():
+                raise BrowserError("BROWSER_TASK_FAILED")
+
+            return {
+                "downloaded": True,
+                "file_path": str(downloaded),
+                "file_name": downloaded.name,
+                "size": downloaded.stat().st_size,
+                "url": expected,
+                "title": before["title"][:512],
+            }
+        except (CDPSessionError, TimeoutError):
+            raise BrowserError("BROWSER_TASK_FAILED") from None
+        finally:
+            with contextlib.suppress(Exception):
+                if session_id:
+                    await page.send(
+                        "Page.setDownloadBehavior",
+                        {"behavior": "deny"},
+                    )
+                    await client.send("Target.detachFromTarget", {"sessionId": session_id})
 
     async def close(self) -> None:
         client, process = self.client, self.process
@@ -615,8 +946,8 @@ async def serve(profile: Path, source: BinaryIO, output: TextIO) -> None:
             try:
                 if len(line) > REQUEST_LIMIT:
                     raise BrowserError("BROWSER_INVALID_REQUEST")
-                action, url, tab_id = request_args(line)
-                reply = await browser.action(action, url, tab_id)
+                action, url, tab_id, extra = request_args(line)
+                reply = await browser.action(action, url, tab_id, **extra)
             except BrowserError as exc:
                 reply = {"error": str(exc)}
             except Exception:

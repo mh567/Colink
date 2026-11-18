@@ -7460,6 +7460,24 @@
     "incompleteResult": "This result uses only part of the page content.",
     "source": "Source",
     "screenshot": "Screenshot of the current page",
+    "uploadTitle": "Upload Web Attachment",
+    "uploadHint": "Upload a file from an authorized directory to the current page.",
+    "uploadGrant": "Select upload directory grant",
+    "uploadFile": "Upload filename",
+    "uploadSelector": "File input selector (optional)",
+    "uploadBtn": "Upload attachment to page",
+    "uploadSuccess": "Attachment uploaded successfully: {{file}}",
+    "downloadTitle": "Download Web Artifact",
+    "downloadHint": "Save web artifacts to a read-write authorized directory. Overwriting existing files requires confirmation.",
+    "downloadGrant": "Select download directory grant",
+    "downloadFile": "Destination filename",
+    "downloadUrl": "Download link (optional)",
+    "downloadSelector": "Download trigger selector (optional)",
+    "downloadBtn": "Download artifact to authorized directory",
+    "downloadSuccess": "Artifact saved successfully: {{file}} ({{size}} bytes)",
+    "noGrants": "No directory grants available. Grant a directory in Local Files.",
+    "noRwGrants": "No writable directory grants available. Grant a read-write directory in Local Files.",
+    "selectGrant": "Select directory grant",
     "errors": {
       "BROWSER_INVALID_REQUEST": "Refresh the tabs and try the browser operation again.",
       "BROWSER_INVALID_URL": "Enter a valid HTTP or HTTPS page address.",
@@ -7476,7 +7494,10 @@
       "BROWSER_MODEL_FAILED": "The query failed. Ask your administrator to check the enterprise model configuration.",
       "BROWSER_SERVICE_UNAVAILABLE": "The browser service is temporarily unavailable. Try again shortly.",
       "BROWSER_TIMEOUT": "The browser operation timed out. Try again.",
-      "BROWSER_NO_RESPONSE": "The desktop client did not respond. Reconnect and try again."
+      "BROWSER_NO_RESPONSE": "The desktop client did not respond. Reconnect and try again.",
+      "OPERATION_CANCELLED": "File overwrite operation was cancelled.",
+      "FILE_NOT_FOUND": "Authorized file does not exist or cannot be read.",
+      "FILE_SAVE_FAILED": "Could not save downloaded file."
     }
   },
   "localDocx": {

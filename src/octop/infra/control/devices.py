@@ -140,9 +140,23 @@ class DeviceManager:
         ):
             raise OctopError(ErrorCode.FORBIDDEN, f"{operation} not authorized")
 
-    def authorize_browser(self, user: User, device_id: str, session_token: str) -> None:
+    def authorize_browser(
+        self,
+        user: User,
+        device_id: str,
+        session_token: str,
+        *,
+        action: str = "open",
+    ) -> None:
+        required = {"local_browser"}
+        if action == "upload":
+            required.add("local_files_read")
+        elif action == "download":
+            required.add("local_files_create")
+        elif action == "overwrite":
+            required.add("local_files_overwrite")
         self._require_native_grants(
-            user, device_id, session_token, {"local_browser"}, operation="local browser operation"
+            user, device_id, session_token, required, operation="local browser operation"
         )
 
     def authorize_docx(

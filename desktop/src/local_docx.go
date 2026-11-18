@@ -308,6 +308,20 @@ func (w *localDOCX) withGrant(s docxSession, id string, write bool, operation fu
 	}
 	return operation(root)
 }
+func (w *localDOCX) grantPath(s docxSession, id string) (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	states, err := w.load()
+	if err != nil {
+		return "", err
+	}
+	for _, grant := range states[s.scope()].Grants {
+		if grant.ID == id {
+			return grant.Path, nil
+		}
+	}
+	return "", errors.New("目录未获当前账号和设备授权")
+}
 func (w *localDOCX) revoke(s docxSession, grantID string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

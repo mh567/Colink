@@ -127,7 +127,7 @@ def browser(runner, tmp_path, monkeypatch):
             method, params = command["method"], command["params"]
             session_id = command.get("sessionId")
             self.commands.append((method, params))
-            if method.startswith(("Page.", "Runtime.")):
+            if method.startswith(("Page.", "Runtime.", "DOM.")):
                 assert session_id == "session:A"
                 result = self.page_result(method, params)
             else:
@@ -175,8 +175,27 @@ def browser(runner, tmp_path, monkeypatch):
                 return {"frameTree": {"frame": {"id": "frame", "url": url}}}
             if method == "Page.createIsolatedWorld":
                 return {"executionContextId": 17}
+            if method == "Page.setDownloadBehavior":
+                self.download_behavior = params
+                if params.get("behavior") == "allow":
+                    self.last_allowed_download = params
+                return {}
+            if method == "DOM.setFileInputFiles":
+                self.uploaded_files = params["files"]
+                return {}
+            if method == "Runtime.callFunctionOn":
+                if hasattr(self, "on_call_function"):
+                    self.on_call_function()
+                return {"result": {"value": None}}
             if method == "Runtime.evaluate":
-                if "document: performance.timeOrigin" not in params["expression"]:
+                expr = params["expression"]
+                if "document.querySelector" in expr:
+                    if getattr(self, "element_not_found", False):
+                        return {"result": {"subtype": "null"}}
+                    return {"result": {"objectId": "obj:file_input"}}
+                if "document: performance.timeOrigin" not in expr:
+                    if hasattr(self, "on_evaluate"):
+                        self.on_evaluate()
                     return {"result": {"value": "{}"}}
                 return {
                     "result": {
@@ -567,3 +586,176 @@ def test_edge_private_pipe_and_read_only_evidence(runner, tmp_path, monkeypatch)
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_upload_file_validates_path_and_sets_file_input(runner, browser, tmp_path):
+    upload_file = tmp_path / "attachment.docx"
+    upload_file.write_bytes(b"sample-docx-content")
+
+    # Reject non-existent file or relative path
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {
+            "action": "upload",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "file_path": str(tmp_path / "missing.docx"),
+        },
+        {
+            "action": "upload",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "file_path": "attachment.docx",
+        },
+    ) == [
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"error": "BROWSER_INVALID_REQUEST"},
+        {"error": "BROWSER_INVALID_REQUEST"},
+    ]
+
+    # Reject mismatched URL
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {
+            "action": "upload",
+            "tab_id": "A",
+            "url": "https://other.test/orders",
+            "file_path": str(upload_file),
+        },
+    ) == [
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"error": "BROWSER_READ_BLOCKED"},
+    ]
+
+    # Successful upload
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {
+            "action": "upload",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "file_path": str(upload_file),
+        },
+    ) == [
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {
+            "uploaded": True,
+            "file": "attachment.docx",
+            "url": "https://intranet.test/orders",
+            "title": "订单",
+        },
+    ]
+    assert browser.uploaded_files == [str(upload_file)]
+
+
+def test_download_validates_path_and_handles_completion(runner, browser, tmp_path):
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir()
+
+    # Reject non-existent download directory or relative path
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {
+            "action": "download",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "download_path": str(tmp_path / "missing_dir"),
+        },
+        {
+            "action": "download",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "download_path": "downloads",
+        },
+    ) == [
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"error": "BROWSER_INVALID_REQUEST"},
+        {"error": "BROWSER_INVALID_REQUEST"},
+    ]
+
+    # Successful download: simulate downloaded file landing in directory
+    def on_eval():
+        (download_dir / "report.xlsx").write_bytes(b"excel-data")
+
+    browser.on_evaluate = on_eval
+
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {
+            "action": "download",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "download_path": str(download_dir),
+            "download_url": "https://intranet.test/export",
+        },
+    ) == [
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {
+            "downloaded": True,
+            "file_path": str(download_dir / "report.xlsx"),
+            "file_name": "report.xlsx",
+            "size": 10,
+            "url": "https://intranet.test/orders",
+            "title": "订单",
+        },
+    ]
+    assert browser.last_allowed_download == {
+        "behavior": "allow",
+        "downloadPath": str(download_dir),
+    }
+    assert browser.download_behavior == {"behavior": "deny"}
+
+
+def test_upload_and_download_selector_element_not_found(runner, browser, tmp_path):
+    upload_file = tmp_path / "attachment.docx"
+    upload_file.write_bytes(b"sample-docx-content")
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir()
+
+    browser.element_not_found = True
+
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {
+            "action": "upload",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "file_path": str(upload_file),
+            "selector": "#missing-file-input",
+        },
+        {
+            "action": "download",
+            "tab_id": "A",
+            "url": "https://intranet.test/orders?token=private#result",
+            "download_path": str(download_dir),
+            "selector": "#missing-download-btn",
+        },
+    ) == [
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"tabs": [{"id": "A", "title": "订单", "url": "https://intranet.test/orders"}]},
+        {"error": "BROWSER_ELEMENT_NOT_FOUND"},
+        {"error": "BROWSER_ELEMENT_NOT_FOUND"},
+    ]

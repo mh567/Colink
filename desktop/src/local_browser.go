@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,9 +20,13 @@ var (
 )
 
 type browserAction struct {
-	Action string `json:"action"`
-	URL    string `json:"url,omitempty"`
-	TabID  string `json:"tab_id,omitempty"`
+	Action       string `json:"action"`
+	URL          string `json:"url,omitempty"`
+	TabID        string `json:"tab_id,omitempty"`
+	FilePath     string `json:"file_path,omitempty"`
+	DownloadPath string `json:"download_path,omitempty"`
+	DownloadURL  string `json:"download_url,omitempty"`
+	Selector     string `json:"selector,omitempty"`
 }
 
 type browserTab struct {
@@ -38,6 +43,8 @@ type browserResult struct {
 	Title      string        `json:"title,omitempty"`
 	URL        string        `json:"url,omitempty"`
 	Image      string        `json:"image,omitempty"`
+	File       string        `json:"file,omitempty"`
+	Size       int64         `json:"size,omitempty"`
 	Error      string        `json:"error,omitempty"`
 }
 
@@ -47,18 +54,20 @@ type browserProcess interface {
 }
 
 type localBrowser struct {
-	mu         sync.Mutex
-	home       string
-	connection docxSession
-	process    browserProcess
-	authorize  func(docxSession, string) error
-	query      func(docxSession, string, string) (string, error)
-	start      func(context.Context, docxSession, string) (browserProcess, error)
+	mu                 sync.Mutex
+	home               string
+	connection         docxSession
+	process            browserProcess
+	docx               *localDOCX
+	confirmDestructive func(context.Context, Locale, string, string) (bool, error)
+	authorize          func(docxSession, string) error
+	query              func(docxSession, string, string) (string, error)
+	start              func(context.Context, docxSession, string) (browserProcess, error)
 }
 
 func newLocalBrowser(home string) *localBrowser {
 	return &localBrowser{
-		home: home, authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
+		home: home, docx: newLocalDOCX(home), authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
 	}
 }
 
@@ -218,12 +227,131 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 			return browserResult{}, err
 		}
 	}
+	if action.Action == "upload" {
+		w := b.docx
+		if w == nil {
+			w = newLocalDOCX(b.home)
+		}
+		root, err := w.openGrant(s, request.GrantID, false)
+		if err != nil {
+			return browserResult{}, err
+		}
+		f, err := root.Open(request.File)
+		if err != nil {
+			return browserResult{}, errors.New("授权文件不存在或无法读取")
+		}
+		info, err := f.Stat()
+		_ = f.Close()
+		if err != nil || info.IsDir() {
+			return browserResult{}, errors.New("授权文件不存在或无法读取")
+		}
+		grantDir, err := w.grantPath(s, request.GrantID)
+		if err != nil {
+			return browserResult{}, err
+		}
+		action.FilePath = filepath.Join(grantDir, request.File)
+		action.Selector = request.Selector
+	}
+
+	if action.Action == "download" {
+		w := b.docx
+		if w == nil {
+			w = newLocalDOCX(b.home)
+		}
+		root, err := w.openGrant(s, request.GrantID, true)
+		if err != nil {
+			return browserResult{}, err
+		}
+		grantDir, err := w.grantPath(s, request.GrantID)
+		if err != nil {
+			return browserResult{}, err
+		}
+		targetPath := filepath.Join(grantDir, request.File)
+		_, statErr := root.Stat(request.File)
+		isOverwrite := statErr == nil
+		if isOverwrite {
+			if err := checkPermission("overwrite"); err != nil {
+				return browserResult{}, err
+			}
+			confirm := b.confirmDestructive
+			if confirm == nil && w.confirmDestructive != nil {
+				confirm = w.confirmDestructive
+			}
+			if confirm == nil {
+				return browserResult{}, errors.New("confirmation unavailable")
+			}
+			confirmed, err := confirm(ctx, s.Locale, "overwrite", targetPath)
+			if err != nil || !confirmed {
+				return browserResult{}, errDestructiveCancelled
+			}
+			if err := checkCurrent(); err != nil {
+				return browserResult{}, err
+			}
+			if err := checkPermission("overwrite"); err != nil {
+				return browserResult{}, err
+			}
+		}
+
+		stagingDir, err := os.MkdirTemp(b.home, "browser-download-*")
+		if err != nil {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		defer os.RemoveAll(stagingDir)
+
+		action.DownloadPath = stagingDir
+		action.DownloadURL = request.DownloadURL
+		action.Selector = request.Selector
+
+		result, err := perform(action)
+		if err != nil {
+			return browserResult{}, err
+		}
+
+		entries, err := os.ReadDir(stagingDir)
+		if err != nil || len(entries) == 0 {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		downloadedPath := filepath.Join(stagingDir, entries[0].Name())
+		data, err := os.ReadFile(downloadedPath)
+		if err != nil {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+
+		destFile, err := root.OpenFile(request.File, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return browserResult{}, errors.New("无法保存下载文件")
+		}
+		if _, err = destFile.Write(data); err == nil {
+			err = destFile.Sync()
+		}
+		if closeErr := destFile.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return browserResult{}, errors.New("无法保存下载文件")
+		}
+
+		checkAction := action.Action
+		if isOverwrite {
+			checkAction = "overwrite"
+		}
+		if err := checkPermission(checkAction); err != nil {
+			return browserResult{}, err
+		}
+		result.File = request.File
+		result.Size = int64(len(data))
+		return result, nil
+	}
+
 	result, err := perform(action)
 	if err != nil {
 		return browserResult{}, err
 	}
 	if err := checkPermission(action.Action); err != nil {
 		return browserResult{}, err
+	}
+	if action.Action == "upload" {
+		result.File = request.File
 	}
 	if action.Action == "query" {
 		result.Text, err = b.query(operation, request.Instruction, result.Text)

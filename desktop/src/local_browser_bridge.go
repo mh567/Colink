@@ -28,8 +28,17 @@ type browserRequest struct {
 	browserAction
 	ID          string `json:"request_id"`
 	Instruction string `json:"instruction,omitempty"`
+	GrantID     string `json:"grant_id,omitempty"`
+	File        string `json:"file,omitempty"`
 	Capability  string `json:"capability,omitempty"`
 	DeadlineMS  int64  `json:"deadline_ms,omitempty"`
+}
+
+func validateBrowserFilename(name string) error {
+	if name == "" || !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || strings.TrimSpace(name) != name {
+		return errors.New("BROWSER_INVALID_REQUEST")
+	}
+	return nil
 }
 
 func browserOrigin(raw string) string {
@@ -183,6 +192,25 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 		}
 	case "capture":
 		if request.TabID != "" && request.URL != "" && request.Instruction == "" {
+			return request, nil
+		}
+	case "upload":
+		if request.TabID != "" && request.URL != "" && request.GrantID != "" && request.File != "" &&
+			request.Instruction == "" && validateBrowserFilename(request.File) == nil {
+			if request.Selector != "" && (len(request.Selector) > 1024 || strings.ContainsAny(request.Selector, "\r\n")) {
+				return request, invalid
+			}
+			return request, nil
+		}
+	case "download":
+		if request.TabID != "" && request.URL != "" && request.GrantID != "" && request.File != "" &&
+			request.Instruction == "" && validateBrowserFilename(request.File) == nil {
+			if request.DownloadURL != "" && !browserHTTPURL(request.DownloadURL) {
+				return request, invalid
+			}
+			if request.Selector != "" && (len(request.Selector) > 1024 || strings.ContainsAny(request.Selector, "\r\n")) {
+				return request, invalid
+			}
 			return request, nil
 		}
 	}
