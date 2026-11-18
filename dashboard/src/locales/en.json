@@ -6611,7 +6611,13 @@
       "user.unlock_login": "Unlock User Login",
       "user.password_changed": "Password Changed",
       "user.password_reset": "Password Reset",
-      "user.set_role": "Set Role"
+      "user.set_role": "Set Role",
+      "file.authorized": "File operation authorized",
+      "file.authorization_denied": "File operation denied",
+      "file.confirmed": "File operation confirmed",
+      "file.rejected": "File operation rejected",
+      "file.completed": "File operation completed",
+      "file.failed": "File operation failed"
     }
   },
   "connectors": {

@@ -168,6 +168,12 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 | `POST` | `/devices/{device_id}/docx/authorize` | 员工令牌＋`X-Colink-Device-Session` | `action` 可为 `read`、`create`、`overwrite`、`delete`。校验当前设备归属、在线状态、功能及动作权限，返回 `{allowed:true}` |
 | `POST` | `/devices/{device_id}/docx/generate` | 同上，须持有读取及所选写入动作的权限 | `{instruction,text,action?}`，`action` 默认为 `create`，覆盖任务传 `overwrite`。任务描述最多 8,000 字符，必要正文最多 60,000 字符。返回 `{text}`，最多 60,000 字符 |
 
+覆盖、删除和新建等实际文件修改会写入 90 天审计。授权请求可带 `request_id`（32 位小写十六进制）和文件名 `path`；原生客户端在确认、拒绝、完成或失败后调用 `POST /devices/{device_id}/file-events`。审计只保留身份、设备、动作、文件名和结果，不含口令、模型密钥或原文。管理员在安全设置中查询，不能因此读取员工私有文件。员工删除会话不会删掉保留期内的这些记录。
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `POST` | `/devices/{device_id}/file-events` | 员工令牌＋`X-Colink-Device-Session` | `{request_id,event,format,operation,path?,error_code?}`。`event` 为 `confirmed`、`rejected`、`completed` 或 `failed`。未知私有字段会被忽略且不入库。返回 `{recorded:true}` |
+
 已批准的 WebSocket `status` 帧增加 `session_token`，仅保留在原生客户端，不透传页面、列表或审计。它与本人访问令牌一起证明当前设备会话；重新连接产生新值，断线、撤销、停用或重置口令后失效。生成前及模型返回后均重新核对权限。客户端在实际读写处另行核对本机目录授权，不能以服务端批准代替目录边界。
 
 原始 DOCX 不上传，客户端仅发送必要正文到企业服务端，再调用已明确配置的活动模型；不向客户端下发统一模型凭据。模型调用无工具，不进入通用 agent 的 shell、MCP 或管理员代理执行链路。活动模型缺失、不可用或生成失败时明确报错，不回落到默认公网服务，也不返回可能包含凭据或原文的异常详情。
@@ -791,7 +797,7 @@ endpoint (public, mounted directly in `api/app.py`).
 | `GET`    | `/usage/summary` | user | token usage summary for the current user |
 | `GET`    | `/admin/usage` | admin | global token usage summary |
 | `GET`    | `/admin/overview` | admin | `{user_count, agent_count, ...}` |
-| `GET`    | `/admin/audit-log` | admin | recent audit rows |
+| `GET`    | `/admin/audit-log` | admin | recent audit rows; payloads omit passwords, model keys and original files. File modifications use `file.authorized` / `file.confirmed` / `file.completed` (and denied/rejected/failed). Records older than 90 days are pruned. |
 | `GET`    | `/admin/metrics` | admin | `{messages_total, stream_errors_total, cron_runs_total, cron_errors_total, agent_active, ...}` |
 
 ## Envs

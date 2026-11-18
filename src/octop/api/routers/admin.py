@@ -7,6 +7,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from octop.api.deps import get_server, require_permission
+from octop.infra.audit.file_ops import public_audit_payload
+from octop.infra.audit.retention import prune_expired_audit
 
 router = APIRouter()
 
@@ -62,6 +64,7 @@ async def audit_log(
     _: Any = Depends(require_permission("admin_console")),
     server: Any = Depends(get_server),
 ) -> list[dict[str, Any]]:
+    prune_expired_audit(server.services.audit_repo)
     rows = server.services.audit_repo.query(since=since, actor=actor, action=action, limit=limit)
     return [
         {
@@ -70,7 +73,7 @@ async def audit_log(
             "actor": r.actor,
             "action": r.action,
             "target": r.target,
-            "payload": r.payload,
+            "payload": public_audit_payload(r.payload),
         }
         for r in rows
     ]

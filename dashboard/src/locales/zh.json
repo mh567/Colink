@@ -6611,7 +6611,13 @@
       "user.unlock_login": "解锁用户登录",
       "user.password_changed": "修改密码",
       "user.password_reset": "重置密码",
-      "user.set_role": "设置角色"
+      "user.set_role": "设置角色",
+      "file.authorized": "文件操作已授权",
+      "file.authorization_denied": "文件操作未授权",
+      "file.confirmed": "文件操作已确认",
+      "file.rejected": "文件操作已拒绝",
+      "file.completed": "文件操作已完成",
+      "file.failed": "文件操作失败"
     }
   },
   "connectors": {

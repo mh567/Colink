@@ -43,11 +43,12 @@ class AuditRepo:
         action: str,
         target: str | None = None,
         payload: str | None = None,
+        ts: int | None = None,
     ) -> None:
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO audit_log(ts, actor, action, target, payload) VALUES (?, ?, ?, ?, ?)",
-                (now_ts(), actor, action, target, payload or None),
+                (now_ts() if ts is None else ts, actor, action, target, payload or None),
             )
 
     def system_event(

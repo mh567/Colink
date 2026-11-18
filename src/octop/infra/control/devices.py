@@ -155,20 +155,111 @@ class DeviceManager:
         format: Literal["docx", "xlsx", "ocr", "pptx", "pdf"] = "docx",
         agent_id: str | None = None,
         source_format: PptxSourceFormat | None = None,
+        request_id: str | None = None,
+        path: str | None = None,
     ) -> None:
         """Require native possession and explicit grants, including for administrators."""
         required = {f"local_{format}", f"local_files_{action}"}
         if format == "pptx" and source_format == "docx":
             required.update(("local_docx", "local_files_read"))
         if format in {"ocr", "pptx", "pdf"} and action not in ("read", "create"):
+            self._record_file_authorization(
+                user,
+                device_id,
+                action,
+                format=format,
+                request_id=request_id,
+                path=path,
+                denied=True,
+            )
             raise OctopError(ErrorCode.FORBIDDEN, "local file operation not authorized")
-        self._require_native_grants(
-            user, device_id, session_token, required, operation="local file operation"
-        )
-        if agent_id:
-            from octop.infra.agents.experts.local_tasks import validate_local_expert
+        try:
+            self._require_native_grants(
+                user, device_id, session_token, required, operation="local file operation"
+            )
+            if agent_id:
+                from octop.infra.agents.experts.local_tasks import validate_local_expert
 
-            validate_local_expert(self.services, user, agent_id, format)
+                validate_local_expert(self.services, user, agent_id, format)
+        except OctopError:
+            self._record_file_authorization(
+                user,
+                device_id,
+                action,
+                format=format,
+                request_id=request_id,
+                path=path,
+                denied=True,
+            )
+            raise
+        self._record_file_authorization(
+            user,
+            device_id,
+            action,
+            format=format,
+            request_id=request_id,
+            path=path,
+            denied=False,
+        )
+
+    def record_file_client_event(
+        self,
+        user: User,
+        device_id: str,
+        session_token: str,
+        *,
+        request_id: str,
+        event: str,
+        format: Literal["docx", "xlsx", "ocr", "pptx", "pdf"],
+        operation: LocalFileAction,
+        path: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        self._require_native_grants(
+            user, device_id, session_token, set(), operation="local file audit"
+        )
+        from octop.infra.audit.file_ops import record_file_event
+
+        record_file_event(
+            self.services.audit_repo,
+            actor=user.username,
+            action=f"file.{event}",
+            request_id=request_id,
+            device_id=device_id,
+            format=format,
+            operation=operation,
+            path=path,
+            result=event if event in {"rejected", "completed", "failed"} else None,
+            error_code=error_code,
+        )
+
+    def _record_file_authorization(
+        self,
+        user: User,
+        device_id: str,
+        action: LocalFileAction,
+        *,
+        format: str,
+        request_id: str | None,
+        path: str | None,
+        denied: bool,
+    ) -> None:
+        if not request_id or action not in {"create", "overwrite", "delete"}:
+            return
+        from octop.infra.audit.file_ops import record_file_event
+
+        record_file_event(
+            self.services.audit_repo,
+            actor=user.username,
+            action="file.authorization_denied" if denied else "file.authorized",
+            request_id=request_id,
+            device_id=device_id,
+            format=format,
+            operation=action,
+            path=path,
+            result="denied" if denied else None,
+            error_code="forbidden" if denied else None,
+        )
 
     def clear(self) -> None:
         self._connections.clear()

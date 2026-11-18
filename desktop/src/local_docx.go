@@ -45,6 +45,8 @@ type docxSession struct {
 	Apply                                  func(func() error) error
 	TaskChanged                            func()
 	RecordRecovery                         func(string) error
+	AuditRequestID                         string
+	AuditPath                              string
 }
 
 func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s.UserID, s.DeviceID) }
@@ -500,7 +502,12 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 	if err != nil || endpoint.IsAbs() || endpoint.Host != "" || endpoint.RawQuery != "" || endpoint.ForceQuery || !strings.HasPrefix(endpoint.Path, "/") || strings.HasPrefix(endpoint.Path, "//") || !strings.HasSuffix(endpoint.Path, "/api/devices/connect") {
 		return errors.New("无效设备任务接口地址")
 	}
-	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + feature + "/" + action
+	base := strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID
+	if feature == "file-events" {
+		u.Path = base + "/file-events"
+	} else {
+		u.Path = base + "/" + feature + "/" + action
+	}
 	u.RawPath = ""
 	u.RawQuery = ""
 	data, err := json.Marshal(body)
@@ -555,6 +562,12 @@ func authorizeDOCX(s docxSession, action string) error {
 	if s.AgentID != "" {
 		payload["agent_id"] = s.AgentID
 	}
+	if s.AuditRequestID != "" {
+		payload["request_id"] = s.AuditRequestID
+	}
+	if s.AuditPath != "" {
+		payload["path"] = filepath.Base(s.AuditPath)
+	}
 	if err := docxCall(s, "authorize", payload, &reply); err != nil {
 		return err
 	}
@@ -562,6 +575,30 @@ func authorizeDOCX(s docxSession, action string) error {
 		return errors.New("操作未获授权")
 	}
 	return nil
+}
+
+func reportFileEvent(s docxSession, event, operation, errorCode string) {
+	if s.AuditRequestID == "" || operation == "" {
+		return
+	}
+	format := s.Format
+	if format == "" {
+		format = "docx"
+	}
+	payload := map[string]string{
+		"request_id": s.AuditRequestID,
+		"event":      event,
+		"format":     format,
+		"operation":  operation,
+	}
+	if s.AuditPath != "" {
+		payload["path"] = filepath.Base(s.AuditPath)
+	}
+	if errorCode != "" {
+		payload["error_code"] = errorCode
+	}
+	var reply map[string]any
+	_ = deviceTaskCall(s, "file-events", "", payload, &reply)
 }
 func (w *localDOCX) record(s docxSession, task docxTask) error {
 	w.mu.Lock()
@@ -625,6 +662,8 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		}
 	}
 	task = docxTask{AgentID: request.AgentID, Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running"}
+	s.AuditRequestID = task.ID
+	s.AuditPath = request.Output
 	if err = filename(request.Source); err != nil {
 		if format == "pptx" {
 			return task, errors.New("PPTX_SOURCE_FILENAME")
@@ -672,8 +711,10 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		if err != nil {
 			task.Status = "failed"
 			task.Error = err.Error()
+			reportFileEvent(s, "failed", "create", "failed")
 		} else {
 			task.Status = "completed"
+			reportFileEvent(s, "completed", "create", "")
 		}
 		if saveErr := w.record(s, task); saveErr != nil {
 			err = fmt.Errorf("任务结果记录失败，请核对目标文件：%w", saveErr)

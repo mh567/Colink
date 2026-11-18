@@ -192,6 +192,8 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		return task, err
 	}
 	task = docxTask{ID: request.RequestID, AgentID: s.AgentID, Format: s.Format, Operation: request.Action, Output: request.Output, Instruction: request.Instruction, Status: "running"}
+	s.AuditRequestID = request.RequestID
+	s.AuditPath = request.Output
 	journal, entry, replay, err := w.claimDestructive(s, request, task)
 	if err != nil {
 		return task, err
@@ -217,6 +219,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		case errors.Is(err, errDestructiveCancelled):
 			task.Status = "cancelled"
 			err = nil
+			reportFileEvent(s, "rejected", request.Action, "")
 		case err != nil:
 			if task.Status != "interrupted" {
 				task.Status = "failed"
@@ -227,8 +230,10 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 				task.Error = interruptedFileMessage(task, s.Locale)
 				err = errors.New(task.Error)
 			}
+			reportFileEvent(s, "failed", request.Action, "failed")
 		default:
 			task.Status = "completed"
+			reportFileEvent(s, "completed", request.Action, "")
 		}
 		if saveErr := persist(); saveErr != nil {
 			task.Status = "interrupted"
@@ -283,6 +288,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = target.confirm(s.Context, prompt, data); err != nil {
 		return task, err
 	}
+	reportFileEvent(s, "confirmed", request.Action, "")
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}

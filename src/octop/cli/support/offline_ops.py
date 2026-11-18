@@ -14,6 +14,8 @@ from octop.cli.support.db import (
 )
 from octop.infra.agents.experts.catalog import ExpertCatalog, default_library_root
 from octop.infra.agents.providers.model_flags import is_local_runtime_provider
+from octop.infra.audit.file_ops import public_audit_payload
+from octop.infra.audit.retention import prune_expired_audit
 from octop.infra.cron.task_type import normalize_cron_task_type, require_cron_prompt
 from octop.infra.cron.trigger import build_trigger
 from octop.infra.errors import ErrorCode, OctopError
@@ -353,6 +355,7 @@ def admin_audit_offline(
     home: Path | None = None,
 ) -> list[dict[str, Any]]:
     with open_cli_services(home) as svc:
+        prune_expired_audit(svc.audit_repo)
         rows = svc.audit_repo.query(actor=actor, action=action, limit=limit)
         return [
             {
@@ -361,7 +364,7 @@ def admin_audit_offline(
                 "actor": r.actor,
                 "action": r.action,
                 "target": r.target,
-                "payload": r.payload,
+                "payload": public_audit_payload(r.payload),
             }
             for r in rows
         ]

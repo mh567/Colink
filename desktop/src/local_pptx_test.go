@@ -164,6 +164,9 @@ func mockPPTXTestServer(t *testing.T, respond func(*http.Request, map[string]str
 	t.Cleanup(func() { http.DefaultTransport = transport })
 	http.DefaultTransport = pptxTestTransport(func(r *http.Request) (*http.Response, error) {
 		defer r.Body.Close()
+		if strings.HasSuffix(r.URL.Path, "/file-events") {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"recorded":true}`))}, nil
+		}
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return nil, err
@@ -208,6 +211,9 @@ func TestLocalPPTXTaskWithOfflineRuntime(t *testing.T) {
 	const report = `{"slides":[{"title":"项目汇报","bullets":["已完成 12 项"]}]}`
 	requests := make(chan map[string]string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleFileAudit(w, r) {
+			return
+		}
 		if !strings.HasPrefix(r.URL.Path, "/api/devices/mine/pptx/") || r.Header.Get("X-Colink-Device-Session") != "secret" {
 			t.Errorf("incorrect presentation device request %s", r.URL.Path)
 			w.WriteHeader(http.StatusForbidden)

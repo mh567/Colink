@@ -701,6 +701,9 @@ func TestLocalDOCXLimitsAndRestartState(t *testing.T) {
 func TestLocalDOCXRefreshesTokenAfterGenerationAndPreservesEncodedPrefix(t *testing.T) {
 	client := &deviceClient{generation: 1, renewals: make(chan string, 1)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleFileAudit(w, r) {
+			return
+		}
 		if !strings.HasPrefix(r.URL.Path, "/企业 空间/api/devices/device/docx/") {
 			t.Errorf("incorrect prefix: %s", r.URL.Path)
 		}

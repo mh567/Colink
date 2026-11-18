@@ -15,12 +15,15 @@ func TestLocalOCRMissingResourcesFailsWithoutUploadingSource(t *testing.T) {
 	t.Setenv("OCTOP_HOME", t.TempDir())
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleFileAudit(w, r) {
+			return
+		}
 		calls = append(calls, r.URL.Path)
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if len(body) != 1 || body["action"] != "read" {
+		if body["action"] != "read" {
 			t.Errorf("unexpected upload: %v", body)
 		}
 		w.Write([]byte(`{"allowed":true}`))
@@ -96,7 +99,10 @@ func TestLocalOCRRealTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
-		if len(body) != 1 || (body["action"] != "read" && body["action"] != "create") || !strings.HasSuffix(r.URL.Path, "/ocr/authorize") {
+		if handleFileAudit(w, r) {
+			return
+		}
+		if (body["action"] != "read" && body["action"] != "create") || !strings.HasSuffix(r.URL.Path, "/ocr/authorize") {
 			t.Errorf("unexpected upload: %s %v", r.URL.Path, body)
 		}
 		calls = append(calls, body["action"])
