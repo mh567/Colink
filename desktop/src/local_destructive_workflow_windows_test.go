@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -91,7 +92,7 @@ func TestLocalFileOverwritePersistsAndReplaysTheConfirmedDocument(t *testing.T) 
 			}
 			restarted := newLocalDOCX(worker.home)
 			replay, err := restarted.run(session, request, current)
-			if err != nil || replay != task {
+			if err != nil || !reflect.DeepEqual(replay, task) {
 				t.Fatalf("replayed result: %+v, %v", replay, err)
 			}
 			if result, readErr = os.ReadFile(path); readErr != nil || !bytes.Equal(result, original) {
@@ -219,7 +220,7 @@ func TestLocalFileDeleteReplayReturnsResultWithoutDeletingReplacement(t *testing
 	restarted := newLocalDOCX(worker.home)
 	restarted.confirmDestructive = worker.confirmDestructive
 	replay, err := restarted.run(session, request, current)
-	if err != nil || replay != task || prompts != 1 {
+	if err != nil || !reflect.DeepEqual(replay, task) || prompts != 1 {
 		t.Fatalf("replay: %+v, confirmations=%d, err=%v", replay, prompts, err)
 	}
 	request.Output = "other.docx"

@@ -95,7 +95,7 @@ func (w *localDOCX) destructiveTasks(s docxSession) ([]docxTask, error) {
 			continue
 		}
 		task := entry.Task
-		if !w.busy {
+		if _, active := w.activeCancels[task.ID]; !active {
 			markInterrupted(&task, s.Locale)
 		}
 		tasks = append(tasks, task)
@@ -104,7 +104,7 @@ func (w *localDOCX) destructiveTasks(s docxSession) ([]docxTask, error) {
 }
 
 func markInterrupted(task *docxTask, locale Locale) {
-	if task.Status == "running" || task.Status == "awaiting_confirmation" {
+	if task.Status == "running" {
 		task.Status = "interrupted"
 		task.Error = interruptedFileMessage(*task, locale)
 	}
@@ -191,19 +191,35 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = current(); err != nil {
 		return task, err
 	}
-	task = docxTask{ID: request.RequestID, AgentID: s.AgentID, Format: s.Format, Operation: request.Action, Output: request.Output, Instruction: request.Instruction, Status: "running"}
+	task = docxTask{ID: request.RequestID, AgentID: s.AgentID, Format: s.Format, Operation: request.Action, Output: request.Output, Instruction: request.Instruction, Status: "running", Steps: []string{}}
 	journal, entry, replay, err := w.claimDestructive(s, request, task)
 	if err != nil {
 		return task, err
 	}
 	if replay {
 		task = entry.Task
-		markInterrupted(&task, s.Locale)
+		if task.Status != "awaiting_confirmation" && !w.busy {
+			markInterrupted(&task, s.Locale)
+		}
 		if task.Error != "" {
 			err = errors.New(task.Error)
 		}
 		return task, err
 	}
+	ctx, cancel := context.WithCancel(s.Context)
+	s.Context = ctx
+	w.mu.Lock()
+	if w.activeCancels == nil {
+		w.activeCancels = make(map[string]context.CancelFunc)
+	}
+	w.activeCancels[task.ID] = cancel
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		delete(w.activeCancels, task.ID)
+		w.mu.Unlock()
+		cancel()
+	}()
 	persist := func() error {
 		entry.Task = task
 		data, marshalErr := json.Marshal(entry)
@@ -212,9 +228,14 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		}
 		return saveLocalTaskJSON(journal, data)
 	}
+	addStep := func(st string) {
+		task.Steps = append(task.Steps, st)
+		_ = persist()
+	}
+	addStep("已登记操作意图与约束")
 	defer func() {
 		switch {
-		case errors.Is(err, errDestructiveCancelled):
+		case errors.Is(err, errDestructiveCancelled) || errors.Is(err, context.Canceled) || task.Status == "cancelled":
 			task.Status = "cancelled"
 			err = nil
 		case err != nil:
@@ -239,6 +260,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}
+	addStep("已核验操作权限")
 	output, err := w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
 		return task, err
@@ -259,7 +281,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 			return task, sourceErr
 		}
 		task.Source = filepath.Join(source.Name(), request.Source)
-		data, err = generateLocalOutput(s, request, source, current)
+		data, err = generateLocalOutput(s, request, source, current, addStep)
 		if err != nil {
 			return task, err
 		}
@@ -283,6 +305,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = target.confirm(s.Context, prompt, data); err != nil {
 		return task, err
 	}
+	addStep("已通过本机操作核对与确认")
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}
@@ -319,6 +342,9 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	if err != nil && !errors.Is(err, errDestructiveTargetChanged) {
 		task.Status = "interrupted"
+	}
+	if err == nil {
+		addStep("已提交文件变更")
 	}
 	return task, err
 }

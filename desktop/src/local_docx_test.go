@@ -51,6 +51,7 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 		t.Fatal(err)
 	}
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
 	grant, err := worker.grant(session, directory, "rw")
 	if err != nil {
@@ -93,6 +94,7 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 func TestLocalDOCXRejectsUnauthorizedPathsAndWrites(t *testing.T) {
 	directory := t.TempDir()
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	session := docxSession{Base: "https://example.test", DeviceID: "device", UserID: 1}
 	grant, err := worker.grant(session, directory, "ro")
 	if err != nil {
@@ -125,6 +127,7 @@ func TestLocalDOCXRejectsLinksAndChangedDirectory(t *testing.T) {
 	directory := t.TempDir()
 	outside := t.TempDir()
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"allowed":true}`)) }))
 	defer server.Close()
 	session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
@@ -169,7 +172,9 @@ func TestLocalDOCXRejectsLinksAndChangedDirectory(t *testing.T) {
 	if _, err = worker.openGrant(session, grant.ID, false); err == nil {
 		t.Fatal("cached grant accepted replacement directory")
 	}
-	if _, err = newLocalDOCX(worker.home).openGrant(session, grant.ID, false); err == nil {
+	checkWorker := newLocalDOCX(worker.home)
+	defer checkWorker.close()
+	if _, err = checkWorker.openGrant(session, grant.ID, false); err == nil {
 		t.Fatal("restored replacement directory")
 	}
 }
@@ -200,6 +205,7 @@ func TestLocalDOCXChecksWritePermissionAfterModelAndSessionBeforeWriting(t *test
 			data, _ := makeDOCX("原文")
 			os.WriteFile(filepath.Join(directory, "input.docx"), data, 0600)
 			worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 			session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
 			grant, err := worker.grant(session, directory, "rw")
 			if err != nil {
@@ -265,6 +271,7 @@ func TestLocalDOCXDestructiveActionDoesNotFallThroughToCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	session := docxSession{Base: server.URL, UserID: 1, DeviceID: "device", Secret: "secret", Context: context.Background()}
 	grant, err := worker.grant(session, dir, "rw")
 	if err != nil {
@@ -314,6 +321,7 @@ func TestLocalDOCXLimitsAndRestartState(t *testing.T) {
 	}
 	session := docxSession{Base: "https://example.test", DeviceID: "device", UserID: 1}
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	if err := worker.record(session, docxTask{ID: "interrupted", Status: "running", Output: "成果.docx"}); err != nil {
 		t.Fatal(err)
 	}
@@ -362,6 +370,7 @@ func TestLocalDOCXRefreshesTokenAfterGenerationAndPreservesEncodedPrefix(t *test
 	data, _ := makeDOCX("原文")
 	os.WriteFile(filepath.Join(directory, "input.docx"), data, 0600)
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	grant, err := worker.grant(session, directory, "rw")
 	if err != nil {
 		t.Fatal(err)

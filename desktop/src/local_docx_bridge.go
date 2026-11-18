@@ -44,7 +44,7 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" && request.Format != "pptx" && request.Format != "pdf" {
 		return request, errors.New("不支持的文件类型")
 	}
-	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "run" && !isDestructiveAction(request.Action) {
+	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "run" && request.Action != "cancel" && !isDestructiveAction(request.Action) {
 		return request, errors.New("不支持该操作；不允许命令执行")
 	}
 	if isDestructiveAction(request.Action) && !validDestructiveID(request.RequestID) {
@@ -101,12 +101,24 @@ func (a *App) handleDOCX(raw string) {
 	session.Format = request.Format
 	a.docx.mu.Lock()
 	busy := a.docx.busy
-	if request.Action != "list" && !busy {
+	if request.Action != "list" && request.Action != "cancel" && !busy {
 		a.docx.busy = true
 	}
 	a.docx.mu.Unlock()
 	if request.Action == "list" {
 		a.emitDOCX(session, busy, nil)
+		return
+	}
+	if request.Action == "cancel" {
+		targetID := request.TaskID
+		if targetID == "" {
+			targetID = request.RequestID
+		}
+		cancelErr := a.docx.cancel(session, targetID)
+		a.docx.mu.Lock()
+		currentBusy := a.docx.busy
+		a.docx.mu.Unlock()
+		a.emitDOCX(session, currentBusy, cancelErr)
 		return
 	}
 	if busy {
