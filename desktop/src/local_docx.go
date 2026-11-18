@@ -51,6 +51,7 @@ func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s
 
 type docxRequest struct {
 	RequestID   string `json:"request_id,omitempty"`
+	GrantID     string `json:"grant_id,omitempty"`
 	AgentID     string `json:"agent_id,omitempty"`
 	Format      string `json:"format,omitempty"`
 	Action      string `json:"action"`
@@ -95,6 +96,7 @@ type docxEvent struct {
 }
 type localDOCX struct {
 	mu                 sync.Mutex
+	statusMu           sync.Mutex
 	home               string
 	roots              map[string]*os.Root
 	busy               bool
@@ -258,6 +260,9 @@ func (w *localDOCX) grant(s docxSession, path, mode string) (directoryGrant, err
 func (w *localDOCX) openGrant(s docxSession, id string, write bool) (*os.Root, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.openGrantLocked(s, id, write)
+}
+func (w *localDOCX) openGrantLocked(s docxSession, id string, write bool) (*os.Root, error) {
 	states, err := w.load()
 	if err != nil {
 		return nil, err
@@ -293,6 +298,41 @@ func (w *localDOCX) openGrant(s docxSession, id string, write bool) (*os.Root, e
 		return root, nil
 	}
 	return nil, errors.New("目录未获当前账号和设备授权")
+}
+func (w *localDOCX) withGrant(s docxSession, id string, write bool, operation func(*os.Root) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	root, err := w.openGrantLocked(s, id, write)
+	if err != nil {
+		return err
+	}
+	return operation(root)
+}
+func (w *localDOCX) revoke(s docxSession, grantID string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	states, err := w.load()
+	if err != nil {
+		return err
+	}
+	state := states[s.scope()]
+	for i, grant := range state.Grants {
+		if grant.ID != grantID {
+			continue
+		}
+		state.Grants = append(state.Grants[:i], state.Grants[i+1:]...)
+		states[s.scope()] = state
+		if err = w.save(states); err != nil {
+			return err
+		}
+		key := s.scope() + "\n" + grant.ID
+		if root := w.roots[key]; root != nil {
+			delete(w.roots, key)
+			return root.Close()
+		}
+		return nil
+	}
+	return fileopsCopyError(copyFileGrantNotFound)
 }
 func docxFilename(name string) error {
 	if name == "" || !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || !strings.EqualFold(filepath.Ext(name), ".docx") || strings.TrimSpace(name) != name {
@@ -649,59 +689,82 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = current(); err != nil {
 		return task, err
 	}
-	output, err = w.openGrant(s, request.OutputGrant, true)
-	if err != nil {
-		if format == "pdf" {
-			return task, errors.New("PDF_OUTPUT_FOLDER")
+	sourceGrantInvalid := false
+	grantsAccepted := false
+	err = w.withGrant(s, request.OutputGrant, true, func(output *os.Root) error {
+		if _, sourceErr := w.openGrantLocked(s, request.SourceGrant, false); sourceErr != nil {
+			sourceGrantInvalid = true
+			if format == "pdf" {
+				return errors.New("PDF_SOURCE_FOLDER")
+			}
+			if format == "pptx" {
+				return errors.New("PPTX_SOURCE_FOLDER")
+			}
+			return sourceErr
 		}
-		if format == "pptx" {
-			return task, errPPTXOutputFolder
+		grantsAccepted = true
+		if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
+			return presentFileopsError(s.Locale, createErr)
 		}
-		return task, err
-	}
-	if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
-		return task, presentFileopsError(s.Locale, createErr)
-	}
-	if format == "pdf" {
-		err = writeLocalPPTXOutput(s, output, request.Output, data, func() error {
-			if err := authorizeDOCX(s, "read"); err != nil {
+		write := func() error {
+			if format == "pdf" {
+				err := writeLocalPPTXOutput(s, output, request.Output, data, func() error {
+					if err := authorizeDOCX(s, "read"); err != nil {
+						return err
+					}
+					if err := authorizeDOCX(s, "create"); err != nil {
+						return err
+					}
+					return current()
+				})
+				if err != nil {
+					switch err.Error() {
+					case "PPTX_OUTPUT_FOLDER":
+						return errors.New("PDF_OUTPUT_FOLDER")
+					case "PPTX_OUTPUT_WRITE_FAILED":
+						return errors.New("PDF_OUTPUT_WRITE_FAILED")
+					case "PPTX_CREATE_ONLY":
+						return errors.New("PDF_CREATE_ONLY")
+					}
+				}
 				return err
 			}
-			if err := authorizeDOCX(s, "create"); err != nil {
-				return err
+			if format == "pptx" {
+				return writeLocalPPTXOutput(s, output, request.Output, data, func() error {
+					if err := authorizeDOCX(s, "create"); err != nil {
+						return err
+					}
+					return current()
+				})
 			}
-			return current()
-		})
-		if err != nil {
-			switch err.Error() {
-			case "PPTX_OUTPUT_FOLDER":
+			target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				return fmt.Errorf("无法新建产物（已有文件不会覆盖）：%w", err)
+			}
+			if _, err = target.Write(data); err == nil {
+				err = target.Sync()
+			}
+			closeErr := target.Close()
+			if err == nil {
+				err = closeErr
+			}
+			return err
+		}
+		if format == "pdf" || format == "pptx" || s.Apply == nil {
+			return write()
+		}
+		return s.Apply(write)
+	})
+	if err != nil && !grantsAccepted {
+		task.Output = ""
+		if !sourceGrantInvalid {
+			if format == "pdf" {
 				err = errors.New("PDF_OUTPUT_FOLDER")
-			case "PPTX_OUTPUT_WRITE_FAILED":
-				err = errors.New("PDF_OUTPUT_WRITE_FAILED")
-			case "PPTX_CREATE_ONLY":
-				err = errors.New("PDF_CREATE_ONLY")
+			}
+			if format == "pptx" {
+				err = errPPTXOutputFolder
 			}
 		}
-		return task, err
-	}
-	if format == "pptx" {
-		return task, writeLocalPPTXOutput(s, output, request.Output, data, func() error {
-			if err := authorizeDOCX(s, "create"); err != nil {
-				return err
-			}
-			return current()
-		})
-	}
-	target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return task, fmt.Errorf("无法新建产物（已有文件不会覆盖）：%w", err)
-	}
-	if _, err = target.Write(data); err == nil {
-		err = target.Sync()
-	}
-	closeErr := target.Close()
-	if err == nil {
-		err = closeErr
 	}
 	return task, err
 }

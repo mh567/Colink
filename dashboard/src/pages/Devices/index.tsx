@@ -104,6 +104,13 @@ export default function DevicesPage() {
         revoked: "已撤销",
       }[status],
     );
+  const connectedDeviceId =
+    native.event?.type === "status" &&
+    native.event.status === "approved" &&
+    native.event.online
+      ? native.event.device_id
+      : null;
+  const docxDeviceId = connectedDeviceId ?? native.lastApprovedDeviceId;
   const columns: ColumnsType<DeviceView> = [
     { title: t("devices.name", "设备名称"), dataIndex: "name", width: 160 },
     {
@@ -302,15 +309,13 @@ export default function DevicesPage() {
             )}
           />
         )}
-        {native.available &&
-          native.event?.type === "status" &&
-          native.event.status === "approved" &&
-          native.event.online && (
-            <LocalDocxPanel
-              key={native.event.device_id}
-              deviceId={native.event.device_id}
-            />
-          )}
+        {native.available && docxDeviceId && (
+          <LocalDocxPanel
+            key={docxDeviceId}
+            deviceId={docxDeviceId}
+            connected={connectedDeviceId === docxDeviceId}
+          />
+        )}
         {native.available &&
           native.busy !== "disconnect" &&
           native.event?.type === "status" &&

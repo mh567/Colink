@@ -52,6 +52,8 @@ const (
 	copyFileManagedFailed           = "file.managed_failed"
 	copyFileManagedDenied           = "file.managed_denied"
 	copyFileDirectoryChanged        = "file.directory_changed"
+	copyFileGrantIDRequired         = "file.grant_id_required"
+	copyFileGrantNotFound           = "file.grant_not_found"
 	copyFileOperationFailed         = "file.operation_failed"
 	copyFileUnsupported             = "file.unsupported"
 )
@@ -105,6 +107,8 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileManagedFailed:           "Check the managed directory and target file, then try again.",
 		copyFileManagedDenied:           "Check the approved device connection and file operation permissions on the configured server.",
 		copyFileDirectoryChanged:        "Grant access to the directory again.",
+		copyFileGrantIDRequired:         "Directory grant ID is missing.",
+		copyFileGrantNotFound:           "The directory grant does not exist.",
 		copyFileOperationFailed:         "Check the target file and directory permissions before trying again.",
 		copyFileUnsupported:             "Use a supported desktop client for this file operation.",
 	},
@@ -156,6 +160,8 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileManagedFailed:           "请核对受管目录和目标文件后重试。",
 		copyFileManagedDenied:           "请核对已批准的设备连接和服务器上的文件操作权限。",
 		copyFileDirectoryChanged:        "请重新授权目标目录。",
+		copyFileGrantIDRequired:         "缺少目录授权标识。",
+		copyFileGrantNotFound:           "目录授权不存在。",
 		copyFileOperationFailed:         "请核对目标文件和目录权限后重试。",
 		copyFileUnsupported:             "请使用支持此文件操作的桌面客户端。",
 	},

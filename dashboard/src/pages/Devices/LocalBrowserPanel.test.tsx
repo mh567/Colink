@@ -582,4 +582,53 @@ describe("本人设备的本机浏览器任务", () => {
     expect(result.getByText(tab.url)).toBeVisible();
     expect(result.queryByText(/private=|#first/)).not.toBeInTheDocument();
   });
+
+  it("设备断连后保留本机任务失败原因并禁用操作", async () => {
+    const { user } = startPage();
+    await user.click(screen.getByRole("button", { name: "接入当前设备" }));
+    await connectDevice("approved", true);
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      busy: true,
+      grants: [{ id: "grant", path: "/资料", mode: "rw" }],
+      tasks: [
+        {
+          id: "task-1",
+          instruction: "整理",
+          source: "/资料/输入.docx",
+          output: "/资料/结果.docx",
+          status: "running",
+        },
+      ],
+    });
+    expect(screen.getByLabelText("本机任务记录")).toBeInTheDocument();
+
+    await emit("colink:device-status", {
+      type: "error",
+      code: "DEVICE_CLIENT_ERROR",
+      message: "connection closed",
+    });
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      busy: false,
+      grants: [{ id: "grant", path: "/资料", mode: "rw" }],
+      tasks: [
+        {
+          id: "task-1",
+          instruction: "整理",
+          source: "/资料/输入.docx",
+          output: "/资料/结果.docx",
+          status: "failed",
+          error: "设备会话已改变，任务已停止",
+        },
+      ],
+    });
+
+    expect(screen.getByLabelText("本机任务记录")).toBeInTheDocument();
+    expect(screen.getByText("设备会话已改变，任务已停止")).toBeInTheDocument();
+    expect(screen.getByLabelText("文件类型")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "撤销 /资料 的目录授权" }),
+    ).toBeDisabled();
+  });
 });

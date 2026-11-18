@@ -41,6 +41,7 @@ type App struct {
 	drops            dropServer
 	device           *deviceClient
 	docx             *localDOCX
+	docxStatusSink   func(docxEvent)
 	browser          *localBrowser
 	browserBridgeKey [32]byte
 	ownsListenPort   bool

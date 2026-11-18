@@ -120,6 +120,46 @@ async def test_xlsx_discards_generated_result_after_device_revoked(env, monkeypa
         )
         assert response.status_code == 403
         assert "汇总" not in response.text
+        assert "SUM(B2:B3)" not in response.text
+
+
+@pytest.mark.parametrize("revocation", ["disable_account", "remove_file_permission"])
+async def test_xlsx_discards_result_after_account_or_permission_revoked(
+    env, monkeypatch, revocation
+):
+    client, server, admin = env
+    alice = await create_user(client, admin, username="alice", permissions=GRANTS)
+    user_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    await seed_intranet_provider(client, admin)
+    server.services.settings_repo.set_active_model("openai", "gpt-4o")
+    async with approved_device(client, admin, alice) as (device_id, native):
+
+        async def revoke_during_generation(*args, **kwargs):
+            if revocation == "disable_account":
+                response = await client.patch(
+                    f"/api/users/{user_id}", headers=admin, json={"disabled": True}
+                )
+            else:
+                response = await client.patch(
+                    f"/api/users/{user_id}",
+                    headers=admin,
+                    json={"permissions": ["local_xlsx", "local_files_read"]},
+                )
+            assert response.status_code == 200
+            return RESULT
+
+        monkeypatch.setattr(
+            server.app_runtime.agent_registry.host_models,
+            "ainvoke_intranet_text",
+            revoke_during_generation,
+        )
+        response = await client.post(
+            f"/api/devices/{device_id}/xlsx/generate",
+            headers=native,
+            json={"instruction": "汇总", "text": SOURCE},
+        )
+        assert response.status_code == 403
+        assert "SUM(B2:B3)" not in response.text
 
 
 async def test_xlsx_schema_and_explicit_permission_catalog(env):

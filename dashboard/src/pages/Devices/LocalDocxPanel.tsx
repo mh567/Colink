@@ -57,7 +57,13 @@ function send(command: Record<string, string>) {
   );
 }
 
-export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
+export default function LocalDocxPanel({
+  deviceId,
+  connected = true,
+}: {
+  deviceId: string;
+  connected?: boolean;
+}) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const id = useId();
@@ -131,9 +137,14 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   }, [deviceId]);
 
   const dispatch = (command: Record<string, string>) => {
+    if (!connected) return;
     setState((previous) => ({ ...previous, busy: true, error: undefined }));
     try {
-      send(format !== "docx" ? { ...command, format } : command);
+      send(
+        format !== "docx" && command.action !== "revoke"
+          ? { ...command, format }
+          : command,
+      );
     } catch (error) {
       setState((previous) => ({
         ...previous,
@@ -192,6 +203,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
         expert.actions.includes(`local_${format}`),
     );
   const canRun =
+    connected &&
     targetGrants.some((grant) => grant.id === outputGrant) &&
     output.trim() &&
     (deleting ||
@@ -254,7 +266,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           <select
             id={`${id}-format`}
             value={format}
-            disabled={state.busy}
+            disabled={!connected || state.busy}
             style={selectStyle}
             onChange={(event) => {
               setFormat(
@@ -284,7 +296,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
             <select
               id={`${id}-operation`}
               value={operation}
-              disabled={state.busy}
+              disabled={!connected || state.busy}
               style={selectStyle}
               onChange={(event) => {
                 setOperation(event.target.value as Operation);
@@ -321,7 +333,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 id={`${id}-expert`}
                 style={selectStyle}
                 value={expertId}
-                disabled={state.busy}
+                disabled={!connected || state.busy}
                 onChange={(event) => setExpertId(event.target.value)}
               >
                 <option value="">
@@ -365,14 +377,14 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
         <Space wrap>
           <Button
             icon={<FolderPlus size={16} />}
-            disabled={state.busy}
+            disabled={!connected || state.busy}
             onClick={() => dispatch({ action: "grant", mode: "ro" })}
           >
             {t("localDocx.grantRead", "选择只读目录")}
           </Button>
           <Button
             icon={<FolderPlus size={16} />}
-            disabled={state.busy}
+            disabled={!connected || state.busy}
             onClick={() => dispatch({ action: "grant", mode: "rw" })}
           >
             {t("localDocx.grantWrite", "选择读写目录")}
@@ -380,14 +392,14 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           {format !== "ocr" && state.managed_directory && (
             <Button
               icon={<FolderPlus size={16} />}
-              disabled={state.busy}
+              disabled={!connected || state.busy}
               onClick={() => dispatch({ action: "grant_managed" })}
             >
               {t("localDocx.grantManaged", "添加受管目录")}
             </Button>
           )}
           <Button
-            disabled={state.busy}
+            disabled={!connected || state.busy}
             onClick={() => dispatch({ action: "list" })}
           >
             {t("localDocx.refresh", "刷新本机记录")}
@@ -396,7 +408,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
         {state.grants.length > 0 && (
           <Space direction="vertical" size={4} style={{ width: "100%" }}>
             {state.grants.map((grant) => (
-              <div key={grant.id}>
+              <Space key={grant.id} wrap>
                 <Tag color={grant.mode === "rw" ? "blue" : "default"}>
                   {grant.mode === "rw"
                     ? t("localDocx.rw", "读写")
@@ -405,7 +417,20 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                 <Typography.Text style={{ overflowWrap: "anywhere" }}>
                   {grant.path}
                 </Typography.Text>
-              </div>
+                <Button
+                  size="small"
+                  aria-label={t("localDocx.revokeGrant", {
+                    path: grant.path,
+                    defaultValue: "撤销 {{path}} 的目录授权",
+                  })}
+                  disabled={!connected}
+                  onClick={() =>
+                    dispatch({ action: "revoke", grant_id: grant.id })
+                  }
+                >
+                  {t("localDocx.revoke", "撤销")}
+                </Button>
+              </Space>
             ))}
           </Space>
         )}
@@ -429,7 +454,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
           }}
         >
           <fieldset
-            disabled={state.busy}
+            disabled={state.busy || !connected}
             style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
           >
             <div

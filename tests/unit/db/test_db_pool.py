@@ -804,3 +804,24 @@ def test_transaction_completes_while_a_competing_writer_waits(
         keys = {row["k"] for row in conn.execute("SELECT k FROM scratch").fetchall()}
     assert keys == {"competitor", "ours"}
     competitor.close()
+
+
+def test_close_waits_for_active_connection(db: SqlitePool) -> None:
+    close_started = threading.Event()
+    close_finished = threading.Event()
+
+    def close() -> None:
+        close_started.set()
+        db.close()
+        close_finished.set()
+
+    thread = threading.Thread(target=close)
+    with db.connect():
+        thread.start()
+        assert close_started.wait(timeout=5)
+        closed_while_connected = close_finished.wait(timeout=0.1)
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert not closed_while_connected
+    assert close_finished.is_set()

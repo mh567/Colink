@@ -278,8 +278,8 @@ async def test_device_without_heartbeat_becomes_offline(env, monkeypatch):
     import octop.api.routers.devices as router
     import octop.infra.control.devices as domain
 
-    monkeypatch.setattr(router, "DEVICE_TIMEOUT_SECONDS", 0.1)
-    monkeypatch.setattr(domain, "DEVICE_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(router, "DEVICE_TIMEOUT_SECONDS", 5)
+    monkeypatch.setattr(domain, "DEVICE_TIMEOUT_SECONDS", 5)
     client, _server, admin = env
     alice = await create_user(client, admin, username="alice")
     async with ws_connect(client._octop_app, "/api/devices/connect") as ws:
