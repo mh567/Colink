@@ -85,8 +85,9 @@ type docxTask struct {
 	Recovery    string `json:"recovery,omitempty"`
 }
 type docxState struct {
-	Grants []directoryGrant `json:"grants"`
-	Tasks  []docxTask       `json:"tasks"`
+	Grants           []directoryGrant   `json:"grants"`
+	Tasks            []docxTask         `json:"tasks"`
+	PendingFileAudit []fileAuditReceipt `json:"pending_file_audit,omitempty"`
 }
 type docxEvent struct {
 	DeviceID         string           `json:"device_id"`
@@ -98,6 +99,7 @@ type docxEvent struct {
 }
 type localDOCX struct {
 	mu                 sync.Mutex
+	auditMu            sync.Mutex
 	statusMu           sync.Mutex
 	home               string
 	roots              map[string]*os.Root
@@ -517,7 +519,11 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 	if feature != "browser" {
 		operationContext = s.Context
 	}
-	ctx, cancel := context.WithTimeout(operationContext, 2*time.Minute)
+	timeout := 2 * time.Minute
+	if feature == "file-events" {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(operationContext, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(data))
 	if err != nil {
@@ -562,10 +568,10 @@ func authorizeDOCX(s docxSession, action string) error {
 	if s.AgentID != "" {
 		payload["agent_id"] = s.AgentID
 	}
-	if s.AuditRequestID != "" {
+	if action != "read" && s.AuditRequestID != "" {
 		payload["request_id"] = s.AuditRequestID
 	}
-	if s.AuditPath != "" {
+	if action != "read" && s.AuditPath != "" {
 		payload["path"] = filepath.Base(s.AuditPath)
 	}
 	if err := docxCall(s, "authorize", payload, &reply); err != nil {
@@ -577,49 +583,17 @@ func authorizeDOCX(s docxSession, action string) error {
 	return nil
 }
 
-func reportFileEvent(s docxSession, event, operation, errorCode string) {
-	if s.AuditRequestID == "" || operation == "" {
-		return
-	}
-	format := s.Format
-	if format == "" {
-		format = "docx"
-	}
-	payload := map[string]string{
-		"request_id": s.AuditRequestID,
-		"event":      event,
-		"format":     format,
-		"operation":  operation,
-	}
-	if s.AuditPath != "" {
-		payload["path"] = filepath.Base(s.AuditPath)
-	}
-	if errorCode != "" {
-		payload["error_code"] = errorCode
-	}
-	var reply map[string]any
-	_ = deviceTaskCall(s, "file-events", "", payload, &reply)
-}
-func (w *localDOCX) record(s docxSession, task docxTask) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	states, err := w.load()
-	if err != nil {
-		return err
-	}
-	state := states[s.scope()]
-	found := false
-	for i := range state.Tasks {
-		if state.Tasks[i].ID == task.ID {
-			state.Tasks[i] = task
-			found = true
+func (w *localDOCX) record(s docxSession, task docxTask, audit ...fileAuditReceipt) error {
+	return w.updateState(s, func(state *docxState) {
+		state.PendingFileAudit = append(state.PendingFileAudit, audit...)
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == task.ID {
+				state.Tasks[i] = task
+				return
+			}
 		}
-	}
-	if !found {
 		state.Tasks = append(state.Tasks, task)
-	}
-	states[s.scope()] = state
-	return w.save(states)
+	})
 }
 func (w *localDOCX) run(s docxSession, request docxRequest, current func() error) (task docxTask, err error) {
 	if isDestructiveAction(request.Action) {
@@ -707,19 +681,32 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = w.record(s, task); err != nil {
 		return task, err
 	}
+	audited := false
 	defer func() {
+		event := "completed"
 		if err != nil {
 			task.Status = "failed"
 			task.Error = err.Error()
-			reportFileEvent(s, "failed", "create", "failed")
+			event = "failed"
 		} else {
 			task.Status = "completed"
-			reportFileEvent(s, "completed", "create", "")
 		}
-		if saveErr := w.record(s, task); saveErr != nil {
+		var receipts []fileAuditReceipt
+		if audited {
+			receipts = append(receipts, s.fileAudit(event, "create"))
+		}
+		if saveErr := w.record(s, task, receipts...); saveErr != nil {
+			task.Status = "interrupted"
 			err = fmt.Errorf("任务结果记录失败，请核对目标文件：%w", saveErr)
+			task.Error = err.Error()
+			return
 		}
+		w.retryFileAudit(s)
 	}()
+	if err = authorizeDOCX(s, "create"); err != nil {
+		return task, err
+	}
+	audited = true
 	data, err := generateLocalOutput(s, request, source, current)
 	if err != nil {
 		return task, err

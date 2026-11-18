@@ -620,7 +620,7 @@ class OctopServer:
 
             from octop.infra.audit.retention import install_audit_retention_job
 
-            install_audit_retention_job(cron_mgr, server=self)
+            await install_audit_retention_job(cron_mgr, server=self)
 
         registry.set_cron_manager(cron_mgr)
         registry.set_team_processor(gateway.processor.teams)

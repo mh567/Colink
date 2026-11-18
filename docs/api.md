@@ -172,7 +172,7 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| `POST` | `/devices/{device_id}/file-events` | 员工令牌＋`X-Colink-Device-Session` | `{request_id,event,format,operation,path?,error_code?}`。`event` 为 `confirmed`、`rejected`、`completed` 或 `failed`。未知私有字段会被忽略且不入库。返回 `{recorded:true}` |
+| `POST` | `/devices/{device_id}/file-events` | 员工令牌＋`X-Colink-Device-Session` | `{request_id,event,format,operation,path?,error_code?}`。回执须对应同一员工、设备、格式、动作和文件名的授权记录；覆盖或删除成功前须记录确认。相同回执重复提交仍返回 `{recorded:true}`；关联不符或状态冲突时返回 `409`。桌面端先在本机保存待提交回执，连接恢复后重试。 |
 
 已批准的 WebSocket `status` 帧增加 `session_token`，仅保留在原生客户端，不透传页面、列表或审计。它与本人访问令牌一起证明当前设备会话；重新连接产生新值，断线、撤销、停用或重置口令后失效。生成前及模型返回后均重新核对权限。客户端在实际读写处另行核对本机目录授权，不能以服务端批准代替目录边界。
 
@@ -797,7 +797,7 @@ endpoint (public, mounted directly in `api/app.py`).
 | `GET`    | `/usage/summary` | user | token usage summary for the current user |
 | `GET`    | `/admin/usage` | admin | global token usage summary |
 | `GET`    | `/admin/overview` | admin | `{user_count, agent_count, ...}` |
-| `GET`    | `/admin/audit-log` | admin | recent audit rows; payloads omit passwords, model keys and original files. File modifications use `file.authorized` / `file.confirmed` / `file.completed` (and denied/rejected/failed). Records older than 90 days are pruned. |
+| `GET`    | `/admin/audit-log` | admin | Read-only query; `request_id` filters by operation ID before the row limit. Only native file events are hidden and pruned after 90 days; login, role changes and other audit events are unaffected. |
 | `GET`    | `/admin/metrics` | admin | `{messages_total, stream_errors_total, cron_runs_total, cron_errors_total, agent_active, ...}` |
 
 ## Envs

@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from octop.infra.db.repos._base import now_ts
 from octop.infra.db.repos.audit import AuditRepo, AuditRow
+from octop.infra.errors import ErrorCode, OctopError
 
 AUDIT_RETENTION_DAYS = 90
 
@@ -133,8 +135,76 @@ def record_file_event(
     )
 
 
+def record_file_receipt(
+    repo: AuditRepo,
+    *,
+    actor: str,
+    request_id: str,
+    device_id: str,
+    event: str,
+    format: str,
+    operation: str,
+    path: str | None,
+    error_code: str | None,
+) -> None:
+    """Accept an idempotent native receipt only for its own authorized operation."""
+    action = f"file.{event}"
+    payload = _file_payload(
+        device_id=device_id,
+        format=format,
+        operation=operation,
+        path=path,
+        result=None if event == "confirmed" else event,
+        error_code=error_code,
+    )
+    target = (format, operation, public_path(path))
+    terminal = {"file.rejected", "file.completed", "file.failed"}
+
+    def should_write(rows: list[AuditRow]) -> bool:
+        authorization: str | None = None
+        stages: list[str] = []
+        for row in rows:
+            if row.action not in FILE_EVENT_ACTIONS or not row.payload:
+                continue
+            fields = json.loads(row.payload)
+            if fields.get("device_id") != device_id:
+                continue
+            if (fields.get("format"), fields.get("operation"), fields.get("path")) != target:
+                break
+            if row.action in {"file.authorized", "file.authorization_denied"}:
+                authorization = row.action
+            if authorization and row.action == action and row.payload == payload:
+                return False
+            stages.append(row.action)
+        else:
+            if authorization and not terminal.intersection(stages):
+                if event == "failed":
+                    return True
+                if authorization == "file.authorized":
+                    confirmed = "file.confirmed" in stages
+                    if operation == "create" and event == "completed":
+                        return True
+                    if operation != "create" and (
+                        (event in {"confirmed", "rejected"} and not confirmed)
+                        or (event == "completed" and confirmed)
+                    ):
+                        return True
+        raise OctopError.localized(ErrorCode.LOCAL_FILE_AUDIT_CONFLICT)
+
+    repo.write_target_event(
+        actor=actor,
+        target=request_id,
+        action=action,
+        payload=payload,
+        since=file_audit_cutoff(),
+        should_write=should_write,
+    )
+
+
+def file_audit_cutoff(now: int | None = None) -> int:
+    return (now if now is not None else now_ts()) - AUDIT_RETENTION_DAYS * 86400
+
+
 def trail_for_request(repo: AuditRepo, request_id: str) -> list[AuditRow]:
     """Oldest-first events that share a file-operation request id."""
-    rows = [row for row in repo.query(limit=500) if row.target == request_id]
-    rows.sort(key=lambda row: (row.ts, row.id))
-    return rows
+    return list(reversed(repo.query(target=request_id, limit=500)))

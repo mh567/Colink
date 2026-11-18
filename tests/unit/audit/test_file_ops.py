@@ -164,6 +164,8 @@ def test_public_audit_payload_redacts_secrets_from_admin_query() -> None:
 
 def test_audit_older_than_90_days_is_pruned(audit: AuditRepo) -> None:
     now = 1_700_000_000
+    audit.write(actor="alice", action="auth.login", ts=now - 91 * 86400)
+    audit.write(actor="admin", action="user.set_role", ts=now - 91 * 86400)
     record_file_event(
         audit,
         actor="alice",
@@ -191,7 +193,8 @@ def test_audit_older_than_90_days_is_pruned(audit: AuditRepo) -> None:
     deleted = prune_expired_audit(audit, now=now)
     assert deleted == 1
     remaining = audit.query()
-    assert [json.loads(row.payload or "{}")["path"] for row in remaining] == ["新.docx"]
+    assert {row.action for row in remaining} == {"auth.login", "user.set_role", "file.completed"}
+    assert [json.loads(row.payload)["path"] for row in remaining if row.payload] == ["新.docx"]
 
 
 def test_deleting_a_thread_does_not_remove_retained_file_audit(

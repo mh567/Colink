@@ -40,7 +40,11 @@ func TestReportFileEventPostsBasenameWithoutPrivateContent(t *testing.T) {
 		AuditRequestID: "0123456789abcdef0123456789abcdef",
 		AuditPath:      "/员工/私有/合同.docx",
 	}
-	reportFileEvent(session, "completed", "overwrite", "")
+	worker := newLocalDOCX(t.TempDir())
+	if err := worker.enqueueFileAudit(session, session.fileAudit("completed", "overwrite")); err != nil {
+		t.Fatal(err)
+	}
+	worker.retryFileAudit(session)
 	if !strings.HasSuffix(path, "/api/devices/device/file-events") {
 		t.Fatalf("path=%s", path)
 	}

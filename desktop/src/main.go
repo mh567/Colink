@@ -375,8 +375,8 @@ func main() {
 		store: store,
 		sleep: &sleepGuard{},
 	}
-	api.device = &deviceClient{emit: api.emitDeviceStatus}
 	api.docx = newLocalDOCX(octopHome())
+	api.device = &deviceClient{emit: api.emitDeviceStatus, retryAudit: api.docx.retryFileAudit}
 	api.docx.confirmDestructive = api.confirmLocalFile
 	api.browser = newLocalBrowser(octopHome())
 	rand.Read(api.browserBridgeKey[:])

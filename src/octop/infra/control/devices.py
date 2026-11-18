@@ -162,6 +162,10 @@ class DeviceManager:
         required = {f"local_{format}", f"local_files_{action}"}
         if format == "pptx" and source_format == "docx":
             required.update(("local_docx", "local_files_read"))
+        if request_id and action != "read":
+            self._require_native_grants(
+                user, device_id, session_token, set(), operation="local file operation"
+            )
         if format in {"ocr", "pptx", "pdf"} and action not in ("read", "create"):
             self._record_file_authorization(
                 user,
@@ -218,18 +222,17 @@ class DeviceManager:
         self._require_native_grants(
             user, device_id, session_token, set(), operation="local file audit"
         )
-        from octop.infra.audit.file_ops import record_file_event
+        from octop.infra.audit.file_ops import record_file_receipt
 
-        record_file_event(
+        record_file_receipt(
             self.services.audit_repo,
             actor=user.username,
-            action=f"file.{event}",
+            event=event,
             request_id=request_id,
             device_id=device_id,
             format=format,
             operation=operation,
             path=path,
-            result=event if event in {"rejected", "completed", "failed"} else None,
             error_code=error_code,
         )
 

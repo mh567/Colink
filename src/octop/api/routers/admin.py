@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 
 from octop.api.deps import get_server, require_permission
 from octop.infra.audit.file_ops import public_audit_payload
-from octop.infra.audit.retention import prune_expired_audit
+from octop.infra.audit.retention import query_retained_audit
 
 router = APIRouter()
 
@@ -50,11 +50,16 @@ async def overview(
 AUDIT_LOG_MAX_LIMIT = 500
 
 
-@router.get("/audit-log")
-async def audit_log(
+@router.get("/audit-log", summary="Query retained administrator audit events")
+def audit_log(
     since: int | None = None,
     actor: str | None = None,
     action: str | None = None,
+    request_id: str | None = Query(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Exact local file operation ID; applied before the row limit.",
+    ),
     limit: int = Query(
         default=100,
         ge=1,
@@ -64,8 +69,14 @@ async def audit_log(
     _: Any = Depends(require_permission("admin_console")),
     server: Any = Depends(get_server),
 ) -> list[dict[str, Any]]:
-    prune_expired_audit(server.services.audit_repo)
-    rows = server.services.audit_repo.query(since=since, actor=actor, action=action, limit=limit)
+    rows = query_retained_audit(
+        server.services.audit_repo,
+        since=since,
+        actor=actor,
+        action=action,
+        request_id=request_id,
+        limit=limit,
+    )
     return [
         {
             "id": r.id,

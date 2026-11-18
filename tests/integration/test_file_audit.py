@@ -32,6 +32,39 @@ async def test_overwrite_trail_is_queryable_without_private_content(env):
             },
         )
         assert allowed.status_code == 200
+
+        async def report(event, **changes):
+            return await client.post(
+                f"/api/devices/{device_id}/file-events",
+                headers=native,
+                json={
+                    "request_id": REQUEST_ID,
+                    "event": event,
+                    "format": "docx",
+                    "operation": "overwrite",
+                    "path": "/员工/私有/合同.docx",
+                }
+                | changes,
+            )
+
+        assert (await report("completed")).status_code == 409
+        assert (await report("confirmed", path="另一份合同.docx")).status_code == 409
+        assert (await report("confirmed", format="xlsx")).status_code == 409
+        assert (await report("confirmed", operation="delete")).status_code == 409
+        async with approved_device(client, admin, alice) as (other_id, other_native):
+            assert (
+                await client.post(
+                    f"/api/devices/{other_id}/file-events",
+                    headers=other_native,
+                    json={
+                        "request_id": REQUEST_ID,
+                        "event": "confirmed",
+                        "format": "docx",
+                        "operation": "overwrite",
+                        "path": "合同.docx",
+                    },
+                )
+            ).status_code == 409
         for event, extra in (
             ("confirmed", {}),
             ("completed", {}),
@@ -52,6 +85,9 @@ async def test_overwrite_trail_is_queryable_without_private_content(env):
                 },
             )
             assert reported.status_code == 200, reported.text
+
+        assert (await report("completed")).status_code == 200
+        assert (await report("rejected")).status_code == 409
 
         admin_rows = (
             await client.get("/api/admin/audit-log?action=file.authorized", headers=admin)
@@ -113,27 +149,59 @@ async def test_file_audit_records_denial_rejection_and_failure(env):
         ).status_code == 200
 
         failed_id = "cccccccccccccccccccccccccccccccc"
+        failure = {
+            "request_id": failed_id,
+            "event": "failed",
+            "format": "docx",
+            "operation": "overwrite",
+            "path": "纪要.docx",
+            "error_code": "target_changed",
+        }
+        events = f"/api/devices/{device_id}/file-events"
+        assert (await client.post(events, headers=native, json=failure)).status_code == 409
         assert (
             await client.post(
-                f"/api/devices/{device_id}/file-events",
+                f"/api/devices/{device_id}/docx/authorize",
                 headers=native,
-                json={
-                    "request_id": failed_id,
-                    "event": "failed",
-                    "format": "docx",
-                    "operation": "overwrite",
-                    "path": "纪要.docx",
-                    "error_code": "target_changed",
-                },
+                json={"action": "overwrite", "request_id": failed_id, "path": "纪要.docx"},
             )
         ).status_code == 200
+        assert (await client.post(events, headers=native, json=failure)).status_code == 200
 
         rows = (await client.get("/api/admin/audit-log?limit=50", headers=admin)).json()
-        by_target = {row["target"]: row["action"] for row in rows}
-        assert by_target[denied_id] == "file.authorization_denied"
-        assert by_target[rejected_id] in {"file.rejected", "file.authorized"}
-        assert any(
-            row["target"] == rejected_id and row["action"] == "file.rejected" for row in rows
-        )
-        assert by_target[failed_id] == "file.failed"
+        assert [row["action"] for row in rows if row["target"] == denied_id] == [
+            "file.authorization_denied"
+        ]
+        assert [row["action"] for row in rows if row["target"] == rejected_id] == [
+            "file.rejected",
+            "file.authorized",
+        ]
+        assert [row["action"] for row in rows if row["target"] == failed_id] == [
+            "file.failed",
+            "file.authorized",
+        ]
         assert "target_changed" in (rows[0]["payload"] or "")
+
+
+async def test_audit_query_finds_the_operation_without_pruning_the_database(env):
+    from octop.infra.audit.file_ops import AUDIT_RETENTION_DAYS
+    from octop.infra.db.repos._base import now_ts
+
+    client, server, admin = env
+    repo = server.services.audit_repo
+    now = now_ts()
+    repo.write(actor="alice", action="file.completed", target=REQUEST_ID, ts=now - 60)
+    repo.write(actor="bob", action="file.completed", target="other", ts=now)
+    expired = now - (AUDIT_RETENTION_DAYS + 1) * 86400
+    repo.write(actor="alice", action="file.completed", target="expired", ts=expired)
+    repo.write(actor="alice", action="auth.login", target="legacy", ts=expired)
+
+    result = await client.get(
+        f"/api/admin/audit-log?request_id={REQUEST_ID}&limit=1", headers=admin
+    )
+    assert result.status_code == 200
+    assert [row["target"] for row in result.json()] == [REQUEST_ID]
+    visible = (await client.get("/api/admin/audit-log", headers=admin)).json()
+    assert "legacy" in {row["target"] for row in visible}
+    assert "expired" not in {row["target"] for row in visible}
+    assert "expired" in {row.target for row in repo.query()}

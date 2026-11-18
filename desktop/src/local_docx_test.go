@@ -21,11 +21,31 @@ import (
 
 func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing.T) {
 	var sent, sentAgent string
+	var receipts []map[string]string
+	available := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Colink-Device-Session") != "secret" {
 			t.Error("missing native session")
 		}
-		if strings.HasSuffix(r.URL.Path, "/generate") {
+		if strings.HasSuffix(r.URL.Path, "/file-events") {
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			want := 5
+			if body["event"] == "failed" && body["error_code"] == "failed" {
+				want++
+			}
+			if len(body) != want || !validDestructiveID(body["request_id"]) || body["format"] != "docx" || body["operation"] != "create" || body["path"] != "成果.docx" {
+				t.Errorf("unexpected audit body: %v", body)
+			}
+			if !available {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			receipts = append(receipts, body)
+			w.Write([]byte(`{"recorded":true}`))
+		} else if strings.HasSuffix(r.URL.Path, "/generate") {
 			var body struct {
 				Text    string `json:"text"`
 				AgentID string `json:"agent_id"`
@@ -34,13 +54,16 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 			sent = body.Text
 			sentAgent = body.AgentID
 			json.NewEncoder(w).Encode(map[string]string{"text": "整理结果\n第二段"})
-		} else {
+		} else if strings.HasSuffix(r.URL.Path, "/authorize") {
 			var body map[string]string
 			json.NewDecoder(r.Body).Decode(&body)
 			if body["agent_id"] != "private-expert" {
 				t.Error("expert not checked before file operation")
 			}
 			w.Write([]byte(`{"allowed":true}`))
+		} else {
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
@@ -87,8 +110,28 @@ func TestLocalDOCXTaskCreatesEditableDocumentWithoutUploadingOriginal(t *testing
 	if err != nil || text != "整理结果\n第二段\n" {
 		t.Fatalf("%q %v", text, err)
 	}
-	if _, err = worker.run(session, docxRequest{AgentID: "private-expert", SourceGrant: grant.ID, Source: "输入.docx", OutputGrant: grant.ID, Output: "成果.docx", Instruction: "整理"}, func() error { return nil }); err == nil {
+	available = true
+	worker = newLocalDOCX(worker.home)
+	retried := make(chan struct{})
+	client := &deviceClient{docx: session, retryAudit: func(s docxSession) {
+		worker.retryFileAudit(s)
+		close(retried)
+	}}
+	client.publish(0, deviceMessage{Type: "status", Status: "approved", Online: true, DeviceID: session.DeviceID, UserID: session.UserID, SessionToken: session.Secret})
+	select {
+	case <-retried:
+	case <-time.After(5 * time.Second):
+		t.Fatal("approved device reconnect did not retry audit")
+	}
+	if len(receipts) != 1 || receipts[0]["request_id"] != task.ID || receipts[0]["event"] != "completed" {
+		t.Fatalf("missing completed receipt after reconnect: %v", receipts)
+	}
+	failed, err := worker.run(session, docxRequest{AgentID: "private-expert", SourceGrant: grant.ID, Source: "输入.docx", OutputGrant: grant.ID, Output: "成果.docx", Instruction: "整理"}, func() error { return nil })
+	if err == nil {
 		t.Fatal("overwrote existing file")
+	}
+	if len(receipts) != 2 || receipts[0]["request_id"] != task.ID || receipts[0]["event"] != "completed" || receipts[1]["request_id"] != failed.ID || receipts[1]["event"] != "failed" {
+		t.Fatalf("missing ordered receipts after restart: %v", receipts)
 	}
 }
 
@@ -190,7 +233,7 @@ func TestLocalDOCXChecksWritePermissionAfterModelAndSessionBeforeWriting(t *test
 					Action string `json:"action"`
 				}
 				json.NewDecoder(r.Body).Decode(&body)
-				if body.Action == "create" && test == "permission" {
+				if body.Action == "create" && modelCalled && test == "permission" {
 					w.WriteHeader(http.StatusForbidden)
 					w.Write([]byte(`{"error":{"message":"已撤销写入权限"}}`))
 					return
@@ -700,6 +743,7 @@ func TestLocalDOCXLimitsAndRestartState(t *testing.T) {
 
 func TestLocalDOCXRefreshesTokenAfterGenerationAndPreservesEncodedPrefix(t *testing.T) {
 	client := &deviceClient{generation: 1, renewals: make(chan string, 1)}
+	var createTokens []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if handleFileAudit(w, r) {
 			return
@@ -716,14 +760,11 @@ func TestLocalDOCXRefreshesTokenAfterGenerationAndPreservesEncodedPrefix(t *test
 			Action string `json:"action"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		expected := "old-token"
+		token := r.Header.Get("Authorization")
 		if body.Action == "create" {
-			expected = "renewed-token"
-		}
-		if r.Header.Get("Authorization") != "Bearer "+expected {
-			t.Errorf("%s used stale token", body.Action)
-			w.WriteHeader(401)
-			return
+			createTokens = append(createTokens, token)
+		} else if token != "Bearer old-token" {
+			t.Errorf("%s used unexpected token", body.Action)
 		}
 		w.Write([]byte(`{"allowed":true}`))
 	}))
@@ -744,6 +785,9 @@ func TestLocalDOCXRefreshesTokenAfterGenerationAndPreservesEncodedPrefix(t *test
 	_, err = worker.run(session, docxRequest{SourceGrant: grant.ID, Source: "input.docx", OutputGrant: grant.ID, Output: "out.docx", Instruction: "整理"}, func() error { return client.currentDOCX(session) })
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Join(createTokens, ",") != "Bearer old-token,Bearer renewed-token" {
+		t.Fatalf("write authorizations did not use current tokens: %v", createTokens)
 	}
 	if _, err = os.Stat(filepath.Join(directory, "out.docx")); err != nil {
 		t.Fatal(err)

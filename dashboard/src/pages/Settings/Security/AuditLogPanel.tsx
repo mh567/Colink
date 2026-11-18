@@ -12,6 +12,7 @@ import {
   Typography,
   DatePicker,
   Form,
+  Input,
   Tag,
 } from "antd";
 import { message } from "@/utils/antdMessage";
@@ -40,6 +41,7 @@ interface FilterValues {
   actor?: string;
   action?: string;
   since?: string;
+  requestId?: string;
   limit?: number;
 }
 
@@ -103,6 +105,8 @@ export default function AuditLogPanel() {
         const qs = new URLSearchParams();
         if (values.actor) qs.set("actor", values.actor);
         if (values.action) qs.set("action", values.action);
+        const requestId = values.requestId?.trim().toLowerCase();
+        if (requestId) qs.set("request_id", requestId);
         if (values.since) {
           const parsed = Date.parse(values.since);
           if (!Number.isNaN(parsed))
@@ -190,6 +194,19 @@ export default function AuditLogPanel() {
             />
           </Form.Item>
           <Form.Item
+            label={t("adminAudit.requestId")}
+            name="requestId"
+            rules={[
+              {
+                transform: (value?: string) => value?.trim(),
+                pattern: /^[0-9a-f]{32}$/i,
+                message: t("adminAudit.requestIdInvalid"),
+              },
+            ]}
+          >
+            <Input allowClear />
+          </Form.Item>
+          <Form.Item
             label={t("adminAudit.since")}
             name="since"
             getValueFromEvent={(_, s) => s}
@@ -218,7 +235,7 @@ export default function AuditLogPanel() {
               </Button>
               <Button
                 icon={<RefreshCw size={14} />}
-                onClick={() => void fetchAudit(form.getFieldsValue())}
+                onClick={() => form.submit()}
               >
                 {t("common.refresh")}
               </Button>

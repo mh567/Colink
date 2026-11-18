@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from octop.infra.audit.file_ops import AUDIT_RETENTION_DAYS
-from octop.infra.db.repos._base import now_ts
-from octop.infra.db.repos.audit import AuditRepo
+from octop.infra.audit.file_ops import AUDIT_RETENTION_DAYS, FILE_EVENT_ACTIONS, file_audit_cutoff
+from octop.infra.db.repos.audit import AuditRepo, AuditRow
 
 if TYPE_CHECKING:
     from octop.infra.cron.manager import CronManager
@@ -20,12 +20,31 @@ AUDIT_RETENTION_SCHEDULE = "cron:20 3 * * *"
 
 
 def prune_expired_audit(repo: AuditRepo, *, now: int | None = None) -> int:
-    """Delete audit rows older than 90 days. Returns the deleted count."""
-    cutoff = (now if now is not None else now_ts()) - AUDIT_RETENTION_DAYS * 86400
-    return repo.delete_before(cutoff)
+    """Delete only expired local file audit events."""
+    return repo.delete_before(file_audit_cutoff(now), actions=FILE_EVENT_ACTIONS)
 
 
-def install_audit_retention_job(cron_manager: CronManager, *, server: OctopServer) -> None:
+def query_retained_audit(
+    repo: AuditRepo,
+    *,
+    since: int | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    request_id: str | None = None,
+    limit: int = 100,
+) -> list[AuditRow]:
+    return repo.query(
+        since=since,
+        actor=actor,
+        action=action,
+        target=request_id,
+        retain_since=file_audit_cutoff(),
+        retained_actions=FILE_EVENT_ACTIONS,
+        limit=limit,
+    )
+
+
+async def install_audit_retention_job(cron_manager: CronManager, *, server: OctopServer) -> None:
     """Prune immediately, then schedule a daily retention job."""
 
     def _prune() -> None:
@@ -35,17 +54,13 @@ def install_audit_retention_job(cron_manager: CronManager, *, server: OctopServe
         if deleted:
             logger.info("pruned %s audit rows older than %s days", deleted, AUDIT_RETENTION_DAYS)
 
-    _prune()
-
     async def _run() -> None:
-        _prune()
+        await asyncio.to_thread(_prune)
+
+    await _run()
 
     cron_manager.schedule_system_job(
         AUDIT_RETENTION_JOB_ID,
         trigger=AUDIT_RETENTION_SCHEDULE,
         func=_run,
     )
-
-
-def retention_job_registered(cron_manager: Any) -> bool:
-    return bool(cron_manager.has_system_job(AUDIT_RETENTION_JOB_ID))
