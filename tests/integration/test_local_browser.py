@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
+
+import pytest
 
 from tests.integration import test_devices
 from tests.integration.test_local_docx import approved_device, seed_intranet_provider
 from tests.support.auth import create_user
 
 env = test_devices.env
+FORM_FIELDS = [
+    {
+        "id": "field-1",
+        "label": "备注",
+        "type": "textarea",
+        "value": "page-input-example",
+        "options": [],
+    },
+    {"id": "field-2", "label": "确认", "type": "checkbox", "value": True, "options": []},
+    {
+        "id": "field-3",
+        "label": "优先级",
+        "type": "select",
+        "value": "normal",
+        "options": [{"label": "普通", "value": "normal"}, {"label": "紧急", "value": "urgent"}],
+    },
+]
+FORM_BODY = {"instruction": "将优先级设为紧急并取消确认", "fields": FORM_FIELDS}
 
 
 async def test_browser_authorizes_only_the_approved_device_with_an_explicit_grant(env):
@@ -18,8 +39,12 @@ async def test_browser_authorizes_only_the_approved_device_with_an_explicit_gran
     alice_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
     async with approved_device(client, admin, alice) as (device_id, native):
         path = f"/api/devices/{device_id}/browser/authorize"
+        form_actions = ("forms", "suggest_form", "submit_form", "operations")
         body = {"action": "open"}
-        assert (await client.post(path, headers=native, json=body)).status_code == 403
+        for action in ("open", *form_actions):
+            assert (
+                await client.post(path, headers=native, json={"action": action})
+            ).status_code == 403
 
         granted = await client.patch(
             f"/api/users/{alice_id}", headers=admin, json={"permissions": ["local_browser"]}
@@ -34,6 +59,7 @@ async def test_browser_authorizes_only_the_approved_device_with_an_explicit_gran
             "query",
             "capture",
             "close",
+            *form_actions,
         ):
             allowed = await client.post(path, headers=native, json={"action": action})
             assert allowed.status_code == 200
@@ -54,7 +80,10 @@ async def test_browser_authorizes_only_the_approved_device_with_an_explicit_gran
             f"/api/users/{alice_id}", headers=admin, json={"permissions": []}
         )
         assert revoked.status_code == 200
-        assert (await client.post(path, headers=native, json=body)).status_code == 403
+        for action in ("open", *form_actions):
+            assert (
+                await client.post(path, headers=native, json={"action": action})
+            ).status_code == 403
 
     async with approved_device(client, admin, admin) as (admin_device_id, admin_native):
         path = f"/api/devices/{admin_device_id}/browser/authorize"
@@ -102,3 +131,122 @@ async def test_browser_query_discards_result_when_device_is_revoked_during_model
         assert answer not in response.text
         assert (await client.post(path, headers=native, json=body)).status_code == 403
         assert model.await_count == 2
+
+
+@pytest.fixture
+async def browser_form_model(env, monkeypatch):
+    client, server, admin = env
+    await seed_intranet_provider(client, admin)
+    server.services.settings_repo.set_active_model("openai", "gpt-4o")
+    model = AsyncMock(return_value='{"values": {"field-2": false, "field-3": "urgent"}}')
+    monkeypatch.setattr(
+        server.app_runtime.agent_registry.host_models, "ainvoke_intranet_text", model
+    )
+    return model
+
+
+async def test_browser_form_suggestion_requires_native_grant(env, browser_form_model):
+    client, _server, admin = env
+    alice = await create_user(client, admin, username="alice")
+    bob = await create_user(client, admin, username="bob", permissions=["local_browser"])
+    alice_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    async with approved_device(client, admin, alice) as (device_id, native):
+        path = f"/api/devices/{device_id}/browser/form-suggest"
+        response = await client.post(path, headers=native, json=FORM_BODY)
+        assert response.status_code == 403
+        granted = await client.patch(
+            f"/api/users/{alice_id}", headers=admin, json={"permissions": ["local_browser"]}
+        )
+        granted.raise_for_status()
+        for headers in (alice, {**native, **bob}):
+            response = await client.post(path, headers=headers, json=FORM_BODY)
+            assert response.status_code == 403
+        assert browser_form_model.await_count == 0
+    response = await client.post(path, headers=native, json=FORM_BODY)
+    assert response.status_code == 403
+    assert browser_form_model.await_count == 0
+
+
+async def test_browser_form_suggestion_validates_model_fields_and_options(env, browser_form_model):
+    client, _server, admin = env
+    alice = await create_user(client, admin, username="alice", permissions=["local_browser"])
+    async with approved_device(client, admin, alice) as (device_id, native):
+        path = f"/api/devices/{device_id}/browser/form-suggest"
+        invalid_requests = (
+            {**FORM_BODY, "url": "https://intranet.test"},
+            {**FORM_BODY, "fields": [{**FORM_FIELDS[0], "selector": "#input"}]},
+            {**FORM_BODY, "fields": [{**FORM_FIELDS[0], "type": "password"}]},
+            {**FORM_BODY, "fields": [{**FORM_FIELDS[0], "type": "checkbox"}]},
+            {**FORM_BODY, "fields": [FORM_FIELDS[0], FORM_FIELDS[0]]},
+            {**FORM_BODY, "fields": [{**FORM_FIELDS[0], "value": "a" * (16 * 1024)}]},
+        )
+        for invalid in invalid_requests:
+            response = await client.post(path, headers=native, json=invalid)
+            assert response.status_code == 422
+            assert "page-input-example" not in response.text
+        assert browser_form_model.await_count == 0
+
+        response = await client.post(path, headers=native, json=FORM_BODY)
+        assert response.status_code == 200
+        assert response.json() == {"values": {"field-2": False, "field-3": "urgent"}}
+        call = browser_form_model.call_args
+        assert call.args[0] == "openai/gpt-4o"
+        assert FORM_BODY["instruction"] in call.args[1]
+        assert FORM_FIELDS[0]["value"] in call.args[1]
+        assert "untrusted" in call.kwargs["system"]
+        assert call.kwargs["pin_ip"] == "10.20.30.40"
+        assert "tools" not in call.kwargs
+
+        model_text = "provider-output-example"
+        invalid_results = (
+            model_text,
+            '{"values": {}}',
+            '{"values": ["urgent"]}',
+            json.dumps({"values": {"unknown": model_text, "field-3": "urgent"}}),
+            json.dumps({"values": {"field-3": model_text}}),
+            '{"values": {"field-2": "false"}}',
+            '{"values": {"field-2": 0}}',
+            '{"values": {"field-1": true}}',
+            '{"values": {"field-3": "normal", "field-3": "urgent"}}',
+            '{"values": {"field-3": "urgent"}, "extra": true}',
+        )
+        for invalid in invalid_results:
+            browser_form_model.return_value = invalid
+            response = await client.post(path, headers=native, json=FORM_BODY)
+            assert response.status_code == 500
+            assert response.json()["error"]["code"] == "LOCAL_BROWSER_QUERY_FAILED"
+            assert "values" not in response.json()
+            assert model_text not in response.text
+            assert "page-input-example" not in response.text
+
+        browser_form_model.side_effect = RuntimeError(model_text)
+        response = await client.post(path, headers=native, json=FORM_BODY)
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "LOCAL_BROWSER_QUERY_FAILED"
+        assert model_text not in response.text
+
+
+@pytest.mark.parametrize("revoked_resource", ["device", "model"])
+async def test_browser_form_suggestion_discards_revoked_result(
+    env, browser_form_model, revoked_resource
+):
+    client, server, admin = env
+    alice = await create_user(client, admin, username="alice", permissions=["local_browser"])
+    async with approved_device(client, admin, alice) as (device_id, native):
+        path = f"/api/devices/{device_id}/browser/form-suggest"
+        suggested = "discarded-result-example"
+
+        async def revoke(*args, **kwargs):
+            if revoked_resource == "device":
+                response = await client.post(f"/api/devices/{device_id}/revoke", headers=admin)
+                response.raise_for_status()
+            else:
+                server.services.settings_repo.set_active_model("openai", "other-model")
+            return json.dumps({"values": {"field-1": suggested}})
+
+        browser_form_model.side_effect = revoke
+        response = await client.post(path, headers=native, json=FORM_BODY)
+        assert response.status_code == 403
+        assert suggested not in response.text
+        assert "values" not in response.json()
+        assert browser_form_model.await_count == 1

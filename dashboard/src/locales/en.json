@@ -7460,6 +7460,24 @@
     "incompleteResult": "This result uses only part of the page content.",
     "source": "Source",
     "screenshot": "Screenshot of the current page",
+    "forms": "Form filling",
+    "readForms": "Read forms",
+    "form": "Form",
+    "selectForm": "Select a form",
+    "submitter": "Submit action",
+    "selectSubmitter": "Select a submit action",
+    "formInstruction": "Form task",
+    "suggestForm": "Generate field suggestions",
+    "preview": "Form suggestion preview",
+    "submitForm": "Submit form",
+    "operationStatus": "Form operation status",
+    "operationSent": "Action sent. Check the business page for the result.",
+    "operationUnknown": "Result needs checking. Check the business page first.",
+    "operationStale": "The page changed. Read the form again.",
+    "operationCancelled": "Submission cancelled.",
+    "operationNoResponse": "No submission receipt arrived. Check the business page before deciding whether to start a new task.",
+    "checked": "Checked",
+    "unchecked": "Unchecked",
     "errors": {
       "BROWSER_INVALID_REQUEST": "Refresh the tabs and try the browser operation again.",
       "BROWSER_INVALID_URL": "Enter a valid HTTP or HTTPS page address.",
@@ -7476,7 +7494,9 @@
       "BROWSER_MODEL_FAILED": "The query failed. Ask your administrator to check the enterprise model configuration.",
       "BROWSER_SERVICE_UNAVAILABLE": "The browser service is temporarily unavailable. Try again shortly.",
       "BROWSER_TIMEOUT": "The browser operation timed out. Try again.",
-      "BROWSER_NO_RESPONSE": "The desktop client did not respond. Reconnect and try again."
+      "BROWSER_NO_RESPONSE": "The desktop client did not respond. Reconnect and try again.",
+      "BROWSER_FORM_STALE": "The form changed. Read it again and check the target.",
+      "BROWSER_FORM_SUGGEST_FAILED": "Could not generate field suggestions. Check the enterprise model configuration and try again."
     }
   },
   "localDocx": {

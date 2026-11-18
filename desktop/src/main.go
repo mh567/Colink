@@ -379,6 +379,7 @@ func main() {
 	api.docx = newLocalDOCX(octopHome())
 	api.docx.confirmDestructive = api.confirmLocalFile
 	api.browser = newLocalBrowser(octopHome())
+	api.browser.confirmSubmit = api.confirmLocalBrowserSubmit
 	rand.Read(api.browserBridgeKey[:])
 
 	app := application.New(api.withBrowserMessages(application.Options{

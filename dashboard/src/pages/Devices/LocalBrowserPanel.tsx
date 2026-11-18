@@ -10,7 +10,48 @@ type BrowserAction =
   | "close_tab"
   | "query"
   | "capture"
+  | "forms"
+  | "suggest_form"
+  | "submit_form"
+  | "operations"
   | "close";
+
+type BrowserValue = string | boolean;
+
+interface BrowserOption {
+  label: string;
+  value: string;
+}
+
+interface BrowserFormField {
+  id: string;
+  label: string;
+  type: string;
+  value: BrowserValue;
+  options: BrowserOption[];
+}
+
+interface BrowserSubmitter {
+  id: string;
+  label: string;
+  action_url: string;
+  method: string;
+  target: string;
+}
+
+interface BrowserForm {
+  id: string;
+  label: string;
+  fields: BrowserFormField[];
+  submitters: BrowserSubmitter[];
+}
+
+interface BrowserOperation {
+  id: string;
+  status: string;
+  created_at: string;
+  url: string;
+}
 
 interface BrowserTab {
   id: string;
@@ -29,6 +70,19 @@ interface BrowserReply {
   image?: string;
   incomplete?: boolean;
   error?: string;
+  forms?: BrowserForm[];
+  form_id?: string;
+  submit_id?: string;
+  snapshot_id?: string;
+  form_label?: string;
+  submit_label?: string;
+  action_url?: string;
+  method?: string;
+  target?: string;
+  fields?: BrowserFormField[];
+  values?: Record<string, BrowserValue>;
+  operation?: BrowserOperation;
+  operations?: BrowserOperation[];
 }
 
 interface BrowserRequest {
@@ -47,6 +101,37 @@ interface BrowserReady {
   device_id: string;
   capability: string;
   operation_deadline?: boolean;
+}
+
+function formValue(
+  value: BrowserValue,
+  t: (key: string, fallback: string) => string,
+) {
+  if (typeof value === "boolean") {
+    return value
+      ? t("localBrowser.checked", "已勾选")
+      : t("localBrowser.unchecked", "未勾选");
+  }
+  return displayFormText(value);
+}
+
+function operationLabel(
+  status: string,
+  t: (key: string, fallback: string) => string,
+) {
+  if (status === "action_sent") {
+    return t("localBrowser.operationSent", "操作已发出，请核对业务页面结果。");
+  }
+  if (status === "outcome_unknown" || status === "interrupted") {
+    return t("localBrowser.operationUnknown", "结果待核对，请先检查业务页面。");
+  }
+  if (status === "stale") {
+    return t("localBrowser.operationStale", "页面内容已变化，请重新读取表单。");
+  }
+  if (status === "cancelled") {
+    return t("localBrowser.operationCancelled", "提交已取消。");
+  }
+  return "";
 }
 
 const STATUS_EVENT = "colink:browser-status";
@@ -89,6 +174,24 @@ function displayTitle(title = "") {
   return title.replace(/\bhttps?:\/\/[^\s<>"]+/gi, displayAddress);
 }
 
+function displayFormText(value: string) {
+  return Array.from(value, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 92) return "\\\\";
+    if (
+      code <= 31 ||
+      (code >= 127 && code <= 159) ||
+      code === 8206 ||
+      code === 8207 ||
+      (code >= 8232 && code <= 8238) ||
+      (code >= 8294 && code <= 8297)
+    ) {
+      return `\\u${code.toString(16).padStart(4, "0")}`;
+    }
+    return character;
+  }).join("");
+}
+
 export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -110,7 +213,42 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const [instruction, setInstruction] = useState("");
   const [result, setResult] = useState<BrowserReply | null>(null);
   const [capture, setCapture] = useState<BrowserReply | null>(null);
+  const [forms, setForms] = useState<BrowserForm[]>([]);
+  const [formId, setFormId] = useState("");
+  const [submitId, setSubmitId] = useState("");
+  const [formInstruction, setFormInstruction] = useState("");
+  const [suggestion, setSuggestion] = useState<BrowserReply | null>(null);
+  const [operations, setOperations] = useState<BrowserOperation[]>([]);
+  const [submissionUncertain, setSubmissionUncertain] = useState(false);
+  const [uncertainOperationId, setUncertainOperationId] = useState("");
   const [error, setError] = useState("");
+
+  const clearForms = useCallback(() => {
+    setForms([]);
+    setFormId("");
+    setSubmitId("");
+    setFormInstruction("");
+    setSuggestion(null);
+  }, []);
+
+  useEffect(() => {
+    if (request.current) window.clearTimeout(request.current.timeout);
+    request.current = null;
+    bridgeProof.current = null;
+    setBusy(null);
+    setOpened(false);
+    tabNumbers.current.clear();
+    setTabs([]);
+    setSelected("");
+    setFocusedTab("");
+    setResult(null);
+    setCapture(null);
+    clearForms();
+    setOperations([]);
+    setSubmissionUncertain(false);
+    setUncertainOperationId("");
+    setError("");
+  }, [clearForms, deviceId]);
 
   const connect = useCallback(() => {
     if (hello.current) return;
@@ -162,29 +300,55 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const send = useCallback(
     (
       action: BrowserAction,
-      payload: Record<string, string> = {},
+      payload: Record<string, unknown> = {},
       openUrlAfterLaunch?: string,
     ) => {
       const proof = bridgeProof.current;
       if (!proof || request.current) return;
+      if (
+        [
+          "open",
+          "list",
+          "new_tab",
+          "select_tab",
+          "close_tab",
+          "query",
+          "capture",
+          "forms",
+        ].includes(action)
+      ) {
+        clearForms();
+      }
+      if (action === "suggest_form") setSuggestion(null);
       const id = requestId();
       const timeout = window.setTimeout(
         () => {
+          const timedOut = request.current;
           request.current = null;
           bridgeProof.current = null;
           setBridge("unavailable");
           setBusy(null);
           setFocusedTab("");
-          setError("BROWSER_NO_RESPONSE");
+          if (timedOut?.action === "submit_form") {
+            clearForms();
+            setSubmissionUncertain(true);
+            setUncertainOperationId(timedOut.id);
+          }
+          setError(
+            timedOut?.action === "submit_form" ? "" : "BROWSER_NO_RESPONSE",
+          );
         },
-        action === "query" ? 180_000 : 120_000,
+        action === "query" || action === "suggest_form" ? 180_000 : 120_000,
       );
       request.current = {
         id,
         action,
-        tabId: payload.tab_id,
+        tabId: typeof payload.tab_id === "string" ? payload.tab_id : undefined,
         createsTab:
-          action === "new_tab" || (action === "open" && !!payload.url),
+          action === "new_tab" ||
+          (action === "open" &&
+            typeof payload.url === "string" &&
+            !!payload.url),
         openUrlAfterLaunch,
         timeout,
       };
@@ -204,7 +368,10 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
               ...(proof.operation_deadline === true
                 ? {
                     deadline_ms:
-                      Date.now() + (action === "query" ? 165_000 : 110_000),
+                      Date.now() +
+                      (action === "query" || action === "suggest_form"
+                        ? 165_000
+                        : 110_000),
                   }
                 : {}),
             }),
@@ -218,7 +385,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
         setBusy(null);
       }
     },
-    [],
+    [clearForms],
   );
 
   useEffect(() => {
@@ -242,14 +409,35 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
         setFocusedTab("");
         setResult(null);
         setCapture(null);
+        clearForms();
       };
       if (detail.error) {
-        setError(detail.error);
+        if (pending.action === "submit_form") {
+          setError(
+            detail.error === "BROWSER_NOT_AUTHORIZED" ? detail.error : "",
+          );
+          clearForms();
+          setSubmissionUncertain(true);
+          setUncertainOperationId(pending.id);
+          if (detail.error !== "BROWSER_NOT_AUTHORIZED") {
+            window.setTimeout(() => send("operations"), 0);
+          }
+        } else {
+          setError(
+            pending.action === "suggest_form" &&
+              detail.error === "BROWSER_MODEL_FAILED"
+              ? "BROWSER_FORM_SUGGEST_FAILED"
+              : detail.error,
+          );
+        }
         if (
           detail.error === "BROWSER_NOT_OPEN" ||
           detail.error === "BROWSER_NOT_AUTHORIZED"
         ) {
           resetBrowser();
+          if (detail.error === "BROWSER_NOT_AUTHORIZED") {
+            setOperations([]);
+          }
         } else if (
           detail.error === "BROWSER_READ_BLOCKED" ||
           detail.error === "BROWSER_TAB_NOT_FOUND"
@@ -263,7 +451,45 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
         resetBrowser();
         return;
       }
+      if (pending.action === "operations") {
+        const nextOperations = detail.operations ?? [];
+        setOperations(nextOperations);
+        if (
+          nextOperations.some(
+            (operation) => operation.id === uncertainOperationId,
+          )
+        ) {
+          setSubmissionUncertain(false);
+          setUncertainOperationId("");
+        }
+        return;
+      }
       setOpened(true);
+      if (pending.action === "forms") {
+        setForms(detail.forms ?? []);
+        setFormId("");
+        setSubmitId("");
+        setSuggestion(null);
+        return;
+      }
+      if (pending.action === "suggest_form") {
+        setSuggestion(detail);
+        return;
+      }
+      if (pending.action === "submit_form") {
+        if (detail.operation) {
+          setOperations((previous) => [
+            detail.operation!,
+            ...previous.filter(
+              (operation) => operation.id !== detail.operation!.id,
+            ),
+          ]);
+          setSubmissionUncertain(false);
+          setUncertainOperationId("");
+        }
+        clearForms();
+        return;
+      }
       if (detail.tabs || pending.createsTab) {
         const nextTabs = (detail.tabs ?? []).map((tab) => {
           const numbers = tabNumbers.current;
@@ -301,7 +527,16 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     };
     window.addEventListener(STATUS_EVENT, receive);
     return () => window.removeEventListener(STATUS_EVENT, receive);
-  }, [deviceId, send]);
+  }, [clearForms, deviceId, send, uncertainOperationId]);
+
+  useEffect(() => {
+    if (
+      bridge === "ready" &&
+      bridgeProof.current?.operation_deadline === true
+    ) {
+      send("operations");
+    }
+  }, [bridge, deviceId, send]);
 
   useEffect(
     () => () => {
@@ -329,6 +564,15 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const needsFocus = ambiguous && focusedTab !== selected;
   const canRead = readableTab && !needsFocus;
   const blocked = bridge !== "ready" || busy !== null;
+  const selectStyle = {
+    width: "100%",
+    border: `1px solid ${token.colorBorder}`,
+    borderRadius: token.borderRadius,
+    background: token.colorBgContainer,
+    color: token.colorText,
+    font: "inherit",
+    padding: "7px 11px",
+  };
   const open = (action: "open" | "new_tab") => {
     const url = address.trim();
     if (url && !pageAddress(url)) {
@@ -356,6 +600,18 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       ...(action === "query" ? { instruction: text } : {}),
     });
   };
+  const selectedForm = forms.find((form) => form.id === formId);
+  const selectedSubmitter = selectedForm?.submitters.find(
+    (submitter) => submitter.id === submitId,
+  );
+  const canSuggest = Boolean(
+    canRead &&
+      bridgeProof.current?.operation_deadline === true &&
+      selectedForm &&
+      selectedSubmitter &&
+      formInstruction.trim() &&
+      !blocked,
+  );
   const title = t("localBrowser.title", "本机浏览器");
   const errors: Record<string, string> = {
     BROWSER_INVALID_URL: t(
@@ -374,6 +630,10 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       "localBrowser.errors.BROWSER_TIMEOUT",
       "浏览器操作超时，请重试。",
     ),
+    BROWSER_FORM_STALE: t(
+      "localBrowser.errors.BROWSER_FORM_STALE",
+      "页面表单已变化，请重新读取并核对目标。",
+    ),
     BROWSER_NO_RESPONSE: t(
       "localBrowser.errors.BROWSER_NO_RESPONSE",
       "未收到桌面客户端回执，请重新连接后重试。",
@@ -381,6 +641,10 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     BROWSER_SERVICE_UNAVAILABLE: t(
       "localBrowser.errors.BROWSER_SERVICE_UNAVAILABLE",
       "浏览器服务暂不可用，请稍后重试。",
+    ),
+    BROWSER_FORM_SUGGEST_FAILED: t(
+      "localBrowser.errors.BROWSER_FORM_SUGGEST_FAILED",
+      "无法生成填写建议，请检查模型配置后重试。",
     ),
   };
   const resultTitle = displayTitle(result?.title);
@@ -467,15 +731,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                 onChange={(event) =>
                   send("select_tab", { tab_id: event.target.value })
                 }
-                style={{
-                  width: "100%",
-                  border: `1px solid ${token.colorBorder}`,
-                  borderRadius: token.borderRadius,
-                  background: token.colorBgContainer,
-                  color: token.colorText,
-                  font: "inherit",
-                  padding: "7px 11px",
-                }}
+                style={selectStyle}
               >
                 {!selected && (
                   <option value="" disabled>
@@ -570,7 +826,250 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   {t("localBrowser.query", "查询当前页")}
                 </Button>
               </div>
+              {bridgeProof.current?.operation_deadline === true && canRead && (
+                <section aria-label={t("localBrowser.forms", "表单填写")}>
+                  <Space
+                    direction="vertical"
+                    size={8}
+                    style={{ width: "100%" }}
+                  >
+                    <Typography.Title level={5} style={{ margin: 0 }}>
+                      {t("localBrowser.forms", "表单填写")}
+                    </Typography.Title>
+                    <Button
+                      loading={busy === "forms"}
+                      disabled={blocked}
+                      onClick={() =>
+                        selectedTab &&
+                        send("forms", {
+                          tab_id: selectedTab.id,
+                          url: selectedTab.url,
+                        })
+                      }
+                    >
+                      {t("localBrowser.readForms", "读取表单")}
+                    </Button>
+                    {forms.length > 0 && (
+                      <>
+                        <label htmlFor={`${id}-forms`}>
+                          {t("localBrowser.form", "表单")}
+                        </label>
+                        <select
+                          id={`${id}-forms`}
+                          value={formId}
+                          disabled={blocked}
+                          onChange={(event) => {
+                            setFormId(event.target.value);
+                            setSubmitId("");
+                            setSuggestion(null);
+                          }}
+                          style={selectStyle}
+                        >
+                          <option value="">
+                            {t("localBrowser.selectForm", "选择表单")}
+                          </option>
+                          {forms.map((form) => (
+                            <option key={form.id} value={form.id}>
+                              {displayFormText(form.label)}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    {selectedForm && (
+                      <>
+                        <label htmlFor={`${id}-submitter`}>
+                          {t("localBrowser.submitter", "提交动作")}
+                        </label>
+                        <select
+                          id={`${id}-submitter`}
+                          value={submitId}
+                          disabled={
+                            blocked || selectedForm.submitters.length === 0
+                          }
+                          onChange={(event) => {
+                            setSubmitId(event.target.value);
+                            setSuggestion(null);
+                          }}
+                          style={selectStyle}
+                        >
+                          <option value="">
+                            {t("localBrowser.selectSubmitter", "选择提交动作")}
+                          </option>
+                          {selectedForm.submitters.map((submitter) => (
+                            <option key={submitter.id} value={submitter.id}>
+                              {displayFormText(submitter.label)}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    {selectedSubmitter && (
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text style={{ overflowWrap: "anywhere" }}>
+                          {displayFormText(
+                            displayAddress(selectedSubmitter.action_url),
+                          )}
+                        </Typography.Text>
+                        <Typography.Text type="secondary">
+                          {displayFormText(
+                            selectedSubmitter.method.toUpperCase(),
+                          )}{" "}
+                          · {displayFormText(selectedSubmitter.target)}
+                        </Typography.Text>
+                      </Space>
+                    )}
+                    {selectedSubmitter && (
+                      <>
+                        <label htmlFor={`${id}-form-instruction`}>
+                          {t("localBrowser.formInstruction", "填写任务")}
+                        </label>
+                        <Input.TextArea
+                          id={`${id}-form-instruction`}
+                          value={formInstruction}
+                          maxLength={8000}
+                          autoSize={{ minRows: 2, maxRows: 5 }}
+                          onChange={(event) =>
+                            setFormInstruction(event.target.value)
+                          }
+                        />
+                        <Button
+                          loading={busy === "suggest_form"}
+                          disabled={!canSuggest}
+                          onClick={() =>
+                            selectedTab &&
+                            send("suggest_form", {
+                              tab_id: selectedTab.id,
+                              url: selectedTab.url,
+                              form_id: formId,
+                              submit_id: submitId,
+                              instruction: formInstruction.trim(),
+                            })
+                          }
+                        >
+                          {t("localBrowser.suggestForm", "生成填写建议")}
+                        </Button>
+                      </>
+                    )}
+                    {suggestion?.values && (
+                      <section
+                        aria-label={t("localBrowser.preview", "填写建议预览")}
+                      >
+                        <Space
+                          direction="vertical"
+                          size={6}
+                          style={{ width: "100%" }}
+                        >
+                          <Typography.Text strong>
+                            {displayFormText(
+                              suggestion.form_label ||
+                                selectedForm?.label ||
+                                "",
+                            )}
+                          </Typography.Text>
+                          <Typography.Text>
+                            {displayFormText(
+                              suggestion.submit_label ||
+                                selectedSubmitter?.label ||
+                                "",
+                            )}
+                          </Typography.Text>
+                          <Typography.Text style={{ overflowWrap: "anywhere" }}>
+                            {displayFormText(
+                              displayAddress(
+                                suggestion.action_url ||
+                                  selectedSubmitter?.action_url ||
+                                  "",
+                              ),
+                            )}
+                          </Typography.Text>
+                          <Typography.Text type="secondary">
+                            {displayFormText(
+                              suggestion.method?.toUpperCase() ||
+                                selectedSubmitter?.method.toUpperCase() ||
+                                "",
+                            )}{" "}
+                            ·{" "}
+                            {displayFormText(
+                              suggestion.target ||
+                                selectedSubmitter?.target ||
+                                "",
+                            )}
+                          </Typography.Text>
+                          {(suggestion.fields ?? []).map((field) => {
+                            const value = suggestion.values?.[field.id];
+                            if (value === undefined) return null;
+                            return (
+                              <div key={field.id}>
+                                <Typography.Text strong>
+                                  {displayFormText(field.label)}:{" "}
+                                </Typography.Text>
+                                <Typography.Text>
+                                  {formValue(field.value, t)} →{" "}
+                                  {formValue(value, t)}
+                                </Typography.Text>
+                              </div>
+                            );
+                          })}
+                          <Button
+                            type="primary"
+                            loading={busy === "submit_form"}
+                            disabled={
+                              blocked ||
+                              !suggestion.snapshot_id ||
+                              suggestion.form_id !== formId ||
+                              suggestion.submit_id !== submitId ||
+                              Object.keys(suggestion.values).length === 0
+                            }
+                            onClick={() =>
+                              selectedTab &&
+                              send("submit_form", {
+                                tab_id: selectedTab.id,
+                                url: selectedTab.url,
+                                form_id: suggestion.form_id,
+                                submit_id: suggestion.submit_id,
+                                snapshot_id: suggestion.snapshot_id,
+                                values: suggestion.values,
+                              })
+                            }
+                          >
+                            {t("localBrowser.submitForm", "提交表单")}
+                          </Button>
+                        </Space>
+                      </section>
+                    )}
+                  </Space>
+                </section>
+              )}
             </>
+          )}
+          {(submissionUncertain ||
+            operations.some((operation) =>
+              operationLabel(operation.status, t),
+            )) && (
+            <section
+              aria-label={t("localBrowser.operationStatus", "表单操作状态")}
+            >
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                {submissionUncertain && (
+                  <Typography.Text role="status">
+                    {t(
+                      "localBrowser.operationNoResponse",
+                      "未收到提交回执，请先检查业务页面，之后再决定是否发起新任务。",
+                    )}
+                  </Typography.Text>
+                )}
+                {operations.map((operation) => {
+                  const label = operationLabel(operation.status, t);
+                  if (!label) return null;
+                  return (
+                    <Typography.Text role="status" key={operation.id}>
+                      {label} {displayFormText(operation.url)}
+                    </Typography.Text>
+                  );
+                })}
+              </Space>
+            </section>
           )}
           {error && (
             <Alert

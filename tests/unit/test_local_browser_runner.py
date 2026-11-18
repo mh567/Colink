@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -19,6 +20,12 @@ import pytest
 
 _RUNNER = Path(__file__).resolve().parents[2] / "desktop" / "browser" / "runner.py"
 _PNG = b"\x89PNG\r\n\x1a\nexample"
+_ORDERS = "https://intranet.test/orders"
+_SAVE_DESTINATION = {
+    "action_url": "https://intranet.test/save",
+    "method": "post",
+    "target": "_self",
+}
 
 
 @pytest.fixture
@@ -98,6 +105,60 @@ def browser(runner, tmp_path, monkeypatch):
         redirect_after_capture = False
         extra_flag = None
         alive = False
+        loader = "original"
+        form_value = "42"
+        accept_fill = True
+        disconnect_after_click = False
+        close_after_click = False
+        clicks = 0
+
+        def form_result(self, method, args):
+            field = {
+                "id": "quantity",
+                "label": "Quantity",
+                "type": "text",
+                "value": self.form_value,
+                "options": [],
+            }
+            candidate = {
+                "id": "order",
+                "label": "Order",
+                "fields": [
+                    field,
+                    *[
+                        {**field, "id": kind, "type": kind, "value": ""}
+                        for kind in ("password", "hidden", "file", "button")
+                    ],
+                    {**field, "id": "disabled", "disabled": True, "value": ""},
+                    {**field, "id": "readonly", "read_only": True, "value": ""},
+                ],
+                "submitters": [{"id": "save", "label": "Save", **_SAVE_DESTINATION}],
+            }
+            if method == "list":
+                value = [candidate]
+            elif method == "snapshot":
+                assert args == ["order", "save"]
+                value = {
+                    "fields": candidate["fields"],
+                    "form_label": "Order",
+                    "submit_label": "Save",
+                    **_SAVE_DESTINATION,
+                }
+            elif method == "fill":
+                assert args == [{"quantity": "17"}]
+                if self.accept_fill:
+                    self.form_value = "17"
+                value = True
+            else:
+                assert method == "click" and not args
+                value = self.form_value == "17"
+                if value:
+                    self.clicks += 1
+                    if self.close_after_click:
+                        del self.pages["A"]
+                    if self.disconnect_after_click:
+                        raise OSError("lost response after click")
+            return {"result": {"value": value}}
 
         def __call__(self, args, **kwargs):
             assert kwargs["close_fds"]
@@ -172,10 +233,19 @@ def browser(runner, tmp_path, monkeypatch):
                 if self.transient_blank:
                     url = "" if self.transient_blank == 2 else "about:blank"
                     self.transient_blank -= 1
-                return {"frameTree": {"frame": {"id": "frame", "url": url}}}
+                return {
+                    "frameTree": {"frame": {"id": "frame", "loaderId": self.loader, "url": url}}
+                }
             if method == "Page.createIsolatedWorld":
                 return {"executionContextId": 17}
+            if method == "Runtime.callFunctionOn":
+                source, action, *args = [item["value"] for item in params["arguments"]]
+                assert source == "https://intranet.test/orders?token=private#result"
+                assert params["objectId"] == "form-page"
+                return self.form_result(action, args)
             if method == "Runtime.evaluate":
+                if params.get("returnByValue") is False:
+                    return {"result": {"objectId": "form-page"}}
                 if "document: performance.timeOrigin" not in params["expression"]:
                     return {"result": {"value": "{}"}}
                 return {
@@ -274,6 +344,348 @@ def test_refuses_login_mismatched_source_and_unknown_tab(runner, browser, tmp_pa
         {"error": "BROWSER_TAB_NOT_FOUND"},
     ]
     assert all(command != "Target.createTarget" for command, _ in browser.commands)
+
+
+def _form_calls(browser):
+    return [
+        params["arguments"][1]["value"]
+        for method, params in browser.commands
+        if method == "Runtime.callFunctionOn"
+    ]
+
+
+def _with_form_session(runner, profile, scenario):
+    async def run():
+        session = runner.LocalBrowser(profile)
+        try:
+            await session.action("open", "", "")
+            return await scenario(session)
+        finally:
+            await session.close()
+
+    return asyncio.run(run())
+
+
+async def _form_snapshot(session):
+    forms = await session.action("forms", _ORDERS, "A")
+    form = forms["forms"][0]
+    target = {"form_id": form["id"], "submit_id": form["submitters"][0]["id"]}
+    snapshot = await session.action("form_snapshot", _ORDERS, "A", **target)
+    return forms, snapshot, target
+
+
+def test_forms_skip_sensitive_and_non_writable_controls(runner, browser, tmp_path):
+    forms, snapshot, _ = _with_form_session(runner, tmp_path / "profile", _form_snapshot)
+    expected = {"id": "quantity", "label": "Quantity", "type": "text", "value": "42", "options": []}
+    assert forms == {
+        "title": "订单",
+        "url": _ORDERS,
+        "forms": [
+            {
+                "id": "order",
+                "label": "Order",
+                "fields": [expected],
+                "submitters": [{"id": "save", "label": "Save", **_SAVE_DESTINATION}],
+            }
+        ],
+    }
+    assert snapshot["fields"] == [expected]
+    assert snapshot["form_label"] == "Order" and snapshot["submit_label"] == "Save"
+    assert {key: snapshot[key] for key in _SAVE_DESTINATION} == _SAVE_DESTINATION
+    assert _form_calls(browser) == ["list", "snapshot"]
+    assert browser.clicks == 0
+
+
+def test_submit_form_rejects_stale_snapshot_without_click(runner, browser, tmp_path):
+    async def scenario(session):
+        _, snapshot, target = await _form_snapshot(session)
+        browser.loader = "reloaded"
+        with pytest.raises(runner.BrowserError, match="^BROWSER_FORM_STALE$"):
+            await session.action(
+                "submit_form",
+                _ORDERS,
+                "A",
+                **target,
+                snapshot_id=snapshot["snapshot_id"],
+                values={"quantity": "17"},
+            )
+
+    _with_form_session(runner, tmp_path / "profile", scenario)
+    assert _form_calls(browser) == ["list", "snapshot"]
+    assert browser.form_value == "42" and browser.clicks == 0
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"script": "document.forms[0].submit()"},
+        {"selector": "#save"},
+        {"values": {"quantity": 17}},
+        {"values": {"quantity": "a" * (16 * 1024)}},
+    ],
+)
+def test_submit_form_rejects_unstructured_or_oversized_worker_requests(
+    runner, browser, tmp_path, extra
+):
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {
+            "action": "submit_form",
+            "url": _ORDERS,
+            "tab_id": "A",
+            "form_id": "order",
+            "submit_id": "save",
+            "snapshot_id": "snapshot",
+            "values": {"quantity": "17"},
+            **extra,
+        },
+    )[1] == {"error": "BROWSER_INVALID_REQUEST"}
+    assert _form_calls(browser) == []
+
+
+def test_form_snapshot_rejects_oversized_fields(runner, browser, tmp_path):
+    async def scenario(session):
+        forms = await session.action("forms", _ORDERS, "A")
+        form = forms["forms"][0]
+        browser.form_value = "测试" * 1400
+        with pytest.raises(runner.BrowserError, match="^BROWSER_READ_BLOCKED$"):
+            await session.action(
+                "form_snapshot", _ORDERS, "A", form_id=form["id"], submit_id="save"
+            )
+
+    _with_form_session(runner, tmp_path / "profile", scenario)
+    assert _form_calls(browser) == ["list", "snapshot"]
+    assert browser.clicks == 0
+
+
+@pytest.mark.parametrize("accept_fill", [False, True])
+def test_submit_form_verifies_filled_values_before_single_click(
+    runner, browser, tmp_path, accept_fill
+):
+    browser.accept_fill = accept_fill
+    browser.close_after_click = True
+
+    async def scenario(session):
+        _, snapshot, target = await _form_snapshot(session)
+        payload = {**target, "snapshot_id": snapshot["snapshot_id"], "values": {"quantity": "17"}}
+        if accept_fill:
+            assert await session.action("submit_form", _ORDERS, "A", **payload) == {
+                "click_dispatched": True,
+            }
+        else:
+            with pytest.raises(runner.BrowserError, match="^BROWSER_TASK_FAILED$"):
+                await session.action("submit_form", _ORDERS, "A", **payload)
+        with pytest.raises(runner.BrowserError, match="^BROWSER_FORM_STALE$"):
+            await session.action("submit_form", _ORDERS, "A", **payload)
+
+    _with_form_session(runner, tmp_path / "profile", scenario)
+    assert _form_calls(browser) == ["list", "snapshot", "fill", "click"]
+    assert browser.form_value == ("17" if accept_fill else "42")
+    assert browser.clicks == int(accept_fill)
+
+
+def test_submit_form_does_not_replay_after_cdp_disconnect(runner, browser, tmp_path):
+    browser.disconnect_after_click = True
+
+    async def scenario(session):
+        _, snapshot, target = await _form_snapshot(session)
+        payload = {**target, "snapshot_id": snapshot["snapshot_id"], "values": {"quantity": "17"}}
+        for error in ("BROWSER_TASK_FAILED", "BROWSER_NOT_OPEN"):
+            with pytest.raises(runner.BrowserError, match=f"^{error}$"):
+                await session.action("submit_form", _ORDERS, "A", **payload)
+
+    _with_form_session(runner, tmp_path / "profile", scenario)
+    assert _form_calls(browser) == ["list", "snapshot", "fill", "click"]
+    assert browser.clicks == 1
+
+
+@pytest.fixture
+def form_page_js(runner):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to exercise the fixed renderer script")
+
+    fixture = r"""
+const assert = require("node:assert/strict");
+global.Node = class {
+    get ownerDocument() { return this.document; }
+    set ownerDocument(document) { this.document = document; }
+};
+class Element extends Node {
+    constructor(localName, type, storedValue = "", attributes = {}) {
+        super();
+        Object.assign(this, {localName, type, storedValue, attributes, isConnected: true});
+    }
+    getAttribute(name) { return this.attributes[name] ?? null; }
+    get value() {
+        assert.ok(!this.protectedValue, "excluded input value read");
+        return this.storedValue;
+    }
+    set value(value) { this.storedValue = value; }
+    get formAction() { return this.resolvedAction("formaction"); }
+    resolvedAction(name) {
+        const action = this.getAttribute(name);
+        return action ? new URL(action, this.ownerDocument.baseURI).href : this.ownerDocument.URL;
+    }
+    getClientRects() { return [1]; }
+    closest() { return null; }
+    matches(selector) { return selector === ":disabled" && Boolean(this.disabled); }
+    dispatchEvent(event) { this.onEvent?.(event); }
+    click() { this.clicks = (this.clicks ?? 0) + 1; }
+}
+global.HTMLElement = Element;
+global.HTMLFormElement = class extends Element {
+    get elements() { return this.controls; }
+    get action() { return this.resolvedAction("action"); }
+};
+global.getComputedStyle = () => ({visibility: "visible", opacity: "1"});
+global.location = {href: "https://intranet.test/orders?token=private#result"};
+const quantity = new Element("input", "text", "42", {"aria-label": "Quantity"});
+const excluded = ["password", "hidden", "file", "button"].map((type) =>
+    Object.assign(new Element("input", type, "private"), {protectedValue: true}));
+excluded.push(Object.assign(new Element("input", "text"), {disabled: true, protectedValue: true}));
+excluded.push(Object.assign(new Element("input", "text"), {readOnly: true, protectedValue: true}));
+const submitter = new Element("button", "submit", "", {"aria-label": "Save"});
+const form = new HTMLFormElement("form", "", "", {
+    action: "https://intranet.test/save?token=private#result", method: "POST",
+});
+form.controls = [quantity, ...excluded, submitter];
+const base = new Element("base", "");
+const originalDocument = {
+    forms: [form], URL: location.href, baseURI: "https://intranet.test/team/", readyState: "complete",
+    querySelector(selector) {
+        assert.equal(selector, "base[target]");
+        return base.getAttribute("target") === null ? null : base;
+    },
+};
+global.document = originalDocument;
+form.ownerDocument = submitter.ownerDocument = originalDocument;
+"""
+    script = runner.FORM_PAGE.replace("FORM_LIMIT", str(runner.REQUEST_LIMIT)).strip()
+    helpers = """
+const call = (...args) => formPage(location.href, ...args);
+const selectForm = () => {
+    const [candidate] = call("list");
+    const [button] = candidate.submitters;
+    const snapshot = call("snapshot", candidate.id, button.id);
+    return {candidate, button, snapshot};
+};
+"""
+
+    def run(checks):
+        result = subprocess.run(
+            [node, "-"],
+            input=f"{fixture}\nconst formPage = {script};\n{helpers}\n{checks}",
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+    return run
+
+
+def test_form_page_hides_sensitive_controls_and_stops_on_readback_mismatch(form_page_js):
+    form_page_js("""
+const {candidate, snapshot} = selectForm();
+assert.deepEqual(candidate.fields.map((field) => field.label), ["Quantity"]);
+assert.deepEqual(snapshot.fields.map((field) => field.value), ["42"]);
+const [{id}] = snapshot.fields;
+quantity.onEvent = () => { quantity.value = "page changed it"; };
+assert.equal(call("fill", {[id]: "17"}), true);
+assert.equal(quantity.value, "page changed it");
+assert.equal(call("click"), false);
+assert.equal(submitter.clicks ?? 0, 0);
+""")
+
+
+def test_form_page_exposes_redacted_effective_submit_destination(form_page_js):
+    form_page_js("""
+let {button, snapshot} = selectForm();
+const destination = ({action_url, method, target}) => ({action_url, method, target});
+assert.deepEqual(destination(button),
+    {action_url: "https://intranet.test/save", method: "post", target: "_self"});
+assert.deepEqual(destination(snapshot), destination(button));
+
+base.attributes.target = "base-frame";
+assert.equal(selectForm().button.target, "base-frame");
+form.attributes.target = "_blank";
+assert.equal(selectForm().button.target, "_blank");
+Object.assign(submitter.attributes, {formaction: "preview?token=private#fragment",
+    formmethod: "GET", formtarget: "preview"});
+({button, snapshot} = selectForm());
+assert.deepEqual(destination(button),
+    {action_url: "https://intranet.test/team/preview", method: "get", target: "preview"});
+assert.deepEqual(destination(snapshot), destination(button));
+
+Object.assign(submitter.attributes, {formaction: "", formmethod: "DIALOG", formtarget: ""});
+assert.deepEqual(destination(selectForm().button),
+    {action_url: "https://intranet.test/orders", method: "dialog", target: "_self"});
+""")
+
+
+def test_form_page_rejects_destinations_with_credentials(form_page_js):
+    form_page_js("""
+const {candidate, button, snapshot} = selectForm();
+submitter.attributes.formaction = "https://employee:password@intranet.test/save";
+assert.equal(call("fill", {[snapshot.fields[0].id]: "17"}), false);
+assert.equal(quantity.value, "42");
+assert.equal(call("click"), false);
+assert.deepEqual(call("list"), []);
+assert.equal(call("snapshot", candidate.id, button.id), null);
+delete submitter.attributes.formaction;
+form.attributes.action = "https://employee@intranet.test/save";
+assert.deepEqual(call("list"), []);
+""")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "form.ownerDocument = {...originalDocument}",
+        "document.forms = []",
+        "base.attributes.target = '_blank'",
+        "form.attributes.action = form.attributes.action.replace('token=private', 'token=new')",
+    ],
+)
+@pytest.mark.parametrize("phase", ["before_fill", "before_click"])
+def test_form_page_rejects_stale_document_and_destination(form_page_js, mutation, phase):
+    expected_fill = "true" if phase == "before_click" else "false"
+    before = mutation if phase == "before_fill" else ""
+    after = mutation if phase == "before_click" else ""
+    form_page_js(f"""
+const {{snapshot}} = selectForm();
+const [{{id}}] = snapshot.fields;
+{before};
+assert.equal(call("fill", {{[id]: "17"}}), {expected_fill});
+assert.equal(quantity.value, {expected_fill} ? "17" : "42");
+{after};
+assert.equal(call("click"), false);
+assert.equal(submitter.clicks ?? 0, 0);
+""")
+
+
+@pytest.mark.parametrize("excluded_attribute", ["disabled", "hidden"])
+def test_form_page_omits_select_with_unavailable_current_option(form_page_js, excluded_attribute):
+    form_page_js(f"""
+const selected = Object.assign(new Element("option", "", "excluded-value"),
+    {{label: "Unavailable", index: 0, {excluded_attribute}: true}});
+const available = Object.assign(new Element("option", "", "available-value"),
+    {{label: "Available", index: 1}});
+const select = Object.assign(new Element("select", "select-one", selected.value,
+    {{"aria-label": "Status"}}), {{options: [selected, available], selectedIndex: 0}});
+form.controls.push(select);
+const {{candidate, snapshot}} = selectForm();
+assert.deepEqual(candidate.fields.map((field) => field.label), ["Quantity"]);
+assert.deepEqual(snapshot.fields.map((field) => field.label), ["Quantity"]);
+select.selectedIndex = 1;
+select.value = available.value;
+assert.deepEqual(selectForm().snapshot.fields[1].options,
+    [{{label: "Available", value: "available-value"}}]);
+""")
 
 
 def test_refuses_profile_symlink(runner, tmp_path, monkeypatch):

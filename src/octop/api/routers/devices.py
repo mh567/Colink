@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict
-from typing import Literal
+from typing import Annotated, Any, Literal, Self
 
-from fastapi import APIRouter, Depends, Header, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from fastapi import APIRouter, Depends, Header, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from octop.api.deps import current_user, get_server, require_admin, resolve_user_from_token
 from octop.infra.control.devices import (
+    BROWSER_FORM_JSON_LIMIT,
     DEVICE_TIMEOUT_SECONDS,
     DeviceConnection,
     DeviceManager,
@@ -85,7 +97,18 @@ class OcrAuthorizeBody(BaseModel):
 class BrowserAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
-        "open", "list", "new_tab", "select_tab", "close_tab", "query", "capture", "close"
+        "open",
+        "list",
+        "new_tab",
+        "select_tab",
+        "close_tab",
+        "query",
+        "capture",
+        "close",
+        "forms",
+        "suggest_form",
+        "submit_form",
+        "operations",
     ]
 
 
@@ -103,6 +126,81 @@ class BrowserQueryBody(BaseModel):
 
 class BrowserQueryResult(BaseModel):
     text: str = Field(min_length=1, max_length=60000, description="Answer with page evidence.")
+
+
+class BrowserFormOption(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    label: str
+    value: str
+
+
+class BrowserFormField(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: str = Field(min_length=1, description="Field identifier from the local form snapshot.")
+    label: str
+    type: Literal["text", "textarea", "radio", "checkbox", "select"]
+    value: str | bool = Field(description="Current page value. A checkbox uses a boolean.")
+    options: list[BrowserFormOption]
+
+    @model_validator(mode="after")
+    def validate_value_and_options(self) -> Self:
+        if self.type in {"radio", "select"}:
+            if self.value != "" and self.value not in {option.value for option in self.options}:
+                raise ValueError("form value is not an available option")
+        elif self.options:
+            raise ValueError("only radio and select fields accept options")
+        if isinstance(self.value, bool) != (self.type == "checkbox"):
+            raise ValueError("form value does not match its field type")
+        return self
+
+
+class BrowserFormSuggestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    instruction: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)
+    ]
+    fields: list[BrowserFormField] = Field(
+        min_length=1, description="Selected form's writable fields, at most 16 KiB as compact JSON."
+    )
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> Self:
+        if len({field.id for field in self.fields}) != len(self.fields):
+            raise ValueError("duplicate form field identifier")
+        fields = [field.model_dump() for field in self.fields]
+        snapshot = json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+        if len(snapshot.encode()) > BROWSER_FORM_JSON_LIMIT:
+            raise ValueError("form snapshot is too large")
+        return self
+
+
+class BrowserFormSuggestResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    values: dict[str, str | bool] = Field(
+        min_length=1, description="Suggested values keyed by field identifier."
+    )
+
+
+class _BrowserFormSuggestRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def redact_validation_error(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                # FastAPI normally echoes the submitted form values in validation errors.
+                raise RequestValidationError(
+                    [
+                        {
+                            "type": "value_error",
+                            "loc": ["body"],
+                            "msg": "Invalid form suggestion request",
+                        }
+                    ]
+                ) from None
+
+        return redact_validation_error
 
 
 class PdfAuthorizeBody(BaseModel):
@@ -368,6 +466,37 @@ async def query_browser(
         models=server.app_runtime.agent_registry.host_models,
     )
     return BrowserQueryResult(text=text)
+
+
+async def suggest_browser_form(
+    device_id: str,
+    body: BrowserFormSuggestBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> BrowserFormSuggestResult:
+    assert server.app_runtime is not None
+    values = await server.device_manager.suggest_browser_form(
+        user,
+        device_id,
+        x_colink_device_session,
+        instruction=body.instruction,
+        fields=[field.model_dump() for field in body.fields],
+        models=server.app_runtime.agent_registry.host_models,
+    )
+    return BrowserFormSuggestResult(values=values)
+
+
+router.add_api_route(
+    "/{device_id}/browser/form-suggest",
+    suggest_browser_form,
+    methods=["POST"],
+    route_class_override=_BrowserFormSuggestRoute,
+    response_model=BrowserFormSuggestResult,
+    summary="Suggest values for fields in the employee's local browser form",
+    description="Requires the employee's approved live native session and explicit local browser grant. "
+    "Uses the authorized intranet model without tools and checks access again before releasing the suggestions.",
+)
 
 
 @router.post(

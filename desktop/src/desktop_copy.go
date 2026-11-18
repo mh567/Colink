@@ -29,6 +29,13 @@ const (
 	copyTraySettings           = "tray.settings"
 	copyTrayShowMain           = "tray.show_main"
 	copyTrayQuit               = "tray.quit"
+	copyBrowserConfirmTitle    = "browser.confirm_title"
+	copyBrowserConfirmMessage  = "browser.confirm_message"
+	copyBrowserConfirmChange   = "browser.confirm_change"
+	copyBrowserConfirmYes      = "browser.confirm_yes"
+	copyBrowserConfirmNo       = "browser.confirm_no"
+	copyBrowserChecked         = "browser.checked"
+	copyBrowserUnchecked       = "browser.unchecked"
 )
 
 const (
@@ -60,6 +67,13 @@ const (
 
 var desktopCopy = map[Locale]map[string]string{
 	LocaleEN: {
+		copyBrowserConfirmTitle:    "Confirm form submission",
+		copyBrowserConfirmMessage:  "Page: %s (%s)\nSubmit to: %s\nMethod: %s\nOpen in: %s\nForm: %s\nSubmit action: %s\n%s",
+		copyBrowserConfirmChange:   "%s: %s → %s",
+		copyBrowserConfirmYes:      "Submit",
+		copyBrowserConfirmNo:       "Cancel",
+		copyBrowserChecked:         "Checked",
+		copyBrowserUnchecked:       "Unchecked",
 		copyStatusConnecting:       "Connecting to Octop…",
 		copyStatusCheckingRuntime:  "Checking the runtime…",
 		copyStatusStartingService:  "Starting the Octop service…",
@@ -113,6 +127,13 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileUnsupported:             "Use a supported desktop client for this file operation.",
 	},
 	LocaleZH: {
+		copyBrowserConfirmTitle:    "确认提交表单",
+		copyBrowserConfirmMessage:  "页面：%s（%s）\n提交地址：%s\n请求方法：%s\n打开位置：%s\n表单：%s\n提交动作：%s\n%s",
+		copyBrowserConfirmChange:   "%s：%s → %s",
+		copyBrowserConfirmYes:      "提交",
+		copyBrowserConfirmNo:       "取消",
+		copyBrowserChecked:         "已勾选",
+		copyBrowserUnchecked:       "未勾选",
 		copyStatusConnecting:       "正在连接 Octop…",
 		copyStatusCheckingRuntime:  "正在检查运行环境…",
 		copyStatusStartingService:  "正在启动 Octop 服务…",

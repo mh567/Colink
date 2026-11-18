@@ -7460,6 +7460,24 @@
     "incompleteResult": "此结果仅基于部分页面内容。",
     "source": "来源",
     "screenshot": "当前页截图",
+    "forms": "表单填写",
+    "readForms": "读取表单",
+    "form": "表单",
+    "selectForm": "选择表单",
+    "submitter": "提交动作",
+    "selectSubmitter": "选择提交动作",
+    "formInstruction": "填写任务",
+    "suggestForm": "生成填写建议",
+    "preview": "填写建议预览",
+    "submitForm": "提交表单",
+    "operationStatus": "表单操作状态",
+    "operationSent": "操作已发出，请核对业务页面结果。",
+    "operationUnknown": "结果待核对，请先检查业务页面。",
+    "operationStale": "页面内容已变化，请重新读取表单。",
+    "operationCancelled": "提交已取消。",
+    "operationNoResponse": "未收到提交回执，请先检查业务页面，之后再决定是否发起新任务。",
+    "checked": "已勾选",
+    "unchecked": "未勾选",
     "errors": {
       "BROWSER_INVALID_REQUEST": "无法处理浏览器操作，请刷新标签页后重试。",
       "BROWSER_INVALID_URL": "请输入有效的 HTTP 或 HTTPS 网页地址。",
@@ -7476,7 +7494,9 @@
       "BROWSER_MODEL_FAILED": "查询失败，请联系管理员检查企业模型配置。",
       "BROWSER_SERVICE_UNAVAILABLE": "浏览器服务暂不可用，请稍后重试。",
       "BROWSER_TIMEOUT": "浏览器操作超时，请重试。",
-      "BROWSER_NO_RESPONSE": "未收到桌面客户端回执，请重新连接后重试。"
+      "BROWSER_NO_RESPONSE": "未收到桌面客户端回执，请重新连接后重试。",
+      "BROWSER_FORM_STALE": "页面表单已变化，请重新读取并核对目标。",
+      "BROWSER_FORM_SUGGEST_FAILED": "无法生成填写建议，请检查企业模型配置后重试。"
     }
   },
   "localDocx": {

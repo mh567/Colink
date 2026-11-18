@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -25,8 +26,13 @@ ACTIONS = {
     "close_tab": {"tab_id"},
     "query": {"tab_id", "url"},
     "capture": {"tab_id", "url"},
+    "forms": {"tab_id", "url"},
+    "form_snapshot": {"tab_id", "url", "form_id", "submit_id"},
+    "submit_form": {"tab_id", "url", "form_id", "submit_id", "snapshot_id", "values"},
     "close": set(),
 }
+FORM_ACTIONS = {"forms", "form_snapshot", "submit_form"}
+FIELD_TYPES = {"text", "textarea", "select", "radio", "checkbox"}
 
 
 class BrowserError(Exception):
@@ -51,7 +57,7 @@ def page_url(url: str) -> SplitResult:
     raise BrowserError("BROWSER_INVALID_URL")
 
 
-def request_args(line: bytes) -> tuple[str, str, str]:
+def request_args(line: bytes) -> tuple[str, str, str, dict[str, Any]]:
     try:
         value = json.loads(line.decode("utf-8"))
     except (ValueError, RecursionError):
@@ -71,9 +77,23 @@ def request_args(line: bytes) -> tuple[str, str, str]:
         raise BrowserError("BROWSER_INVALID_REQUEST")
     if "tab_id" in ACTIONS[action] and not tab_id:
         raise BrowserError("BROWSER_INVALID_REQUEST")
-    if action in {"query", "capture"} or url:
+    if action in FORM_ACTIONS | {"query", "capture"} or url:
         page_url(url)
-    return action, url, tab_id
+    form_args = {key: value.get(key) for key in ACTIONS[action] - {"tab_id", "url"}}
+    for key, item in form_args.items():
+        if key == "values":
+            if (
+                not isinstance(item, dict)
+                or not item
+                or any(
+                    not TAB_ID.fullmatch(field) or type(field_value) not in {str, bool}
+                    for field, field_value in item.items()
+                )
+            ):
+                raise BrowserError("BROWSER_INVALID_REQUEST")
+        elif not isinstance(item, str) or not TAB_ID.fullmatch(item):
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+    return action, url, tab_id, form_args
 
 
 START_TIMEOUT = 12
@@ -170,6 +190,256 @@ INSPECT_PAGE = r"""
     };
 })()
 """
+
+FORM_PAGE = r"""
+(() => {
+    const ids = new WeakMap();
+    let nextId = 0;
+    let snapshot;
+    const id = (element) => {
+        if (!ids.has(element)) ids.set(element, "c" + ++nextId);
+        return ids.get(element);
+    };
+    const label = (element) =>
+        element.getAttribute("aria-label")?.trim() ||
+        Array.from(element.labels ?? [], (item) => item.innerText.trim()).filter(Boolean).join(" ") ||
+        element.getAttribute("placeholder")?.trim() || element.name || id(element);
+    const visible = (element) => {
+        if (!element.getClientRects().length || element.closest("[inert]")) return false;
+        for (let current = element; current; current = current.parentElement) {
+            const style = getComputedStyle(current);
+            if (style.visibility !== "visible" || style.opacity === "0" ||
+                style.contentVisibility === "hidden") return false;
+        }
+        return true;
+    };
+    const available = (element) => !element.matches(":disabled") && visible(element);
+    const writable = (element) => available(element) && !element.readOnly;
+    const ownerDocument = Object.getOwnPropertyDescriptor(Node.prototype, "ownerDocument").get;
+    const formElements = Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, "elements").get;
+    const formAction = Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, "action").get;
+    const attribute = (element, name) => Element.prototype.getAttribute.call(element, name);
+    const attributes = (element, names) => names.map((name) => attribute(element, name));
+    const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+    const listFields = (elements) => {
+        const fields = [];
+        const radios = new Map();
+        for (const node of elements) {
+            const tag = node.localName;
+            if (tag === "input" && node.type === "radio") {
+                const group = node.name || node;
+                if (!radios.has(group)) radios.set(group, []);
+                radios.get(group).push(node);
+                continue;
+            }
+            if (!writable(node)) continue;
+            let type, value, choices = [];
+            if (tag === "textarea" || (tag === "input" && node.type === "text")) {
+                if (/\b(?:username|current-password|new-password|one-time-code)\b/i.test(node.autocomplete)) continue;
+                type = tag === "textarea" ? tag : "text";
+                value = node.value;
+            } else if (tag === "input" && node.type === "checkbox" && !node.indeterminate) {
+                type = "checkbox";
+                value = node.checked;
+            } else if (tag === "select" && !node.multiple) {
+                type = tag;
+                choices = Array.from(node.options).filter((option) =>
+                    !option.matches(":disabled") && !option.hidden && !option.closest("optgroup[hidden]"));
+                const selected = node.options[node.selectedIndex];
+                if (selected && !choices.includes(selected)) continue;
+                value = selected?.value ?? "";
+            } else continue;
+            if (new Set(choices.map((choice) => choice.value)).size !== choices.length) continue;
+            fields.push({
+                nodes: [node],
+                choices,
+                data: {id: id(node), label: label(node), type, value, options:
+                    choices.map((option) => ({label: option.label, value: option.value}))},
+            });
+        }
+        for (const nodes of radios.values()) {
+            if (!nodes.every(writable) ||
+                new Set(nodes.map((node) => node.value)).size !== nodes.length) continue;
+            const first = nodes[0];
+            fields.push({
+                nodes,
+                choices: nodes,
+                data: {id: id(first), label: label(first), type: "radio",
+                    value: nodes.find((node) => node.checked)?.value ?? "",
+                    options: nodes.map((node) => ({label: label(node), value: node.value}))},
+            });
+        }
+        return fields;
+    };
+    const submitter = (form, node, baseTarget) => {
+        const address = attribute(node, "formaction") === null ? formAction.call(form) : node.formAction;
+        let url;
+        try {
+            url = new URL(address);
+        } catch {
+            return null;
+        }
+        if ((url.protocol !== "http:" && url.protocol !== "https:") ||
+            url.username || url.password) return null;
+        const action = url.href;
+        url.search = url.hash = "";
+
+        const method = (attribute(node, "formmethod") ?? attribute(form, "method"))?.toLowerCase();
+        const target = attribute(node, "formtarget") ?? attribute(form, "target") ?? baseTarget;
+        return {
+            node,
+            action,
+            data: {
+                id: id(node),
+                label: node.getAttribute("aria-label")?.trim() || node.innerText?.trim() ||
+                    node.value || id(node),
+                action_url: url.href,
+                method: method === "post" || method === "dialog" ? method : "get",
+                target: target?.includes("<") && /[\t\n\r]/.test(target) ? "_blank" : target || "_self",
+            },
+        };
+    };
+    const read = (form) => {
+        const elements = [...formElements.call(form)];
+        const baseTarget = document.querySelector("base[target]")?.getAttribute("target");
+        const submitters = elements.filter((node) =>
+            (node.localName === "button" || node.localName === "input") &&
+            node.type === "submit" && available(node))
+            .map((node) => submitter(form, node, baseTarget)).filter(Boolean);
+        const fields = listFields(elements);
+        const data = {
+            id: id(form),
+            label: attribute(form, "aria-label")?.trim() || attribute(form, "name") || id(form),
+            fields: fields.map((field) => field.data),
+            submitters: submitters.map(({data}) => data),
+        };
+        const structure = [
+            document.baseURI, data.id, data.label,
+            attributes(form, ["action", "method", "target", "enctype", "novalidate", "rel"]),
+            submitters.map(({node, action, data}) => [action, data, node.value,
+                attributes(node, ["type", "name", "formaction", "formmethod", "formtarget",
+                    "formenctype", "formnovalidate"])]),
+            fields.map(({nodes, choices, data: {value, ...field}}) => [field, choices.map(id),
+                nodes.map((node) => [id(node), attributes(node, ["name", "maxlength",
+                    "minlength", "pattern", "required"]), node.type === "checkbox" ? node.value : null])]),
+        ];
+        return {data, structure, submitters, fields};
+    };
+    const current = () => {
+        const {form, document: originalDocument} = snapshot;
+        if (document !== originalDocument || ownerDocument.call(form) !== originalDocument ||
+            !Array.from(originalDocument.forms).includes(form)) return null;
+        const item = read(form);
+        return same(item.structure, snapshot.structure) ? item : null;
+    };
+    const fieldState = ({data, nodes}) => {
+        if (data.type === "select") return nodes[0].selectedIndex;
+        if (data.type === "radio") return nodes.findIndex((node) => node.checked);
+        return data.value;
+    };
+    const matches = (item, values) => item.fields.every((field) =>
+        fieldState(field) === values[field.data.id]);
+    const methods = {
+        list() {
+            snapshot = undefined;
+            const forms = [];
+            let remaining = FORM_LIMIT;
+            for (const form of document.forms) {
+                const {data} = read(form);
+                if (!data.fields.length || !data.submitters.length) continue;
+                remaining -= JSON.stringify(data).length + 1;
+                if (remaining < 0) return null;
+                forms.push(data);
+            }
+            return forms;
+        },
+        snapshot(formId, submitId) {
+            snapshot = undefined;
+            const form = Array.from(document.forms).find((element) => ids.get(element) === formId);
+            if (!form || ownerDocument.call(form) !== document) return null;
+            const item = read(form);
+            const selected = item.submitters.find(({data}) => data.id === submitId);
+            if (!selected || !item.fields.length) return null;
+            const {label, action_url, method, target} = selected.data;
+            const result = {
+                fields: item.data.fields,
+                form_label: item.data.label,
+                submit_label: label,
+                action_url,
+                method,
+                target,
+            };
+            if (JSON.stringify(result).length > FORM_LIMIT) return null;
+            snapshot = {
+                document, form, submitter: selected.node, structure: item.structure,
+                original: Object.fromEntries(item.fields.map((field) =>
+                    [field.data.id, fieldState(field)])),
+            };
+            return result;
+        },
+        fill(values) {
+            const item = snapshot && current();
+            if (!item || !matches(item, snapshot.original)) return false;
+            const entries = Object.entries(values);
+            if (!entries.length) return false;
+            const changes = [];
+            const expected = {...snapshot.original};
+            for (const [fieldId, value] of entries) {
+                const field = item.fields.find(({data}) => data.id === fieldId);
+                if (!field) return false;
+                const {data, choices, nodes: [first]} = field;
+                let node = first, property = "value", next = value, state = value;
+                if (data.type === "checkbox") {
+                    if (typeof value !== "boolean") return false;
+                    property = "checked";
+                } else if (typeof value !== "string") {
+                    return false;
+                } else if (data.type === "radio" || data.type === "select") {
+                    const index = choices.findIndex((choice) => choice.value === value);
+                    if (index < 0) return false;
+                    if (data.type === "radio") {
+                        node = choices[index];
+                        property = "checked";
+                        next = true;
+                        state = index;
+                    } else {
+                        property = "selectedIndex";
+                        next = state = choices[index].index;
+                    }
+                } else if ((data.type === "text" && /[\r\n]/.test(value)) ||
+                           (node.maxLength >= 0 && value.length > node.maxLength)) {
+                    return false;
+                }
+                if (expected[fieldId] !== state) {
+                    changes.push([node, property, next]);
+                    expected[fieldId] = state;
+                }
+            }
+            snapshot.expected = expected;
+            for (const [node, property, value] of changes) node[property] = value;
+            for (const [node] of changes) {
+                if (!node.isConnected) break;
+                node.dispatchEvent(new Event("input", {bubbles: true, composed: true}));
+                if (!node.isConnected) break;
+                node.dispatchEvent(new Event("change", {bubbles: true}));
+            }
+            return true;
+        },
+        click() {
+            const item = snapshot?.expected && current();
+            const confirmed = snapshot;
+            snapshot = undefined;
+            if (!item || !matches(item, confirmed.expected)) return false;
+            HTMLElement.prototype.click.call(confirmed.submitter);
+            return true;
+        },
+    };
+    return (source, action, ...args) => location.href === source &&
+        document.readyState === "complete" ? methods[action](...args) : null;
+})()
+"""
+
+FORM_CALL = "function(...args) { return this(...args); }"
 
 
 def display_url(url: str) -> str:
@@ -293,6 +563,65 @@ class PageSession:
         return await self.client.send(method, params, session_id=self.session_id)
 
 
+class FormSession(PageSession):
+    def __init__(self, client: PipeClient, session_id: str, tab_id: str, source: str):
+        super().__init__(client, session_id)
+        self.tab_id = tab_id
+        self.source = source
+        self.loader = ""
+        self.object_id = ""
+        self.snapshot: tuple[str, str, str] | None = None
+
+    async def frame(self) -> dict[str, Any]:
+        return (await self.send("Page.getFrameTree"))["frameTree"]["frame"]
+
+    async def start(self) -> None:
+        frame = await self.frame()
+        if display_url(frame["url"]) != display_url(self.source):
+            raise BrowserError("BROWSER_READ_BLOCKED")
+        self.loader = frame["loaderId"]
+        world = await self.send(
+            "Page.createIsolatedWorld", {"frameId": frame["id"], "worldName": "ColinkForms"}
+        )
+        result = await self.send(
+            "Runtime.evaluate",
+            {
+                "expression": FORM_PAGE.replace("FORM_LIMIT", str(REQUEST_LIMIT)),
+                "contextId": world["executionContextId"],
+                "returnByValue": False,
+            },
+        )
+        self.object_id = result["result"]["objectId"]
+
+    async def call(self, action: str, *args: Any) -> Any:
+        result = await self.send(
+            "Runtime.callFunctionOn",
+            {
+                "objectId": self.object_id,
+                "functionDeclaration": FORM_CALL,
+                "arguments": [{"value": value} for value in (self.source, action, *args)],
+                "returnByValue": True,
+            },
+        )
+        if "exceptionDetails" in result:
+            raise BrowserError("BROWSER_TASK_FAILED")
+        return result.get("result", {}).get("value")
+
+
+def public_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {key: field[key] for key in ("id", "label", "type", "value", "options")}
+        for field in fields
+        if field["type"] in FIELD_TYPES and not (field.get("disabled") or field.get("read_only"))
+    ]
+
+
+def bound_form_response(response: dict[str, Any]) -> dict[str, Any]:
+    if len(json.dumps(response)) + 1 > REQUEST_LIMIT:
+        raise BrowserError("BROWSER_READ_BLOCKED")
+    return response
+
+
 def launch_browser(args: list[str]) -> tuple[subprocess.Popen[bytes], PipeClient, list[str]]:
     with contextlib.ExitStack() as pipes:
         child_read_fd, write_fd = os.pipe()
@@ -347,6 +676,7 @@ class LocalBrowser:
         self.process: subprocess.Popen[bytes] | None = None
         self.client: PipeClient | None = None
         self.listed_urls: dict[str, str] = {}
+        self.form_session: FormSession | None = None
 
     async def start(self) -> None:
         if (
@@ -563,7 +893,105 @@ class LocalBrowser:
             raise BrowserError("BROWSER_READ_BLOCKED")
         return result
 
-    async def action(self, name: str, url: str, tab_id: str) -> dict[str, Any]:
+    async def release_form_session(self) -> None:
+        from octop_browser.cdp.client import CDPSessionError
+
+        page, self.form_session = self.form_session, None
+        if page is not None:
+            with contextlib.suppress(CDPSessionError):
+                await page.client.send("Target.detachFromTarget", {"sessionId": page.session_id})
+
+    async def form_action(
+        self, name: str, url: str, tab_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        from octop_browser.cdp.client import CDPSessionError
+
+        blocked = "BROWSER_READ_BLOCKED" if name == "forms" else "BROWSER_FORM_STALE"
+        started_writing = False
+        completed = False
+        try:
+            tab = await self.selected_tab(tab_id)
+            source = tab["url"]
+            if not source or display_url(source) != url or self.listed_urls.get(tab_id) != source:
+                raise BrowserError(blocked)
+            evidence = {"title": tab["title"], "url": url}
+            if name == "forms":
+                await self.release_form_session()
+                client = self.connection()
+                attachment = await client.send(
+                    "Target.attachToTarget", {"targetId": tab_id, "flatten": True}
+                )
+                page = self.form_session = FormSession(
+                    client, attachment["sessionId"], tab_id, source
+                )
+                await page.start()
+                forms = await page.call("list")
+                if not isinstance(forms, list):
+                    raise BrowserError(blocked)
+                for form in forms:
+                    form["fields"] = public_fields(form["fields"])
+                response = bound_form_response({**evidence, "forms": forms})
+            else:
+                page = self.form_session
+                if (
+                    page is None
+                    or (page.tab_id, page.source) != (tab_id, source)
+                    or (await page.frame())["loaderId"] != page.loader
+                ):
+                    raise BrowserError(blocked)
+                form_id, submit_id = args["form_id"], args["submit_id"]
+                if name == "form_snapshot":
+                    page.snapshot = None
+                    snapshot = await page.call("snapshot", form_id, submit_id)
+                    if not isinstance(snapshot, dict):
+                        raise BrowserError(blocked)
+                    snapshot_id = secrets.token_urlsafe(24)
+                    response = bound_form_response(
+                        {
+                            **evidence,
+                            "form_id": form_id,
+                            "submit_id": submit_id,
+                            "snapshot_id": snapshot_id,
+                            "form_label": snapshot["form_label"],
+                            "submit_label": snapshot["submit_label"],
+                            "action_url": snapshot["action_url"],
+                            "method": snapshot["method"],
+                            "target": snapshot["target"],
+                            "fields": public_fields(snapshot["fields"]),
+                        }
+                    )
+                    page.snapshot = (snapshot_id, form_id, submit_id)
+                else:
+                    if page.snapshot != (args["snapshot_id"], form_id, submit_id):
+                        raise BrowserError(blocked)
+                    page.snapshot = None
+                    started_writing = True
+                    if await page.call("fill", args["values"]) is not True:
+                        raise BrowserError(blocked)
+                    if (
+                        (await page.frame())["loaderId"] != page.loader
+                        or (await self.selected_tab(tab_id))["url"] != source
+                        or await page.call("click") is not True
+                    ):
+                        raise BrowserError("BROWSER_TASK_FAILED")
+                    return {"click_dispatched": True}
+            if (await page.frame())["loaderId"] != page.loader or (await self.selected_tab(tab_id))[
+                "url"
+            ] != source:
+                raise BrowserError(blocked)
+            completed = True
+            return response
+        except (CDPSessionError, TimeoutError):
+            raise BrowserError("BROWSER_TASK_FAILED" if started_writing else blocked) from None
+        except BrowserError as exc:
+            if name != "forms" and not started_writing and str(exc) == "BROWSER_TAB_NOT_FOUND":
+                raise BrowserError(blocked) from None
+            raise
+        finally:
+            if not completed:
+                await self.release_form_session()
+
+    async def action(self, name: str, url: str, tab_id: str, **form_args: Any) -> dict[str, Any]:
         if name == "close":
             await self.close()
             return {}
@@ -576,15 +1004,22 @@ class LocalBrowser:
             return {"tabs": await self.tabs(), "tab_id": created["targetId"]}
         if name in {"select_tab", "close_tab"}:
             await self.selected_tab(tab_id)
+            if self.form_session is not None and (name == "close_tab") == (
+                self.form_session.tab_id == tab_id
+            ):
+                await self.release_form_session()
             method = "Target.activateTarget" if name == "select_tab" else "Target.closeTarget"
             await self.connection().send(method, {"targetId": tab_id})
         if name in {"query", "capture"}:
             return await self.inspect(tab_id, url, capture=name == "capture")
+        if name in FORM_ACTIONS:
+            return await self.form_action(name, display_url(url), tab_id, form_args)
         return {"tabs": await self.tabs()}
 
     async def close(self) -> None:
         client, process = self.client, self.process
         self.client, self.process = None, None
+        self.form_session = None
         self.listed_urls.clear()
         if client is not None and client.usable and process is not None and process.poll() is None:
             with contextlib.suppress(Exception):
@@ -615,8 +1050,8 @@ async def serve(profile: Path, source: BinaryIO, output: TextIO) -> None:
             try:
                 if len(line) > REQUEST_LIMIT:
                     raise BrowserError("BROWSER_INVALID_REQUEST")
-                action, url, tab_id = request_args(line)
-                reply = await browser.action(action, url, tab_id)
+                action, url, tab_id, form_args = request_args(line)
+                reply = await browser.action(action, url, tab_id, **form_args)
             except BrowserError as exc:
                 reply = {"error": str(exc)}
             except Exception:
