@@ -81,19 +81,19 @@ describe("<AtomsList />", () => {
       expect(screen.getByText("在用记忆。")).toBeInTheDocument();
     });
 
-    // Active atom: drawer has the deprecate action.
+    // Active atom: drawer has the forget action.
     await user.click(screen.getByText("在用记忆。"));
     await waitFor(() => {
-      expect(screen.getByText("弃用这条记忆")).toBeInTheDocument();
+      expect(screen.getByText("彻底遗忘这条记忆")).toBeInTheDocument();
     });
     expect(screen.getByText("在用")).toBeInTheDocument();
 
-    // Deprecated atom: no deprecate button, forgotten label is shown.
+    // Deprecated atom: no forget button, forgotten label is shown.
     await user.click(screen.getByText("已弃用记忆。"));
     await waitFor(() => {
       expect(screen.getAllByText("已忘记").length).toBeGreaterThanOrEqual(1);
     });
-    expect(screen.queryByText("弃用这条记忆")).not.toBeInTheDocument();
+    expect(screen.queryByText("彻底遗忘这条记忆")).not.toBeInTheDocument();
   });
 
   it("renders Empty when API returns no items", async () => {
@@ -177,5 +177,29 @@ describe("<AtomsList />", () => {
       screen.getByText("修正前：用户喜欢喝美式咖啡。"),
     ).toBeInTheDocument();
     expect(screen.getByText(/原始来源上下文：/)).toBeInTheDocument();
+  });
+
+  it("filters atoms by search query", async () => {
+    api.listAtoms.mockResolvedValue(
+      listAtomsResp([
+        makeAtom({ id: "atom-1", assertion: "用户喜欢喝美式咖啡。" }),
+      ]),
+    );
+
+    const user = userEvent.setup();
+    render(<AtomsList agentId="ZYWZTD" />);
+
+    const searchInput = screen.getByPlaceholderText("搜索关键词或主题...");
+    expect(searchInput).toBeInTheDocument();
+
+    await user.type(searchInput, "咖啡{enter}");
+
+    await waitFor(() => {
+      expect(api.listAtoms).toHaveBeenCalledWith("ZYWZTD", {
+        offset: 0,
+        limit: 20,
+        query: "咖啡",
+      });
+    });
   });
 });

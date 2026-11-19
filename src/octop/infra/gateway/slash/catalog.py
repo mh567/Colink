@@ -118,8 +118,8 @@ CATALOG: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec(
         name="memory",
         usage=(
-            "/memory slim [--all] [--confirm] [--delete-dirs] | "
-            "/memory compact [--confirm] | status"
+            "/memory save [topic] <content> | search <query> | list | "
+            "forget <id|query> | explain | slim | compact | status"
         ),
         # Replies must remain available while the checkpoint database is maintained.
         persist_checkpoint=False,

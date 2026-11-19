@@ -52,6 +52,7 @@ class FakeHarnessAgent:
         self.raise_on_stream = raise_on_stream
         self.last_request: dict[str, Any] | None = None
         self.closed = False
+        self.memory_access_enabled = True
         if workspace_dir is not None:
             self.use_workspace_dir(
                 workspace_dir,
@@ -109,6 +110,9 @@ class FakeHarnessAgent:
 
     def close(self) -> None:
         self.closed = True
+
+    def set_memory_access(self, enabled: bool) -> None:
+        self.memory_access_enabled = enabled
 
     @property
     def backend(self) -> Any:

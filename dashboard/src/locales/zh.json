@@ -1611,7 +1611,7 @@
     "unpin": "取消置顶",
     "deleteSessionConfirm": "确定删除这段会话吗？删除后无法恢复。",
     "deleteSessionTitle": "删除这段会话？",
-    "deleteSessionBody": "删除后无法恢复。会话会马上从列表里消失。数据库文件要等整理之后才会变小。",
+    "deleteSessionBody": "删除后无法恢复。会话与中断检查点会从列表中移除。注意：清理会话不等于遗忘已保存的长期记忆，法定90天安全审计日志亦会保留。数据库文件要等整理之后才会变小。",
     "deleteSessionAndCompactHint": "删除并整理：现在整理，这个专家会暂停一会儿。",
     "deleteSessionOnlyHint": "只删除：先不整理。专家空闲后，定时维护会把这次空出来的空间收回来。",
     "deleteSessionAndCompact": "删除并整理",
@@ -4529,6 +4529,7 @@
     "extractConfig": {
       "title": "记忆提炼时机",
       "subtitle": "控制何时把对话记忆提炼成长期记忆",
+      "captureLabel": "自动采集对话",
       "enableLabel": "自动提炼记忆",
       "modeIdle": "对话空闲后提炼",
       "modeIdleHint": "等对话安静一段时间再提炼，记忆质量最好（推荐）",
@@ -4547,7 +4548,7 @@
       "title": "记忆设置",
       "description": "控制这个专家是否使用记忆，以及对话内容何时被整理成长期记忆。",
       "storageTitle": "存储记忆",
-      "storageDescription": "允许专家读取已有记忆，并从新对话中持续积累记忆。",
+      "storageDescription": "允许专家读取和手动保存记忆。",
       "enabled": "已开启",
       "disabled": "已关闭",
       "disabledTitle": "关闭后专家将不再使用记忆",
@@ -4667,7 +4668,8 @@
     },
     "list": {
       "kind": "类型",
-      "importanceMin": "重要程度不低于"
+      "importanceMin": "重要程度不低于",
+      "searchPlaceholder": "搜索关键词或主题..."
     },
     "tree": {
       "title": "按主题浏览",
@@ -4678,6 +4680,8 @@
       "viewSummaryTip": "查看这个主题的摘要",
       "deprecateTooltip": "弃用这条记忆",
       "deprecate": "弃用这条记忆",
+      "forgetTooltip": "彻底遗忘这条记忆",
+      "forget": "彻底遗忘这条记忆",
       "actions": "操作"
     },
     "create": {
@@ -4726,6 +4730,13 @@
       "ok": "弃用",
       "success": "已弃用，Octop 将不再使用这条记忆",
       "failed": "操作失败：{{message}}"
+    },
+    "forget": {
+      "title": "彻底遗忘这条记忆？",
+      "description": "该操作将从数据库中物理删除该记忆事实，并清除关联事件、索引与内部记录。已清除的记忆无法恢复，且未来即便还原旧备份也将保持遗忘。注意：此操作不删除法定90天安全审计日志，亦不影响会话记录。",
+      "ok": "彻底遗忘",
+      "success": "已彻底遗忘该记忆并清理关联记录",
+      "failed": "遗忘失败：{{message}}"
     },
     "atomDetail": "记忆详情",
     "entitySummary": "主题摘要",

@@ -577,3 +577,152 @@ async def test_extract_config_limits_match_harness_validation(env_with_main_agen
     assert data["extract_max_tokens"] == 128
     assert data["extract_light_timeout_s"] == 3600
     assert data["extract_heavy_timeout_s"] == 30
+
+
+@pytest.mark.asyncio
+async def test_slash_save_keeps_plain_text_and_returns_the_stored_id(env_with_main_agent) -> None:
+    from unittest.mock import MagicMock
+
+    from octop.infra.gateway.slash import build_default_dispatcher
+    from octop.infra.gateway.slash.ctx import SlashCtx
+    from octop.infra.gateway.slash.runner import try_handle_slash
+
+    client, srv, auth, aid = env_with_main_agent
+    registry = srv.app_runtime.agent_registry
+    owner = registry.get_row(aid).user_id
+    ctx = SlashCtx(
+        agent_id=aid,
+        user_id=owner,
+        channel_type="dashboard",
+        session_key="test",
+        thread_registry=MagicMock(),
+        user_repo=srv.services.repos.user_repo,
+        agent_manager=registry,
+    )
+    dispatcher = build_default_dispatcher()
+    handled, lines, _ = await try_handle_slash(
+        "/memory save Prefer morning reviews", dispatcher=dispatcher, ctx=ctx
+    )
+    assert handled
+    response = await client.post(f"/api/agents/{aid}/memory/atoms/list", headers=auth, json={})
+    assert response.status_code == 200, response.text
+    [atom] = response.json()["items"]
+    assert atom["assertion"] == "Prefer morning reviews"
+    assert f"[{atom['id']}]" in "\n".join(lines)
+    _, found, _ = await try_handle_slash("/memory search morning", dispatcher=dispatcher, ctx=ctx)
+    assert atom["id"] in "\n".join(found)
+
+    _, suggestion, _ = await try_handle_slash(
+        "/memory forget morning", dispatcher=dispatcher, ctx=ctx
+    )
+    assert atom["id"] in "\n".join(suggestion)
+    _, confirmation, _ = await try_handle_slash(
+        f"/memory forget {atom['id']}", dispatcher=dispatcher, ctx=ctx
+    )
+    assert atom["id"] in "\n".join(confirmation)
+    assert atom["assertion"] not in "\n".join(confirmation)
+    response = await client.post(f"/api/agents/{aid}/memory/atoms/list", headers=auth, json={})
+    assert response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_slash_and_http_require_the_same_owner_memory_grant(env_with_main_agent) -> None:
+    from unittest.mock import MagicMock
+
+    from octop.infra.gateway.slash import build_default_dispatcher
+    from octop.infra.gateway.slash.ctx import SlashCtx
+    from octop.infra.gateway.slash.runner import try_handle_slash
+    from tests.support.auth import create_user
+
+    client, srv, admin_auth, _ = env_with_main_agent
+    auth = await create_user(client, admin_auth, username="memory_owner", permissions=[])
+    users = srv.services.repos.user_repo
+    owner = users.get_by_username("memory_owner")
+    assert owner is not None
+    agent_id = "Grant_Agent"
+    srv.services.agent_repo.create(agent_id=agent_id, user_id=owner.id, name="Grant test")
+    ctx = SlashCtx(
+        agent_id=agent_id,
+        user_id=owner.id,
+        channel_type="dashboard",
+        session_key="grant-test",
+        thread_registry=MagicMock(),
+        user_repo=users,
+        agent_manager=srv.app_runtime.agent_registry,
+    )
+    endpoint = f"/api/agents/{agent_id}/memory/atoms/list"
+    response = await client.post(endpoint, headers=auth, json={})
+    assert response.status_code == 403
+    await try_handle_slash(
+        "/memory save Test preference", dispatcher=build_default_dispatcher(), ctx=ctx
+    )
+
+    await srv.user_manager.set_permissions(owner.username, ["memory"])
+    response = await client.post(endpoint, headers=auth, json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_forget_atom_endpoints_and_isolation(env_with_main_agent, monkeypatch) -> None:
+    client, srv, auth, aid = env_with_main_agent
+
+    # 1. Create a memory atom
+    create_res = await client.post(
+        f"/api/agents/{aid}/memory/atoms",
+        headers=auth,
+        json={
+            "assertion": "员工偏好：午餐后进行代码审查",
+            "entity_name": "User",
+            "entity_type": "User",
+            "kind": "Preference",
+        },
+    )
+    assert create_res.status_code == 200, create_res.text
+    atom_id = create_res.json()["atom"]["id"]
+
+    # 2. Query by keyword finds it
+    list_res = await client.post(
+        f"/api/agents/{aid}/memory/atoms/list",
+        headers=auth,
+        json={"query": "代码审查"},
+    )
+    assert list_res.status_code == 200
+    assert any(a["id"] == atom_id for a in list_res.json()["items"])
+
+    # 3. Another user cannot forget or access this memory (403 Forbidden)
+    from tests.support.auth import ensure_users
+
+    other_auths = await ensure_users(client, auth, "employee_bob")
+    bob_auth = other_auths["employee_bob"]
+    forbidden_res = await client.post(
+        f"/api/agents/{aid}/memory/atoms/{atom_id}:forget",
+        headers=bob_auth,
+    )
+    assert forbidden_res.status_code == 403
+
+    # 4. Owner forgets the atom
+    forget_res = await client.post(
+        f"/api/agents/{aid}/memory/atoms/{atom_id}:forget",
+        headers=auth,
+    )
+    assert forget_res.status_code == 200, forget_res.text
+    forget_data = forget_res.json()
+    assert forget_data["forgotten"] is True
+    assert forget_data["atom_id"] == atom_id
+
+    # 6. Verify atom is gone from list/query
+    list_after = await client.post(
+        f"/api/agents/{aid}/memory/atoms/list",
+        headers=auth,
+        json={"query": "代码审查"},
+    )
+    assert list_after.status_code == 200
+    assert not any(a["id"] == atom_id for a in list_after.json()["items"])
+
+    # 7. Forgetting again returns 404
+    repeat_res = await client.post(
+        f"/api/agents/{aid}/memory/atoms/{atom_id}:forget",
+        headers=auth,
+    )
+    assert repeat_res.status_code == 404

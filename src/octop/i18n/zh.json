@@ -315,12 +315,24 @@
         "description": "结束 CLI 会话"
       },
       "memory": {
-        "label": "记忆库整理",
-        "description": "瘦身记忆库、用 VACUUM FULL 把删掉的空间还给磁盘，或查看整理进度。"
+        "label": "个人记忆与维护",
+        "description": "保存或检索个人偏好、彻底遗忘记忆、瘦身记忆库或查看说明。"
       }
     },
     "memory": {
-      "usage": "用法：/memory slim（先了解作用和影响）、/memory slim --all（查看自己的全部在线候选）、/memory compact（了解 VACUUM FULL）、/memory status（查看整理进度）。查看说明不会暂停聊天。",
+      "usage": "用法：/memory save [主题] <条目>（保存个人偏好或项目约定）、/memory search <关键词>（搜索记忆）、/memory list（查看记忆列表）、/memory forget <条目ID或关键词>（彻底遗忘事实与索引）、/memory explain（查看会话/检查点/长期记忆/90天审计区别）、/memory slim、/memory compact、/memory status。",
+      "saved": "已保存个人记忆 [{atom_id}]: {assertion}",
+      "save_usage": "用法：/memory save [主题] <条目内容>。例如：/memory save [Python规范] 优先使用3.12类型注解",
+      "search_usage": "用法：/memory search <关键词>",
+      "forget_usage": "用法：/memory forget <条目ID或关键词>。例如：/memory forget atom_01xxxx",
+      "forgotten": "已彻底遗忘记忆 [{atom_id}]。会话记录、任务检查点和安全审计日志不受影响。",
+      "forget_choose_id": "请用 /memory forget <编号> 确认要遗忘的条目：\n{items}",
+      "topic_suffix": "（主题：{topic}）",
+      "not_found": "未找到匹配的记忆条目。",
+      "explain": "【个人记忆与日志范围说明】\n1. 会话记录：当前交互上下文，清理会话不影响已持久化的长期记忆；\n2. 任务检查点：任务中断与续跑现场断点，仅用于未完成任务恢复；\n3. 长期记忆：主动保存或确认的工作偏好与关键项目约定，支持检索与物理遗忘；\n4. 安全审计日志：企业法定90天只读操作审计日志，不受遗忘操作影响。",
+      "list_header": "当前个人记忆（共 {count} 条）：",
+      "list_empty": "当前没有保存的个人记忆。",
+      "forbidden": "只有该智能体的拥有者可以访问或操作个人记忆。",
       "accepted": "已确认整理 {count} 个智能体。后台将依次备份、合并重复数据、回收空间，保留聊天记录和记忆。轮到某个智能体时，其所有会话暂停发送；完成后自动恢复。页面会显示阶段和耗时，可切换到其他未维护的智能体。关闭页面后批次仍会继续，恢复后可用 /memory status 查看结果。",
       "idle": "暂无当前智能体的整理记录。可用 /memory slim 发起整理。",
       "summary": "最近一次整理：已完成 {completed}/{total} 个。",

@@ -59,6 +59,33 @@ def test_restore_keeps_safety_backup_and_can_undo(tmp_path):
     assert other.read_bytes() == original_other
 
 
+def test_restore_does_not_recover_forgotten_predecessor_in_nested_store(tmp_path):
+    from octop.infra.agents.memory.personal import forgotten_ids, record_forgotten_ids
+
+    system = tmp_path / "workspace" / ".octop"
+    system.mkdir(parents=True)
+    path = system / "memory.sqlite"
+    create_store(path, "agent_expert_a")
+    memory = Memory("agent_Expert_A", backend_config={"db_path": str(path)})
+    old, *_ = memory.create_atom("Private test preference", entity_name="User")
+    backup = snapshot(path)
+    new = memory.replace_atom(old.id, assertion="Revised test preference")
+    assert new is not None
+    record_forgotten_ids(tmp_path, "Expert_A", memory.atom_forget_ids(new.id))
+    assert memory.forget_atom(new.id)
+    restore_sqlite(
+        path,
+        "agent_expert_a",
+        backup.name,
+        locale="en",
+        progress=lambda _: None,
+        forgotten_atom_ids=forgotten_ids(tmp_path)["Expert_A"],
+    )
+    assert count(path) == 1
+    assert memory.get_atom(old.id) is None
+    assert memory.search_atoms("preference") == []
+
+
 def test_corrupt_and_foreign_backups_do_not_modify_current_store(tmp_path):
     path = tmp_path / "memory.sqlite"
     create_store(path)

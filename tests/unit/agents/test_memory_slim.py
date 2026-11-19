@@ -16,6 +16,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from octop.infra.agents.manager import AgentManager
 from octop.infra.agents.memory.slim import MemorySlimCoordinator
 from octop.infra.agents.memory.slim_control import MemorySlimControl, request_memory_slim
+from octop.infra.utils.paths import PathLayout
 
 
 def make_manager(tmp_path):
@@ -31,6 +32,7 @@ def make_manager(tmp_path):
     memory = Memory("test_slim", backend_config={"db_path": str(path)})
     agent = SimpleNamespace(_memory_runtime=SimpleNamespace(memory=memory))
     registry = AgentManager.__new__(AgentManager)
+    registry._paths = PathLayout(tmp_path)
     registry._active_invocations = {}
     registry._invocation_waiters = {}
     registry._history_backfills = {}
@@ -204,11 +206,10 @@ def test_cli_prints_localized_progress_without_booting_another_host(tmp_path, mo
 
 
 @pytest.mark.parametrize("phase", ["backing_up", "deduplicating", "compacting"])
-def test_memory_dashboard_rejects_busy_before_opening_database(phase, monkeypatch):
-    from octop.api.common import memory_client
+def test_memory_dashboard_rejects_busy_before_opening_database(phase, monkeypatch, tmp_path):
+    from octop.infra.agents.memory import client as memory_client
     from octop.infra.errors import ErrorCode, OctopError
 
-    monkeypatch.setattr(memory_client, "require_agent_owner_row", lambda *args, **kwargs: None)
     opened = []
     bridge = SimpleNamespace(handle=lambda _: {"result": "ok"})
 
@@ -218,18 +219,17 @@ def test_memory_dashboard_rejects_busy_before_opening_database(phase, monkeypatc
 
     monkeypatch.setattr(memory_client, "_open_memory_for_agent", open_memory)
     current = {"phase": phase}
-    host = SimpleNamespace(
-        app_runtime=SimpleNamespace(
-            agent_registry=SimpleNamespace(memory_slim=SimpleNamespace(status=lambda _: current))
-        )
+    registry = SimpleNamespace(
+        paths=PathLayout(tmp_path),
+        get_row=lambda _: SimpleNamespace(user_id=1, is_shared=0),
+        memory_slim=SimpleNamespace(status=lambda _: current),
     )
     kwargs = {
         "agent_id": "a",
         "method": "stats_counts",
         "params": {},
-        "user": None,
-        "as_user": None,
-        "server": host,
+        "user": SimpleNamespace(id=1, is_admin=False, permissions=["memory"]),
+        "registry": registry,
     }
     with pytest.raises(OctopError) as error:
         memory_client.call_memory_rpc(**kwargs)

@@ -1611,7 +1611,7 @@
     "unpin": "Unpin",
     "deleteSessionConfirm": "Delete this conversation? This cannot be undone.",
     "deleteSessionTitle": "Delete this conversation?",
-    "deleteSessionBody": "This cannot be undone. The conversation leaves the list immediately. The database file does not get smaller until it is compacted.",
+    "deleteSessionBody": "This cannot be undone. The conversation and execution checkpoints leave the list immediately. Note: clearing a session does not delete saved long-term memories, and mandatory 90-day security audit logs are preserved. The database file will shrink after maintenance.",
     "deleteSessionAndCompactHint": "Delete and compact: compact now. This expert pauses briefly.",
     "deleteSessionOnlyHint": "Delete only: leave the file for later. After this expert is idle, scheduled maintenance returns the freed space.",
     "deleteSessionAndCompact": "Delete and compact",
@@ -4606,6 +4606,7 @@
     "extractConfig": {
       "title": "Memory distillation timing",
       "subtitle": "Control when conversation material becomes memory",
+      "captureLabel": "Automatically capture conversations",
       "enableLabel": "Auto-distill memory",
       "modeIdle": "Distill after conversation goes idle",
       "modeIdleHint": "Waits for a quiet conversation — best memory quality (recommended)",
@@ -4624,7 +4625,7 @@
       "title": "Memory settings",
       "description": "Control whether this agent uses memory and when conversations become long-term memory.",
       "storageTitle": "Store memory",
-      "storageDescription": "Allow the agent to read existing memories and keep learning from new conversations.",
+      "storageDescription": "Allow the agent to read and manually save memories.",
       "enabled": "On",
       "disabled": "Off",
       "disabledTitle": "The agent will stop using memory",
@@ -4714,6 +4715,8 @@
       "viewSummaryTip": "View this topic's summary",
       "deprecateTooltip": "Deprecate this memory",
       "deprecate": "Deprecate this memory",
+      "forgetTooltip": "Permanently forget this memory",
+      "forget": "Permanently forget this memory",
       "actions": "Actions"
     },
     "create": {
@@ -4762,6 +4765,13 @@
       "ok": "Deprecate",
       "success": "Deprecated — Octop will no longer use this memory",
       "failed": "Operation failed: {{message}}"
+    },
+    "forget": {
+      "title": "Permanently forget this memory?",
+      "description": "This will physically delete this memory fact from the database along with associated raw events, indexes, and internal records. Forgotten memories cannot be restored, and tombstones ensure they stay forgotten even after restoring past backups. Note: Mandatory 90-day security audit logs and conversation history are preserved.",
+      "ok": "Forget Permanently",
+      "success": "Permanently forgotten memory and cleaned up associated records",
+      "failed": "Failed to forget: {{message}}"
     },
     "atomDetail": "Memory detail",
     "episodeDetail": "Episode detail",
@@ -4823,7 +4833,8 @@
     },
     "list": {
       "importanceMin": "Importance at least",
-      "kind": "Type"
+      "kind": "Type",
+      "searchPlaceholder": "Search keyword or topic..."
     },
     "migrate": {
       "alreadyAdopted": "Already migrated, skipped",

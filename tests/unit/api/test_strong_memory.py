@@ -146,19 +146,21 @@ def test_candidate_approval_supplies_current_workspace_documents(
     ws = BackendWorkspace(FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True), tmp_path)
     ws.write_text("USER.md", "Updated profile", force=True)
     server = _server(ws)
+    server.app_runtime.agent_registry.get_row.return_value.is_shared = 0
+    server.app_runtime.agent_registry.paths = SimpleNamespace(root=tmp_path)
     server.app_runtime.agent_registry.memory_slim = SimpleNamespace(status=lambda _: None)
     memory = SimpleNamespace(
         get_candidate=lambda _: SimpleNamespace(payload={"manual_revision": "old"})
     )
     bridge = SimpleNamespace(handle=MagicMock(return_value={"result": {"promoted": 0}}))
     monkeypatch.setattr(
-        "octop.api.common.memory_client._open_memory_for_agent", lambda *_: (memory, bridge)
+        "octop.infra.agents.memory.client._open_memory_for_agent", lambda *_: (memory, bridge)
     )
     call_memory_rpc(
         agent_id="a1",
         method="promote_candidate",
         params={"candidate_id": "c1"},
-        user=SimpleNamespace(id=1, is_admin=False),
+        user=SimpleNamespace(id=1, is_admin=False, permissions=["memory"]),
         as_user=None,
         server=server,
     )
