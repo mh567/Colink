@@ -302,6 +302,7 @@
     "WEBAUTHN_CONFIG_INVALID": "Passkeys are not available on this address yet. An administrator needs to enter this site’s domain and full URL under App settings → Passkeys. If that is already saved, open the exact URL that was registered. localhost does not need this setup.",
     "WEBAUTHN_INVALID_DOMAIN": "Passkeys need a hostname. Open Octop via http://localhost (not an IP address such as 127.0.0.1).",
     "WEBAUTHN_LOGIN_DISABLED": "Passkey sign-in on the login page is turned off. An administrator can enable it under App settings → Passkeys.",
+    "LOCAL_FILE_AUDIT_CONFLICT": "The file event does not match the recorded authorization or operation stage.",
     "LOCAL_DOCX_GENERATION_FAILED": "Document generation failed; no file was written. Check the enabled intranet OpenAI-compatible model, disable API fallback, and verify the network and model output.",
     "LOCAL_PDF_GENERATION_FAILED": "PDF generation failed. Check the intranet model connection and try again.",
     "LOCAL_PDF_KNOWLEDGE_UNAVAILABLE": "PDF knowledge is unavailable. Ask an administrator to check the local or intranet embedding model, or select an expert without a knowledge base.",
@@ -6579,6 +6580,8 @@
     "actorAdmin": "Admin",
     "action": "Action",
     "actionPlaceholder": "Select action type",
+    "requestId": "Operation ID",
+    "requestIdInvalid": "Enter a 32-character operation ID (0–9, a–f).",
     "since": "Since",
     "limit": "Limit",
     "colTime": "Time",
@@ -6611,7 +6614,13 @@
       "user.unlock_login": "Unlock User Login",
       "user.password_changed": "Password Changed",
       "user.password_reset": "Password Reset",
-      "user.set_role": "Set Role"
+      "user.set_role": "Set Role",
+      "file.authorized": "File operation authorized",
+      "file.authorization_denied": "File operation denied",
+      "file.confirmed": "File operation confirmed",
+      "file.rejected": "File operation rejected",
+      "file.completed": "File operation completed",
+      "file.failed": "File operation failed"
     }
   },
   "connectors": {

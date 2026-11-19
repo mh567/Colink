@@ -12,6 +12,7 @@ import {
   Typography,
   DatePicker,
   Form,
+  Input,
   Tag,
 } from "antd";
 import { message } from "@/utils/antdMessage";
@@ -23,6 +24,7 @@ import { useServerTimezone } from "../../../hooks/useServerTimezone";
 import { formatServerDateTime } from "../../../utils/formatMessageTime";
 import { request } from "../../../api/request";
 import styles from "./auditLog.module.less";
+import { formatAuditPayload } from "./auditPayload";
 
 const { Text } = Typography;
 
@@ -39,6 +41,7 @@ interface FilterValues {
   actor?: string;
   action?: string;
   since?: string;
+  requestId?: string;
   limit?: number;
 }
 
@@ -75,6 +78,12 @@ const ACTION_OPTIONS = [
   "user.password_changed",
   "user.password_reset",
   "user.set_role",
+  "file.authorized",
+  "file.authorization_denied",
+  "file.confirmed",
+  "file.rejected",
+  "file.completed",
+  "file.failed",
 ];
 
 function formatTs(ts: number, timeZone: string): string {
@@ -96,6 +105,8 @@ export default function AuditLogPanel() {
         const qs = new URLSearchParams();
         if (values.actor) qs.set("actor", values.actor);
         if (values.action) qs.set("action", values.action);
+        const requestId = values.requestId?.trim().toLowerCase();
+        if (requestId) qs.set("request_id", requestId);
         if (values.since) {
           const parsed = Date.parse(values.since);
           if (!Number.isNaN(parsed))
@@ -183,6 +194,19 @@ export default function AuditLogPanel() {
             />
           </Form.Item>
           <Form.Item
+            label={t("adminAudit.requestId")}
+            name="requestId"
+            rules={[
+              {
+                transform: (value?: string) => value?.trim(),
+                pattern: /^[0-9a-f]{32}$/i,
+                message: t("adminAudit.requestIdInvalid"),
+              },
+            ]}
+          >
+            <Input allowClear />
+          </Form.Item>
+          <Form.Item
             label={t("adminAudit.since")}
             name="since"
             getValueFromEvent={(_, s) => s}
@@ -211,7 +235,7 @@ export default function AuditLogPanel() {
               </Button>
               <Button
                 icon={<RefreshCw size={14} />}
-                onClick={() => void fetchAudit(form.getFieldsValue())}
+                onClick={() => form.submit()}
               >
                 {t("common.refresh")}
               </Button>
@@ -245,16 +269,17 @@ export default function AuditLogPanel() {
                   </span>
                 </div>
               )}
-              {row.payload && !AGENT_ACTIONS.has(row.action) && (
-                <div className={styles.itemField}>
-                  <span className={styles.itemFieldLabel}>
-                    {t("adminAudit.colPayload")}
-                  </span>
-                  <Text code style={{ fontSize: 12, wordBreak: "break-all" }}>
-                    {row.payload}
-                  </Text>
-                </div>
-              )}
+              {formatAuditPayload(row.payload) &&
+                !AGENT_ACTIONS.has(row.action) && (
+                  <div className={styles.itemField}>
+                    <span className={styles.itemFieldLabel}>
+                      {t("adminAudit.colPayload")}
+                    </span>
+                    <Text code style={{ fontSize: 12, wordBreak: "break-all" }}>
+                      {formatAuditPayload(row.payload)}
+                    </Text>
+                  </div>
+                )}
             </div>
           ))}
           {rows.length === 0 && !loading && (
@@ -299,9 +324,9 @@ export default function AuditLogPanel() {
               title: t("adminAudit.colPayload"),
               dataIndex: "payload",
               render: (p: string | null, row: AuditRow) =>
-                p && !AGENT_ACTIONS.has(row.action) ? (
+                formatAuditPayload(p) && !AGENT_ACTIONS.has(row.action) ? (
                   <Text code style={{ fontSize: 12 }}>
-                    {p}
+                    {formatAuditPayload(p)}
                   </Text>
                 ) : null,
             },

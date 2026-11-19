@@ -192,6 +192,8 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		return task, err
 	}
 	task = docxTask{ID: request.RequestID, AgentID: s.AgentID, Format: s.Format, Operation: request.Action, Output: request.Output, Instruction: request.Instruction, Status: "running"}
+	s.AuditRequestID = request.RequestID
+	s.AuditPath = request.Output
 	journal, entry, replay, err := w.claimDestructive(s, request, task)
 	if err != nil {
 		return task, err
@@ -212,11 +214,14 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		}
 		return saveLocalTaskJSON(journal, data)
 	}
+	audited := false
 	defer func() {
+		event := "completed"
 		switch {
 		case errors.Is(err, errDestructiveCancelled):
 			task.Status = "cancelled"
 			err = nil
+			event = "rejected"
 		case err != nil:
 			if task.Status != "interrupted" {
 				task.Status = "failed"
@@ -227,18 +232,25 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 				task.Error = interruptedFileMessage(task, s.Locale)
 				err = errors.New(task.Error)
 			}
+			event = "failed"
 		default:
 			task.Status = "completed"
 		}
-		if saveErr := persist(); saveErr != nil {
+		var auditErr error
+		if audited {
+			auditErr = w.enqueueFileAudit(s, s.fileAudit(event, request.Action))
+		}
+		if saveErr := persist(); saveErr != nil || auditErr != nil {
 			task.Status = "interrupted"
 			task.Error = interruptedFileMessage(task, s.Locale)
 			err = errors.New(task.Error)
 		}
+		w.retryFileAudit(s)
 	}()
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}
+	audited = true
 	output, err := w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
 		return task, err
@@ -291,6 +303,9 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	proof, err := refreshDOCXSession(s)
 	if err != nil {
+		return task, err
+	}
+	if err = w.enqueueFileAudit(s, s.fileAudit("confirmed", request.Action)); err != nil {
 		return task, err
 	}
 	task.Status = "running"

@@ -172,6 +172,9 @@ func TestLocalFileOverwriteStopsAfterSourceGrantRevoke(t *testing.T) {
 func newDeleteWorkflow(t *testing.T, allowed *atomic.Bool) (*localDOCX, docxSession, docxRequest, string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleFileAudit(w, r) {
+			return
+		}
 		if r.Header.Get("X-Colink-Device-Session") != "session-secret" || r.URL.Path != "/api/devices/device/docx/authorize" {
 			t.Error("unexpected operation or missing desktop identity")
 			w.WriteHeader(http.StatusForbidden)

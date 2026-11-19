@@ -19,6 +19,9 @@ import (
 func TestLocalXLSXTaskCreatesCalculatedEditableWorkbook(t *testing.T) {
 	var sent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleFileAudit(w, r) {
+			return
+		}
 		if !strings.Contains(r.URL.Path, "/xlsx/") {
 			t.Errorf("wrong feature endpoint: %s", r.URL.Path)
 		}

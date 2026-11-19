@@ -91,6 +91,7 @@ type deviceClient struct {
 	cancel     context.CancelFunc
 	renewals   chan string
 	emit       func(deviceMessage)
+	retryAudit func(docxSession)
 	docx       docxSession
 }
 
@@ -130,6 +131,11 @@ func (c *deviceClient) publish(generation uint64, message deviceMessage) {
 	if c.generation == generation {
 		if message.Type == "status" && message.Status == "approved" && message.Online {
 			c.docx.DeviceID, c.docx.Secret, c.docx.UserID = message.DeviceID, message.SessionToken, message.UserID
+			if c.retryAudit != nil && c.docx.Secret != "" {
+				snapshot := c.docx
+				snapshot.Refresh = c.docxSession
+				go c.retryAudit(snapshot)
+			}
 		} else {
 			c.docx.Secret = ""
 		}
