@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -44,18 +46,22 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" && request.Format != "pptx" && request.Format != "pdf" {
 		return request, errors.New("不支持的文件类型")
 	}
-	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && request.Action != "cancel" && !isDestructiveAction(request.Action) {
+	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && request.Action != "cancel" && request.Action != "knowledge_import" && !isDestructiveAction(request.Action) {
 		return request, errors.New("不支持该操作；不允许命令执行")
 	}
 	if request.Action == "revoke" && request.GrantID == "" {
 		return request, fileopsCopyError(copyFileGrantIDRequired)
 	}
-	if isDestructiveAction(request.Action) && !validDestructiveID(request.RequestID) {
+	if (isDestructiveAction(request.Action) || request.Action == "knowledge_import") && !validDestructiveID(request.RequestID) {
 		return request, fileopsCopyError(copyFileInvalidIntent)
 	}
 	return request, nil
 }
 func (a *App) emitDOCX(s docxSession, err error) {
+	a.emitDOCXResult(s, err, "")
+}
+
+func (a *App) emitDOCXResult(s docxSession, err error, importID string) {
 	if a.window == nil && a.docxStatusSink == nil {
 		return
 	}
@@ -71,7 +77,7 @@ func (a *App) emitDOCX(s docxSession, err error) {
 	a.docx.mu.Lock()
 	busy := a.docx.busy
 	a.docx.mu.Unlock()
-	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy, ManagedDirectory: runtime.GOOS == "linux"}
+	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy, ManagedDirectory: runtime.GOOS == "linux", KnowledgeImportRequestID: importID}
 	if event.Grants == nil {
 		event.Grants = []directoryGrant{}
 	}
@@ -106,8 +112,12 @@ func (a *App) handleDOCX(raw string) {
 	}
 	session.Locale = a.store.get().Locale
 	request, err := parseDOCXRequest(raw)
+	var importID string
+	if request.Action == "knowledge_import" && validDestructiveID(request.RequestID) {
+		importID = request.RequestID
+	}
 	if err != nil {
-		a.emitDOCX(session, err)
+		a.emitDOCXResult(session, err, importID)
 		return
 	}
 	session.Format = request.Format
@@ -138,7 +148,7 @@ func (a *App) handleDOCX(raw string) {
 		return
 	}
 	if busy {
-		a.emitDOCX(session, errors.New("已有本机任务执行中"))
+		a.emitDOCXResult(session, errors.New("已有本机任务执行中"), importID)
 		return
 	}
 	defer func() {
@@ -147,7 +157,7 @@ func (a *App) handleDOCX(raw string) {
 		a.docx.busy = false
 		a.docx.mu.Unlock()
 		a.docx.statusMu.Unlock()
-		a.emitDOCX(session, err)
+		a.emitDOCXResult(session, err, importID)
 	}()
 	a.emitDOCX(session, nil)
 	switch request.Action {
@@ -196,6 +206,80 @@ func (a *App) handleDOCX(raw string) {
 		}
 		session.TaskChanged = func() { a.emitDOCX(session, nil) }
 		_, err = a.docx.run(session, request, func() error { return a.device.currentDOCX(session) })
+	case "knowledge_import":
+		state, stateErr := a.docx.state(session)
+		if stateErr != nil {
+			err = stateErr
+			return
+		}
+		if a.app == nil || a.window == nil {
+			err = errors.New("无法确认导入文件")
+			return
+		}
+		var directory string
+		for _, grant := range state.Grants {
+			if grant.ID == request.SourceGrant {
+				directory = grant.Path
+				break
+			}
+		}
+		if directory == "" {
+			err = errors.New("目录未获当前账号和设备授权")
+			return
+		}
+		sourcePath, selectErr := a.app.Dialog.OpenFile().
+			CanChooseFiles(true).CanChooseDirectories(false).
+			SetDirectory(directory).SetTitle(desktopText(session.Locale, copyKnowledgeSelectTitle)).
+			AttachToWindow(a.window).PromptForSingleSelection()
+		if selectErr != nil {
+			err = selectErr
+			return
+		}
+		if sourcePath == "" {
+			err = errors.New(desktopText(session.Locale, copyKnowledgeCancelled))
+			return
+		}
+		source, relErr := filepath.Rel(directory, sourcePath)
+		if relErr != nil || !filepath.IsLocal(source) {
+			err = errors.New(desktopText(session.Locale, copyKnowledgeOutsideDirectory))
+			return
+		}
+		ctx, cancel := context.WithTimeout(session.Context, 2*time.Minute)
+		defer cancel()
+		approved := waitForKnowledgeImportConfirmation(ctx, func(accept, decline func()) {
+			a.showKnowledgeImportConfirmation(ctx,
+				desktopText(session.Locale, copyKnowledgeConfirmTitle),
+				desktopText(session.Locale, copyKnowledgeConfirmMessage, sourcePath, request.KnowledgeBaseID),
+				accept, decline)
+		})
+		if !approved {
+			err = errors.New(desktopText(session.Locale, copyKnowledgeCancelled))
+			return
+		}
+		err = a.docx.importKnowledge(
+			session, request.SourceGrant, source, request.KnowledgeBaseID,
+			request.KnowledgeFolder, func() error { return a.device.currentDOCX(session) },
+		)
+	}
+}
+
+func waitForKnowledgeImportConfirmation(ctx context.Context, show func(accept, decline func())) bool {
+	result := make(chan bool, 1)
+	reply := func(approved bool) {
+		select {
+		case result <- approved:
+		default:
+		}
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	show(func() { reply(true) }, func() { reply(false) })
+	select {
+	case approved := <-result:
+		return approved && ctx.Err() == nil
+	case <-ctx.Done():
+		return false
 	}
 }
 

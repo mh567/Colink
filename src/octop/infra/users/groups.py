@@ -352,8 +352,8 @@ def group_access_by_group(repos: Any) -> dict[str, dict[str, Any]]:
     """What each group can use.
 
     No grant means the resource stays open to everyone, and that is listed too.
-    A grant narrows the resource to those groups. Private skill packages and
-    unshared knowledge bases are listed as creator-only or owner-only.
+    A grant narrows the resource to those groups. Private skill packages
+    are listed as creator-only; private knowledge bases are omitted.
     """
     model_labels, usable_models = _model_catalog(repos)
     package_rows = repos.skill_package_repo.list_all()
@@ -361,7 +361,6 @@ def group_access_by_group(repos: Any) -> dict[str, dict[str, Any]]:
     packages = {row.id: row.name for row in package_rows if row.shared}
     private_packages = {row.id: row.name for row in package_rows if not row.shared}
     bases = {row.id: row.name for row in base_rows if row.shared}
-    private_bases = {row.id: row.name for row in base_rows if not row.shared}
     grants: dict[tuple[str, str], set[str]] = {}
     for group_id, resource_type, resource_key in repos.resource_group_grant_repo.list_all():
         grants.setdefault((resource_type, resource_key), set()).add(group_id)
@@ -451,7 +450,7 @@ def group_access_by_group(repos: Any) -> dict[str, dict[str, Any]]:
         )
         summary["knowledge_bases"] = _resource_items(
             catalog=bases,
-            private=private_bases,
+            private={},
             private_audience="owner",
             known={row.id for row in base_rows},
             grants=base_grants,

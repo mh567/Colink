@@ -266,9 +266,7 @@ class CronDeliveryService:
         user_row = self._repos.user_repo.get(session.user_id)
         is_admin = str(getattr(user_row, "role", "") or "") == "admin"
         knowledge_repo = self._repos.knowledge_repo
-        bases = (
-            knowledge_repo.list_all() if is_admin else knowledge_repo.list_visible(session.user_id)
-        )
+        bases = knowledge_repo.list_visible(session.user_id)
         locale = resolve_user_locale(
             user_repo=self._repos.user_repo,
             user_id=session.user_id,

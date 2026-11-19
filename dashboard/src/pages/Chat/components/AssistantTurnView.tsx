@@ -196,8 +196,8 @@ export default function AssistantTurnView({
     [fullSplit, speakerAgentId],
   );
   const knowledgeCitations = useMemo(
-    () => collectTurnKnowledgeCitations(fullSplit),
-    [fullSplit],
+    () => collectTurnKnowledgeCitations(messages),
+    [messages],
   );
 
   const usedBrowser = turnUsedBrowserTool(fullSplit);

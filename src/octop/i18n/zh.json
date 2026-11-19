@@ -517,6 +517,8 @@
     "KNOWLEDGE_FEATURE_DISABLED": "管理员尚未启用知识库功能。",
     "KNOWLEDGE_PREREQUISITES_RESTART_REQUIRED": "知识库的向量模型或依赖已安装，但当前进程还加载不到，需要重启服务后生效。",
     "KNOWLEDGE_PREREQUISITES_FAILED": "知识库的向量模型或依赖尚未就绪。",
+    "KNOWLEDGE_VECTOR_UNAVAILABLE": "PostgreSQL 向量索引不可用，请联系管理员检查 vector 扩展和数据库权限。",
+    "KNOWLEDGE_WITHDRAWAL_IN_PROGRESS": "该知识库路径正在撤回，清理完成后请重试。",
     "KNOWLEDGE_NOT_FOUND": "未找到知识库或文档。",
     "KNOWLEDGE_FORBIDDEN": "您没有此知识库的访问权限。",
     "KNOWLEDGE_DOC_LIMIT": "每个知识库最多可包含 100 个文档。",
@@ -821,7 +823,12 @@
       "none_selected": "本轮未选择知识库。",
       "no_results": "未找到相关资料。"
     },
-    "indexing_failed": "知识库索引失败，请检查向量服务、文档和索引配置。"
+    "indexing_failed": "知识库索引失败，请检查向量服务、文档和索引配置。",
+    "vector_unavailable": "向量索引不可用，请联系管理员检查 PostgreSQL。",
+    "document_parse_failed": "无法提取文档正文。",
+    "private_ocr_local_required": "私人资料只允许本地文字识别，请联系管理员启用。",
+    "embedding_failed": "无法生成文档向量，请检查向量服务及配置。",
+    "embedding_dimension_mismatch": "模型生成的向量维度与知识库索引不匹配。"
   },
   "proactive_care": {
     "system_prompt": "今天是 {today}。\n\n请根据用户近期的生活事件，用温暖自然的语气写一段关心的话，不超过 150 字。\n注意事件发生的时间，不要把几天前的事说成「今天」。\n不要提及你是 AI，直接表达关心即可。",

@@ -249,7 +249,11 @@ def validate_ocr_settings(
     return OcrConfig(enabled, selected_backend, selected_model, selected_provider_id)
 
 
-def require_ocr_extractor(services: Any) -> OcrExtractor:
+class PrivateKnowledgeOcrError(RuntimeError):
+    """Private documents cannot be passed to the configured remote OCR model."""
+
+
+def require_ocr_extractor(services: Any, *, local_only: bool = False) -> OcrExtractor:
     config = load_ocr_config(services.settings_repo.get)
     if not config.enabled:
         raise RuntimeError("knowledge OCR is not enabled")
@@ -257,18 +261,20 @@ def require_ocr_extractor(services: Any) -> OcrExtractor:
         if not local_ocr_deps_available():
             raise RuntimeError("knowledge local OCR prerequisites are not satisfied")
         return _extract_local
+    if local_only:
+        raise PrivateKnowledgeOcrError("private knowledge OCR requires local processing")
     provider = _provider_for_config(services.provider_repo, config)
     if not _remote_ready(provider, config.model):
         raise RuntimeError("knowledge remote OCR provider is not ready")
     return _RemoteOcr(provider, config.model)
 
 
-def optional_ocr_extractor(services: Any) -> OcrExtractor | None:
+def optional_ocr_extractor(services: Any, *, local_only: bool = False) -> OcrExtractor | None:
     if not load_ocr_config(services.settings_repo.get).enabled:
         return None
 
     def extract(path: Path) -> str:
-        return require_ocr_extractor(services)(path)
+        return require_ocr_extractor(services, local_only=local_only)(path)
 
     return extract
 

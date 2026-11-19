@@ -517,6 +517,8 @@
     "KNOWLEDGE_FEATURE_DISABLED": "Knowledge bases are disabled by the administrator.",
     "KNOWLEDGE_PREREQUISITES_RESTART_REQUIRED": "The knowledge-base embedding components were installed but cannot be loaded by this process yet. Restart the server for them to take effect.",
     "KNOWLEDGE_PREREQUISITES_FAILED": "Knowledge-base embedding prerequisites are not ready.",
+    "KNOWLEDGE_VECTOR_UNAVAILABLE": "The PostgreSQL vector index is unavailable. Ask your administrator to check the vector extension and database permissions.",
+    "KNOWLEDGE_WITHDRAWAL_IN_PROGRESS": "This knowledge path is being removed. Retry after removal completes.",
     "KNOWLEDGE_NOT_FOUND": "Knowledge base or document not found.",
     "KNOWLEDGE_FORBIDDEN": "You do not have access to this knowledge base.",
     "KNOWLEDGE_DOC_LIMIT": "A knowledge base can contain at most 100 documents.",
@@ -821,7 +823,12 @@
       "none_selected": "No knowledge bases selected for this turn.",
       "no_results": "No relevant passages found."
     },
-    "indexing_failed": "Knowledge indexing failed. Check the embedding service, document and index configuration."
+    "indexing_failed": "Knowledge indexing failed. Check the embedding service, document and index configuration.",
+    "vector_unavailable": "The vector index is unavailable. Ask an administrator to check PostgreSQL.",
+    "document_parse_failed": "Could not extract text from the document.",
+    "private_ocr_local_required": "Private documents require local text recognition. Ask an administrator to enable it.",
+    "embedding_failed": "Could not generate document embeddings. Check the embedding service and configuration.",
+    "embedding_dimension_mismatch": "The embedding dimension does not match the knowledge index."
   },
   "proactive_care": {
     "system_prompt": "Today is {today}.\n\nBased on the user's recent life events, write a warm and natural caring message in no more than 150 words.\nPay attention to when events occurred — do not describe something from a few days ago as happening \"today\".\nDo not mention that you are an AI; express care directly.",

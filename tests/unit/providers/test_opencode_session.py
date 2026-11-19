@@ -233,7 +233,9 @@ def test_knowledge_remote_embedding_sends_session_header() -> None:
         name=GO_PRESET_NAME,
         base_url=GO_OPENAI_URL,
         api_key="sk-test",
+        enabled=True,
         extra_json=None,
+        get_models=lambda: [{"id": "embed-1", "embedding": True}],
     )
     services = SimpleNamespace(
         settings_repo=SimpleNamespace(

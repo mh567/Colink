@@ -258,6 +258,8 @@
     "KNOWLEDGE_FEATURE_DISABLED": "Knowledge bases are disabled by the administrator.",
     "KNOWLEDGE_PREREQUISITES_RESTART_REQUIRED": "The knowledge-base embedding components were installed but cannot be loaded by this process yet. Restart the server for them to take effect.",
     "KNOWLEDGE_PREREQUISITES_FAILED": "Knowledge-base embedding prerequisites are not ready.",
+    "KNOWLEDGE_VECTOR_UNAVAILABLE": "The PostgreSQL vector index is unavailable. Ask your administrator to check the vector extension and database permissions.",
+    "KNOWLEDGE_WITHDRAWAL_IN_PROGRESS": "This knowledge path is being removed. Retry after removal completes.",
     "KNOWLEDGE_NOT_FOUND": "Knowledge base or document not found.",
     "KNOWLEDGE_FORBIDDEN": "You do not have access to this knowledge base.",
     "KNOWLEDGE_DOC_LIMIT": "A knowledge base can contain at most 100 documents.",
@@ -533,8 +535,8 @@
     "maxDocumentsHint": "Maximum number of files in this knowledge base. 0 = unlimited, default 100.",
     "documentTooLarge": "Each document must be at most {{sizeMb}} MB.",
     "baseLimitReached": "You can create at most {{count}} knowledge bases.",
-    "uploadHint": "Supports text (md / txt / rst / html / json / yaml, …), spreadsheets (csv / tsv / xls / xlsx / xlsm), and pdf / doc / wps / docx / pptx. Max {{sizeMb}} MB per file. Drag and drop onto this page to upload.",
-    "uploadHintOcr": "Also supports png / jpg / webp images and OCR fallback for scanned PDFs. Max {{sizeMb}} MB per file. Drag and drop onto this page to upload.",
+    "uploadHint": "Supports text, spreadsheets, PDF, DOCX and PPTX. Max {{sizeMb}} MB per file. Choose from your authorized directories.",
+    "uploadHintOcr": "Also supports images and OCR for scanned PDFs. Max {{sizeMb}} MB per file. Choose from your authorized directories.",
     "dropToUpload": "Drop files here to upload",
     "dropUploadUnsupported": "Skipped {{count}} unsupported file(s)",
     "viewCard": "Cards",
@@ -580,6 +582,12 @@
       "languages": "Languages"
     },
     "upload": "Upload documents",
+    "importTitle": "Confirm knowledge import",
+    "importConfirm": "Select file",
+    "importScope": "A file copy, extracted text, and search index will be stored on the company server, and necessary content will be sent to the company embedding service. Ordinary task attachments are not added automatically.",
+    "importDirectory": "Authorized directory",
+    "importSelectDirectory": "Select an authorized directory",
+    "importDeviceRequired": "Connect your approved desktop device and authorize a directory first.",
     "createFolder": "New folder",
     "createFolderFailed": "Failed to create folder",
     "createFile": "New file",
@@ -624,13 +632,15 @@
       "pending": "Pending",
       "processing": "Processing",
       "ready": "Ready",
-      "failed": "Failed"
+      "failed": "Failed",
+      "withdrawn": "Withdrawn, cleanup incomplete"
     },
     "statusesShort": {
       "pending": "Pending",
       "processing": "Indexing",
       "ready": "Ready",
-      "failed": "Failed"
+      "failed": "Failed",
+      "withdrawn": "Withdrawn"
     },
     "deleteConfirm": "Delete this knowledge base and all of its documents?",
     "deleteDocumentConfirm": "Delete this document?",
@@ -1837,6 +1847,7 @@
     "fileWorkspaceHint": "Agent created or edited a file",
     "fileSwitch": "Switch file",
     "citations": "Sources",
+    "citationWithdrawn": "Withdrawn",
     "citationPreview": "Document preview",
     "citationViewInKnowledgeBase": "View in knowledge base",
     "citationPreviewFailed": "Failed to open document preview",

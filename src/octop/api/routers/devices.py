@@ -82,6 +82,21 @@ class DocxAuthorizeBody(BaseModel):
     )
 
 
+class KnowledgeImportAuthorizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kb_id: str = Field(min_length=1, max_length=64)
+    filename: str = Field(min_length=1, max_length=255)
+    path: str | None = Field(
+        default=None, max_length=500, description="Destination including the confirmed filename."
+    )
+
+
+class KnowledgeImportAuthorization(BaseModel):
+    import_ticket: str = Field(
+        description="Single-use confirmation for this device, library and file."
+    )
+
+
 class DocxAuthorization(BaseModel):
     allowed: Literal[True] = True
 
@@ -234,6 +249,40 @@ class XlsxGeneratedData(BaseModel):
         max_length=60000,
         description="Model JSON sheets/rows. The native client validates and calculates before writing.",
     )
+
+
+@router.post(
+    "/{device_id}/knowledge/authorize",
+    response_model=KnowledgeImportAuthorization,
+    summary="Confirm one private import from the current native device",
+    description="Call after native confirmation. Requires the employee's live device and file permissions.",
+)
+async def authorize_knowledge_import(
+    device_id: str,
+    body: KnowledgeImportAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> KnowledgeImportAuthorization:
+    from octop.infra.knowledge.service import normalize_import_path
+
+    try:
+        path = normalize_import_path(body.filename, body.path)
+        token = server.device_manager.confirm_knowledge_import(
+            user,
+            device_id,
+            x_colink_device_session,
+            kb_id=body.kb_id,
+            path=path,
+            filename=body.filename,
+        )
+    except ValueError as exc:
+        raise OctopError.localized(ErrorCode.KNOWLEDGE_NAME_INVALID) from exc
+    except PermissionError as exc:
+        raise OctopError.localized(ErrorCode.KNOWLEDGE_FORBIDDEN) from exc
+    except LookupError as exc:
+        raise OctopError.localized(ErrorCode.KNOWLEDGE_NOT_FOUND) from exc
+    return KnowledgeImportAuthorization(import_ticket=token)
 
 
 @router.post(
