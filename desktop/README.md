@@ -25,10 +25,10 @@ From repo root:
 make -f desktop/portable/Makefile green
 ```
 
-CI: `.github/workflows/octop-desktop.yml` builds native platform/arch variants.
-`v*` tags and `workflow_dispatch` (platforms=`all`) run all six; pull requests
-that touch `desktop/` build `darwin-*` and `windows-*` (amd64 + arm64). Each job
-first creates the green zip and then packages the matching Wails application.
+The [desktop release workflow](../.github/workflows/octop-desktop.yml) builds
+all six native variants for `v*` tags or a manual run with `platforms=all`.
+Each job creates the green zip and packages the matching Wails application.
+Use the [local verification steps](portable/README.md#本机验证) before release.
 
 ## Build a complete desktop release
 
@@ -44,8 +44,8 @@ desktop/package-release.sh darwin-arm64 --reuse-portable
 
 Rebuild without `--reuse-portable` if the archive's presentation or browser worker differs from the current checkout.
 
-Wails requires native packaging, so all six variants are produced by the CI
-matrix on macOS, Linux, and Windows runners rather than cross-compiled locally.
+Wails requires native packaging. The release workflow uses macOS, Linux, and
+Windows runners for their respective variants.
 Windows packaging also needs [NSIS](https://nsis.sourceforge.io/) (`makensis`)
 so the `.exe` is an installer rather than a portable single-file binary.
 
@@ -160,7 +160,9 @@ see `applyAppIcon` in `src/icons_darwin.go`.
 
 员工从设备页打开专用浏览器，亲自登录内网系统并切到查询结果。以示例订单 `DEMO-42` 为例，选择订单结果标签，输入“还有多少库存”，核对答案与来源地址，必要时在同一标签截图。退出应用并重新连接同一账号、设备和服务器后，重新打开专用浏览器检查原登录态。换另一个员工或设备，检查需要重新登录。撤销设备后再次查询，核对设备页拒绝操作。在浏览器启动过程中撤销权限，核对待访问的业务地址没有被打开。
 
-处理表单时，员工选择标签页、候选表单和提交动作，输入任务说明并查看模型建议。提交前核对字段变化；桌面原生确认窗会再次列出页面和脱敏提交目标、方法、打开位置、表单、提交动作及字段变化。确认后客户端只调用一次所选提交按钮。操作记录不保存字段值。“操作已发出”只表示浏览器点击调用已返回，不表示业务服务成功。若回执丢失或状态显示结果待核对，先检查业务页面，不要重放提交。附件和文件上传仍由员工在浏览器中操作。 [接口和权限](../docs/api.md#本机浏览器查询与表单操作)
+处理表单时，员工选择标签页、候选表单和提交动作，输入任务说明并查看模型建议。提交前核对字段变化；桌面原生确认窗会再次列出页面和脱敏提交目标、方法、打开位置、表单、提交动作及字段变化。确认后客户端只调用一次所选提交按钮。操作记录不保存字段值。“操作已发出”只表示浏览器点击调用已返回，不表示业务服务成功。若回执丢失或状态显示结果待核对，先检查业务页面，不要重放提交。
+
+附件上传从只读授权目录选择文件，下载写入读写授权目录。员工确认网页动作；下载覆盖已有文件时另行确认。下载仅支持当前页面同源链接。 [接口和权限](../docs/api.md#本机浏览器查询与表单操作)
 
 专用浏览器通过仅本机工作进程继承的管道接收调试命令。便携包须包含对应版本的浏览器工作进程。
 
@@ -171,3 +173,9 @@ see `applyAppIcon` in `src/icons_darwin.go`.
 Windows 10 使用系统 Edge 157.0.4341.46 复测了私有管道和浏览器工作进程。测试在独立配置中打开本机示例订单，读到同源嵌入报表且排除了透明文字，生成截图，并拒绝读取密码页。Windows 进程组回归另验证工作进程异常退出后浏览器子进程能够清理。
 
 麒麟前期核验的 Playwright 路径缺少浏览器二进制，启动失败。所选系统 Chromium 路径仍需在麒麟目标桌面上用同一客户端包断公网复测，记录浏览器软件包来源及版本、启动进程、配置目录、私有调试管道、沙箱和真实页面结果。 [麒麟前期核验](../docs/T01-源码许可与麒麟早期核验.md)
+
+### 附件与离线验收
+
+用同一桌面包，在断开公网但可访问测试服务器时验证附件：选择授权目录中的普通文件，拒绝确认时网页不接收文件；确认时网页可读取原始字节，提交结果在网页核对。下载用同源直接链接或链接选择器，核对读写目录里的文件内容；未授权、只读和已撤销的目录不能落盘。下载期间出现同名文件时仍需覆盖确认，取消后原文件保持原样。Windows 和 Linux 分别在原生桌面验收覆盖；Linux 须安装同包的受管目录服务。macOS 可新建，现有确认机制不支持覆盖。浏览器及便携运行时须预先安装。
+
+可用本机浏览器与预装 `octop-browser` 的 Python 复跑回环测试：在 `desktop/src` 设置 `COLINK_TEST_BROWSER_PYTHON` 为 Python 的绝对路径，再执行 `go test -run ^TestLocalBrowserNativeFileTransfer$`。该测试不需要企业凭据；发行包和系统原生确认仍按上面的步骤验收。

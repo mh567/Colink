@@ -49,18 +49,20 @@ func startBrowserWorker(ctx context.Context, session docxSession, profile string
 	if err != nil {
 		return nil, err
 	}
+	cmd := exec.Command(pythonExe(root), "-I", runner, "--private-debug-pipe", "--profile", profile)
+	cmd.Dir = root
+	cmd.Env = browserWorkerEnvironment()
+	return startBrowserProcess(ctx, session, cmd, cleanup)
+}
+
+func startBrowserProcess(ctx context.Context, session docxSession, cmd *exec.Cmd, cleanup func()) (browserProcess, error) {
+	unavailable := errors.New("BROWSER_RUNTIME_UNAVAILABLE")
 	started := false
 	defer func() {
 		if !started {
 			cleanup()
 		}
 	}()
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	cmd := exec.Command(pythonExe(root), "-I", runner, "--private-debug-pipe", "--profile", profile)
-	cmd.Dir = root
-	cmd.Env = browserWorkerEnvironment()
 	configureProcGroup(cmd)
 	cmd.Stderr = io.Discard
 	input, err := cmd.StdinPipe()

@@ -235,16 +235,14 @@ test-live:
 
 # Fast, change-aware gate for the local pre-commit hook. Runs ruff/mypy (cheap
 # and kept full for accuracy) plus only the tests affected by changed files via
-# pytest-testmon. The full suite still runs in CI (`make all`); this is local
-# feedback only, so a missed cross-module impact is caught there.
+# pytest-testmon. Run `make all` locally before requesting review.
 .PHONY: precommit
 precommit: format-all lint typecheck test-affected
 
 # NOTE: do NOT pass `-m` here — pytest-testmon deactivates its affected-test
 # selection whenever a marker expression is present, which would fall back to
 # the full suite. Live tests under tests/live/ auto-skip when credentials are
-# absent, so running them unscoped is cheap and safe; the CI `make all` gate
-# keeps `-m "not live"` for the authoritative full run.
+# absent. The local `make all` check uses `-m "not live"`.
 #
 # NOTE: testmon detects changes via `git ls-files -m` (worktree vs index), which
 # is empty once changes are staged — exactly the pre-commit state — so it would

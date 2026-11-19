@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,14 +25,20 @@ var (
 	errBrowserModelFailed = errors.New("BROWSER_MODEL_FAILED")
 )
 
+const browserTransferLimit = docxFileLimit
+
 type browserAction struct {
-	Action     string         `json:"action"`
-	URL        string         `json:"url,omitempty"`
-	TabID      string         `json:"tab_id,omitempty"`
-	FormID     string         `json:"form_id,omitempty"`
-	SubmitID   string         `json:"submit_id,omitempty"`
-	SnapshotID string         `json:"snapshot_id,omitempty"`
-	Values     map[string]any `json:"values,omitempty"`
+	Action       string `json:"action"`
+	URL          string `json:"url,omitempty"`
+	TabID        string `json:"tab_id,omitempty"`
+	FormID       string `json:"form_id,omitempty"`
+	SubmitID     string `json:"submit_id,omitempty"`
+	SnapshotID   string `json:"snapshot_id,omitempty"`
+	Values       map[string]any `json:"values,omitempty"`
+	FilePath     string `json:"file_path,omitempty"`
+	DownloadPath string `json:"download_path,omitempty"`
+	DownloadURL  string `json:"download_url,omitempty"`
+	Selector     string `json:"selector,omitempty"`
 }
 
 type browserTab struct {
@@ -89,6 +98,8 @@ type browserResult struct {
 	ClickDispatched bool                `json:"click_dispatched,omitempty"`
 	Operation       *browserOperation   `json:"operation,omitempty"`
 	Operations      *[]browserOperation `json:"operations,omitempty"`
+	File            string              `json:"file,omitempty"`
+	Size            int64               `json:"size,omitempty"`
 }
 
 type browserProcess interface {
@@ -97,21 +108,24 @@ type browserProcess interface {
 }
 
 type localBrowser struct {
-	mu              sync.Mutex
-	home            string
-	connection      docxSession
-	process         browserProcess
-	authorize       func(docxSession, string) error
-	query           func(docxSession, string, string) (string, error)
-	start           func(context.Context, docxSession, string) (browserProcess, error)
-	snapshot        *browserResult
-	confirmSubmit   func(context.Context, Locale, string) (bool, error)
-	activeOperation atomic.Pointer[string]
+	mu                 sync.Mutex
+	home               string
+	connection         docxSession
+	process            browserProcess
+	stagedUploads      []string
+	docx               *localDOCX
+	confirmDestructive func(context.Context, Locale, string, string) (bool, error)
+	authorize          func(docxSession, string) error
+	query              func(docxSession, string, string) (string, error)
+	start              func(context.Context, docxSession, string) (browserProcess, error)
+	snapshot           *browserResult
+	confirmSubmit      func(context.Context, Locale, string) (bool, error)
+	activeOperation    atomic.Pointer[string]
 }
 
 func newLocalBrowser(home string) *localBrowser {
 	return &localBrowser{
-		home: home, authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
+		home: home, docx: newLocalDOCX(home), authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
 	}
 }
 
@@ -205,6 +219,10 @@ func (b *localBrowser) stopLocked() {
 		b.process = nil
 		b.connection = docxSession{}
 	}
+	for _, stage := range b.stagedUploads {
+		_ = os.RemoveAll(stage)
+	}
+	b.stagedUploads = nil
 }
 
 func (b *localBrowser) close() {
@@ -282,7 +300,7 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 			return browserResult{}, err
 		}
 		if result.Error != "" {
-			if action.Action == "open" || result.Error == "BROWSER_NOT_OPEN" || result.Error == "BROWSER_TASK_FAILED" {
+			if action.Action == "open" || result.Error == "BROWSER_NOT_OPEN" || result.Error == "BROWSER_TASK_FAILED" || result.Error == "BROWSER_TRANSFER_UNCERTAIN" {
 				b.stopLocked()
 			}
 			if result.Error == errBrowserFormStale.Error() {
@@ -368,6 +386,113 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 		result.Values = values
 		return result, nil
 	}
+	if action.Action == "upload" || action.Action == "download" {
+		write := action.Action == "download"
+		if validateBrowserFilename(request.File) != nil {
+			return browserResult{}, errors.New("BROWSER_INVALID_REQUEST")
+		}
+		w := b.docx
+		if _, err := w.openGrant(operation, request.GrantID, write); err != nil {
+			return browserResult{}, err
+		}
+		if b.confirmDestructive == nil {
+			return browserResult{}, fileopsCopyError(copyFileConfirmationUnavailable)
+		}
+		stage, err := os.MkdirTemp(b.home, "browser-transfer-*")
+		if err != nil {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		keep := false
+		defer func() {
+			if !keep {
+				_ = os.RemoveAll(stage)
+			}
+		}()
+
+		if !write {
+			action.FilePath = filepath.Join(stage, request.File)
+			if err := w.withGrant(operation, request.GrantID, false, func(root *os.Root) error {
+				data, err := readBrowserFile(root, request.File)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(action.FilePath, data, 0600); err != nil {
+					return errors.New("BROWSER_TASK_FAILED")
+				}
+				return nil
+			}); err != nil {
+				return browserResult{}, err
+			}
+		}
+
+		planned := action
+		planned.Action = "prepare_" + action.Action
+		planned.FilePath = ""
+		prepared, err := perform(planned)
+		if err != nil {
+			return browserResult{}, err
+		}
+		if prepared.URL == "" || prepared.Target == "" {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		accepted, err := b.confirmDestructive(ctx, s.Locale, "browser_"+action.Action,
+			prepared.URL+" → "+prepared.Target+" → "+request.File)
+		if err != nil {
+			return browserResult{}, err
+		}
+		if !accepted {
+			return browserResult{}, errDestructiveCancelled
+		}
+		if err := checkPermission(action.Action); err != nil {
+			return browserResult{}, err
+		}
+
+		if !write {
+			var result browserResult
+			err := w.withGrant(operation, request.GrantID, false, func(*os.Root) error {
+				if err := checkPermission("upload"); err != nil {
+					return err
+				}
+				result, err = perform(action)
+				// Chromium can read the selected File later; keep it until the browser closes.
+				if b.process != nil {
+					b.stagedUploads = append(b.stagedUploads, stage)
+					keep = true
+				}
+				return err
+			})
+			if err == nil && result.File != request.File {
+				err = errors.New("BROWSER_TASK_FAILED")
+			}
+			return result, err
+		}
+
+		if _, err := w.openGrant(operation, request.GrantID, true); err != nil {
+			return browserResult{}, err
+		}
+		action.DownloadPath = stage
+		result, err := perform(action)
+		if err != nil {
+			return browserResult{}, err
+		}
+		if validateBrowserFilename(result.File) != nil {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		stagingRoot, err := os.OpenRoot(stage)
+		if err != nil {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		data, err := readBrowserFile(stagingRoot, result.File)
+		_ = stagingRoot.Close()
+		if err != nil || int64(len(data)) != result.Size {
+			return browserResult{}, errors.New("BROWSER_TASK_FAILED")
+		}
+		if err := b.saveDownload(operation, request, data, checkPermission); err != nil {
+			return browserResult{}, err
+		}
+		result.File = request.File
+		return result, nil
+	}
 	result, err := perform(action)
 	if err != nil {
 		return browserResult{}, err
@@ -375,6 +500,7 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 	if err := checkPermission(action.Action); err != nil {
 		return browserResult{}, err
 	}
+
 	if action.Action == "query" {
 		result.Text, err = b.query(operation, request.Instruction, result.Text)
 		if failure := checkCurrent(); failure != nil {
@@ -392,4 +518,125 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 		}
 	}
 	return result, nil
+}
+
+// Read only the file opened relative to the authorized root; never reopen its path.
+func readBrowserFile(root *os.Root, name string) ([]byte, error) {
+	info, err := root.Lstat(name)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("BROWSER_FILE_NOT_FOUND")
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, errors.New("BROWSER_FILE_NOT_FOUND")
+	}
+	defer f.Close()
+	current, err := f.Stat()
+	if err != nil || !os.SameFile(info, current) {
+		return nil, errors.New("BROWSER_FILE_NOT_FOUND")
+	}
+	if current.Size() > browserTransferLimit {
+		return nil, errors.New("BROWSER_FILE_TOO_LARGE")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, browserTransferLimit+1))
+	if err != nil {
+		return nil, errors.New("BROWSER_FILE_NOT_FOUND")
+	}
+	if len(data) > browserTransferLimit {
+		return nil, errors.New("BROWSER_FILE_TOO_LARGE")
+	}
+	return data, nil
+}
+
+func (b *localBrowser) saveDownload(s docxSession, request browserRequest, data []byte, authorize func(string) error) error {
+	s.Format = "browser"
+	w := b.docx
+	if err := authorize("download"); err != nil {
+		return err
+	}
+	apply := func(write func() error) error {
+		if s.Apply != nil {
+			return s.Apply(write)
+		}
+		return write()
+	}
+
+	var overwrite bool
+	err := w.withGrant(s, request.GrantID, true, func(root *os.Root) error {
+		_, err := root.Lstat(request.File)
+		switch {
+		case err == nil:
+			overwrite = true
+			return nil
+		case !errors.Is(err, os.ErrNotExist):
+			return errors.New("BROWSER_FILE_SAVE_FAILED")
+		}
+		if handled, err := createLocalOutput(s, root, request.File, data); handled {
+			return err
+		}
+		return apply(func() error {
+			if err := s.Context.Err(); err != nil {
+				return err
+			}
+			// Finish the new file before publishing it without replacing an existing entry.
+			stage := ".colink-browser-" + rand.Text()
+			f, err := root.OpenFile(stage, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				return errors.New("BROWSER_FILE_SAVE_FAILED")
+			}
+			defer root.Remove(stage)
+			if _, err = f.Write(data); err == nil {
+				err = f.Sync()
+			}
+			if closeErr := f.Close(); err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				return errors.New("BROWSER_FILE_SAVE_FAILED")
+			}
+			if err := s.Context.Err(); err != nil {
+				return err
+			}
+			if err := root.Link(stage, request.File); err != nil {
+				if errors.Is(err, os.ErrExist) {
+					return errDestructiveTargetChanged
+				}
+				return errors.New("BROWSER_FILE_SAVE_FAILED")
+			}
+			return nil
+		})
+	})
+	if err != nil || !overwrite {
+		return err
+	}
+	if err := authorize("overwrite"); err != nil {
+		return err
+	}
+	var target destructiveTarget
+	err = w.withGrant(s, request.GrantID, true, func(root *os.Root) error {
+		var err error
+		target, err = prepareDestructiveTarget(s, root, request.File, "overwrite")
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	defer target.close()
+	if err := target.confirm(s.Context, func(ctx context.Context, _, path string) (bool, error) {
+		return b.confirmDestructive(ctx, s.Locale, "browser_overwrite", path)
+	}, data); err != nil {
+		return err
+	}
+	if err := authorize("overwrite"); err != nil {
+		return err
+	}
+	proof, err := refreshDOCXSession(s)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(s.Context, 15*time.Second)
+	defer cancel()
+	return w.withGrant(s, request.GrantID, true, func(*os.Root) error {
+		return apply(func() error { return target.commit(ctx, data, proof) })
+	})
 }

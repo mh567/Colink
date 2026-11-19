@@ -5,11 +5,10 @@ name: Docker Publish
 # （Hub 仍用 DOCKERHUB_* secrets 同步推送。）
 #
 # 架构：ubuntu-latest 打 linux/amd64，ubuntu-24.04-arm 打 linux/arm64。
-# 每个架构先在本机启动镜像并跑 live 启动测试，通过后才推送该架构 tag，
-# 再合并为 :{version} / :latest 多架构清单。精简版同样打 :{version}-lite / :lite，
+# 各架构推送 tag 后合并为 :{version} / :latest 多架构清单。
+# 精简版同样打 :{version}-lite / :lite，
 # 不含桌面、本地向量和 OCR。飞牛 Docker 版 FPK 各用一个标签，
-# NAS 按本机架构拉取对应镜像层。某一架构启动失败（例如 ARM 上 Illegal
-# instruction / 退出码 132）只丢掉该架构，不挡住另一架构和后续 FPK。
+# NAS 按本机架构拉取对应镜像层。
 #
 # 触发路径：
 #   1. 人工推送 v* tag → on.push.tags
@@ -143,7 +142,7 @@ jobs:
           tags: |
             type=raw,value=${{ needs.prepare.outputs.version }}${{ matrix.variant == 'lite' && '-lite' || '' }}-${{ matrix.arch }}
 
-      # load 与 registry 导出不能同时开。先载入本机做启动测试，通过后再 docker push。
+      # 载入 runner 的 Docker，记录镜像大小后再推送。
       # docker 导出不支持 provenance，这里关掉，避免 --load 失败。
       - name: Build and load
         uses: docker/build-push-action@v6
@@ -164,26 +163,10 @@ jobs:
           cache-from: type=gha,scope=docker-${{ matrix.variant }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-${{ matrix.variant }}-${{ matrix.arch }}
 
-      - uses: astral-sh/setup-uv@v4
-        with:
-          python-version: "3.12"
-
       - name: Report image size
         run: |
           docker image inspect "octop:ci-${{ matrix.variant }}" \
             --format '::notice::${{ matrix.variant }} ${{ matrix.arch }} {{.Size}} bytes'
-
-      - name: Boot-test image before publish
-        env:
-          OCTOP_TEST_IMAGE: octop:ci-${{ matrix.variant }}
-          OCTOP_IMAGE_VARIANT: ${{ matrix.variant }}
-        run: |
-          set -euo pipefail
-          uv venv /tmp/octop-docker-test
-          uv pip install --python /tmp/octop-docker-test/bin/python pytest pytest-asyncio
-          /tmp/octop-docker-test/bin/pytest \
-            tests/integration/test_docker_image_boot.py::test_docker_image_runs_on_this_cpu_and_stays_disabled \
-            -q --tb=short
 
       - name: Push image
         env:

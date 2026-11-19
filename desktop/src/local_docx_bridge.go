@@ -44,7 +44,7 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" && request.Format != "pptx" && request.Format != "pdf" {
 		return request, errors.New("不支持的文件类型")
 	}
-	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && !isDestructiveAction(request.Action) {
+	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && request.Action != "cancel" && !isDestructiveAction(request.Action) {
 		return request, errors.New("不支持该操作；不允许命令执行")
 	}
 	if request.Action == "revoke" && request.GrantID == "" {
@@ -114,7 +114,7 @@ func (a *App) handleDOCX(raw string) {
 	a.docx.statusMu.Lock()
 	a.docx.mu.Lock()
 	busy := a.docx.busy
-	if request.Action != "list" && request.Action != "revoke" && !busy {
+	if request.Action != "list" && request.Action != "revoke" && request.Action != "cancel" && !busy {
 		a.docx.busy = true
 	}
 	a.docx.mu.Unlock()
@@ -126,6 +126,15 @@ func (a *App) handleDOCX(raw string) {
 	if request.Action == "revoke" {
 		err = a.docx.revoke(session, request.GrantID)
 		a.emitDOCX(session, err)
+		return
+	}
+	if request.Action == "cancel" {
+		targetID := request.TaskID
+		if targetID == "" {
+			targetID = request.RequestID
+		}
+		cancelErr := a.docx.cancel(session, targetID)
+		a.emitDOCX(session, cancelErr)
 		return
 	}
 	if busy {
@@ -198,13 +207,25 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 		return false, errors.New(desktopText(locale, copyFileConfirmationUnavailable))
 	}
 	var action, scope string
+	title, message := copyFileConfirmTitle, copyFileConfirmMessage
 	switch operation {
 	case "delete":
 		action, scope = copyFileDelete, copyFileDeleteScope
 	case "overwrite":
 		action, scope = copyFileOverwrite, copyFileOverwriteScope
+	case "browser_overwrite":
+		action, scope = copyFileOverwrite, copyBrowserOverwriteScope
+	case "browser_upload":
+		title, message = copyBrowserTransferConfirmTitle, copyBrowserTransferConfirmMessage
+		action, scope = copyBrowserUpload, copyBrowserUploadScope
+	case "browser_download":
+		title, message = copyBrowserTransferConfirmTitle, copyBrowserTransferConfirmMessage
+		action, scope = copyBrowserDownload, copyBrowserDownloadScope
 	default:
 		return false, fileopsCopyError(copyFileInvalidIntent)
+	}
+	if !safeDestructivePath(path) {
+		return false, fileopsCopyError(copyFileInvalidPath)
 	}
 	const width, maxLines = 28, 10
 	runes := []rune(path)
@@ -218,8 +239,8 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 	}
 	lines = append(lines, string(runes))
 	dialog := a.app.Dialog.Question().
-		SetTitle(desktopText(locale, copyFileConfirmTitle)).
-		SetMessage(desktopText(locale, copyFileConfirmMessage, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
+		SetTitle(desktopText(locale, title)).
+		SetMessage(desktopText(locale, message, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
 		AttachToWindow(a.window)
 	approved := false
 	dialog.AddButton("Yes").OnClick(func() { approved = true })

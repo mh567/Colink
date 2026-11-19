@@ -72,6 +72,42 @@ func TestServerAuthorizerPostsActionOverTLSWithoutProxy(t *testing.T) {
 	}
 }
 
+func TestManagedBrowserAuthorizesOnlyDownloadAndOverwrite(t *testing.T) {
+	creds := sampleServerCredentials()
+	creds.Format = "browser"
+	actions := make(chan string, 3)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/devices/"+creds.DeviceID+"/browser/authorize" {
+			t.Error("browser request reached the wrong authorization endpoint")
+		}
+		data, _ := io.ReadAll(r.Body)
+		actions <- string(data)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"allowed":true}`)
+	}))
+	defer server.Close()
+	authorize, err := newServerAuthorizer(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for action, want := range map[string]string{"create": `{"action":"download"}`, "overwrite": `{"action":"overwrite"}`} {
+		if err := authorize(context.Background(), creds, authorizationRequest{Action: action}); err != nil {
+			t.Fatal(err)
+		}
+		if got := <-actions; got != want {
+			t.Fatalf("%s used %s, want %s", action, got, want)
+		}
+	}
+	if err := authorize(context.Background(), creds, authorizationRequest{Action: "delete"}); err == nil {
+		t.Fatal("browser authorization accepted deletion")
+	}
+	select {
+	case action := <-actions:
+		t.Fatalf("unsupported action reached endpoint: %s", action)
+	default:
+	}
+}
+
 func TestManagedPPTXRechecksSourceAndExpertBeforePublishing(t *testing.T) {
 	for _, revokedField := range []string{"source_format", "agent_id"} {
 		t.Run(revokedField, func(t *testing.T) {

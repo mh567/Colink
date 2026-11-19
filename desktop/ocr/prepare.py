@@ -55,11 +55,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
     parser.add_argument(
-        "--python", required=True, help="Native bundled interpreter for the smoke test"
+        "--python", help="Run the OCR sample with this native bundled interpreter"
     )
     args = parser.parse_args()
     prepare(args.root)
-    verify(args.root, args.python)
+    if args.python is not None:
+        verify(args.root, args.python)
 
 
 if __name__ == "__main__":

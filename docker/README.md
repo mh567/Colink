@@ -46,6 +46,18 @@ docker run -d \
 
 Published tags: `ghcr.io/tencentcloud/octop:<version>` and `:latest` are the full image (desktop, OCR, local embedding). `:<version>-lite` and `:lite` omit those extras. Build locally with `--build-arg OCTOP_IMAGE_VARIANT=lite`.
 
+### Local image boot test
+
+On a development machine that matches the image's target architecture, build the image and run its boot test:
+
+```bash
+docker build -f docker/Dockerfile -t octop:test .
+OCTOP_TEST_IMAGE=octop:test uv run pytest -m live -q \
+  tests/integration/test_docker_image_boot.py::test_docker_image_runs_on_this_cpu_and_stays_disabled
+```
+
+For the lite image, set `OCTOP_IMAGE_VARIANT=lite` in the test environment and pass `--build-arg OCTOP_IMAGE_VARIANT=lite` when building.
+
 ### Faster downloads (China mirrors)
 
 Pass mirror env vars when building:

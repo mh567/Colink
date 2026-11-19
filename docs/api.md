@@ -150,17 +150,23 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 管理员在用户权限中授予“本机浏览器操作”（`local_browser`）。员工在桌面客户端接入已批准的本人设备，从设备页打开专用浏览器并亲自登录。员工可在浏览器中打开查询结果，或在面板中打开已知的查询地址。例如，打开示例订单 `DEMO-42` 的结果标签，在面板中选择该标签并询问库存数量。答案与来源一同显示，可单独截图核对。
 
-处理表单时，员工选择当前标签页、候选表单和提交动作，填写任务说明并获取字段建议。建议只针对选定表单的可写字段；员工核对字段当前值和建议值后，桌面客户端会打开原生确认窗，列出页面、脱敏提交地址、请求方法、打开位置、表单、提交动作和字段变化。只有员工确认后才调用所选提交动作。附件和文件上传仍由员工在浏览器中手动完成。
+处理表单时，员工选择当前标签页、候选表单和提交动作，填写任务说明并获取字段建议。建议只针对选定表单的可写字段；员工核对字段当前值和建议值后，桌面客户端会打开原生确认窗，列出页面、脱敏提交地址、请求方法、打开位置、表单、提交动作和字段变化。只有员工确认后才调用所选提交动作。
+
+附件操作使用本机目录授权。`upload` 只从授权目录读取文件并选入网页；`download` 只接受当前页面同源的下载链接或指向该链接的 CSS 选择器，不跟随跨站跳转。下载写入读写授权目录。网页动作需要原生确认；覆盖已有文件还需要单独确认。
 
 | 方法 | 路径 | 请求与结果 |
 | --- | --- | --- |
-| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作包括 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture`、`close`、`forms`、`suggest_form`、`submit_form` 和 `operations`。通过时返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作包括 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture`、`close`、`forms`、`suggest_form`、`submit_form`、`operations`、`upload`、`download` 和 `overwrite`。通过时返回 `{allowed:true}` |
 | `POST` | `/devices/{device_id}/browser/query` | 同上。请求 `{instruction,text}`，分别最多 8,000 和 60,000 字符。已授权的企业内网模型返回 `{text}` |
 | `POST` | `/devices/{device_id}/browser/form-suggest` | 同上。请求 `{instruction,fields}`；任务说明最多 8,000 字符，字段快照为 `{id,label,type,value,options}` 列表，紧凑 JSON 不超过 16 KiB。授权的企业内网模型返回按字段 ID 索引的 `{values}`，只含字符串或复选框布尔值 |
 
 原生客户端在启动浏览器、打开网址、读取页面和提交前分别校验会话与动作权限。查询和截图绑定选中标签的完整地址，地址变化后先刷新标签列表。界面来源省略查询参数和片段。同名同地址的标签需要先在专用浏览器中定位并核对。登录配置与截图留在本机。查询将提问和提取到的页面可见文字发送给授权的企业模型；表单建议将任务说明及所选表单字段的标识、标签、类型、当前值和选项发送给该模型，不发送页面地址、脚本或选择器，禁用模型调用追踪。模型不能决定提交目标或提交控件。表单值不写入本机操作记录。
 
 表单提交只调用一次所选按钮。`action_sent` 表示浏览器点击调用已返回，不代表业务服务已成功处理。提交回执丢失时记录为 `outcome_unknown`；应用重启后，未完成的确认或提交分别恢复为 `interrupted` 或 `outcome_unknown`。这些状态不提供重放，员工须先在业务页面检查结果。若页面内容超出读取上限，或有无法读取的嵌入页面，查询结果会标明内容不完整。
+
+- `upload` 需要本机目录读取授权和 `local_files_read`；确认后只把文件选入网页，提交结果在业务网页上核对。
+- `download` 需要读写目录和 `local_files_create`；只接受与当前网页同源的直接链接或指向该链接的 CSS 选择器（二选一）。跨站、跳转到不同地址和无法关联的下载不会保存。
+- 网页动作先显示当前页面完整地址、目标和文件，由员工在桌面客户端确认。下载完成后才处理落盘；覆盖还需 `local_files_overwrite` 和第二次确认，Windows 使用桌面确认，Linux 使用受管目录服务。其他平台不支持覆盖。单个文件限 20 MiB。
 
 ## 本机 DOCX 任务
 
@@ -172,6 +178,12 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 |--------|------|------|-------|
 | `POST` | `/devices/{device_id}/docx/authorize` | 员工令牌＋`X-Colink-Device-Session` | `action` 可为 `read`、`create`、`overwrite`、`delete`。校验当前设备归属、在线状态、功能及动作权限，返回 `{allowed:true}` |
 | `POST` | `/devices/{device_id}/docx/generate` | 同上，须持有读取及所选写入动作的权限 | `{instruction,text,action?}`，`action` 默认为 `create`，覆盖任务传 `overwrite`。任务描述最多 8,000 字符，必要正文最多 60,000 字符。返回 `{text}`，最多 60,000 字符 |
+
+覆盖、删除和新建等实际文件修改会写入 90 天审计。授权请求可带 `request_id`（32 位小写十六进制）和文件名 `path`；原生客户端在确认、拒绝、完成或失败后调用 `POST /devices/{device_id}/file-events`。审计只保留身份、设备、动作、文件名和结果，不含口令、模型密钥或原文。管理员在安全设置中查询，不能因此读取员工私有文件。员工删除会话不会删掉保留期内的这些记录。
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `POST` | `/devices/{device_id}/file-events` | 员工令牌＋`X-Colink-Device-Session` | `{request_id,event,format,operation,path?,error_code?}`。回执须对应同一员工、设备、格式、动作和文件名的授权记录；覆盖或删除成功前须记录确认。相同回执重复提交仍返回 `{recorded:true}`；关联不符或状态冲突时返回 `409`。桌面端先在本机保存待提交回执，连接恢复后重试。 |
 
 已批准的 WebSocket `status` 帧增加 `session_token`，仅保留在原生客户端，不透传页面、列表或审计。它与本人访问令牌一起证明当前设备会话；重新连接产生新值，断线、撤销、停用或重置口令后失效。生成前及模型返回后均重新核对权限。客户端在实际读写处另行核对本机目录授权，不能以服务端批准代替目录边界。
 
@@ -796,7 +808,7 @@ endpoint (public, mounted directly in `api/app.py`).
 | `GET`    | `/usage/summary` | user | token usage summary for the current user |
 | `GET`    | `/admin/usage` | admin | global token usage summary |
 | `GET`    | `/admin/overview` | admin | `{user_count, agent_count, ...}` |
-| `GET`    | `/admin/audit-log` | admin | recent audit rows |
+| `GET`    | `/admin/audit-log` | admin | Read-only query; `request_id` filters by operation ID before the row limit. Only native file events are hidden and pruned after 90 days; login, role changes and other audit events are unaffected. |
 | `GET`    | `/admin/metrics` | admin | `{messages_total, stream_errors_total, cron_runs_total, cron_errors_total, agent_active, ...}` |
 
 ## Envs

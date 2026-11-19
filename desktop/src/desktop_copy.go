@@ -39,6 +39,13 @@ const (
 )
 
 const (
+	copyBrowserTransferConfirmTitle   = "browser.confirmtitle"
+	copyBrowserTransferConfirmMessage = "browser.confirmmessage"
+	copyBrowserUpload               = "browser.upload"
+	copyBrowserUploadScope          = "browser.uploadscope"
+	copyBrowserDownload             = "browser.download"
+	copyBrowserDownloadScope        = "browser.downloadscope"
+	copyBrowserOverwriteScope       = "browser.overwritescope"
 	copyFileConfirmTitle            = "file.confirm_title"
 	copyFileConfirmMessage          = "file.confirm_message"
 	copyFileDelete                  = "file.delete"
@@ -101,6 +108,13 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTrayShowMain:           "Show Octop",
 		copyTrayQuit:               "Quit",
 
+		copyBrowserTransferConfirmTitle:   "Confirm browser action",
+		copyBrowserTransferConfirmMessage: "Action: %s\nPage, target and file (join wrapped lines without spaces):\n%s\nScope: %s",
+		copyBrowserUpload:               "Select web attachment",
+		copyBrowserUploadScope:          "Give the file to this page. The website may upload it or modify business data immediately.",
+		copyBrowserDownload:             "Request web download",
+		copyBrowserDownloadScope:        "Request this link using the browser session. The website may change business data.",
+		copyBrowserOverwriteScope:       "Replace this file with the downloaded artifact.",
 		copyFileConfirmTitle:            "Confirm file operation",
 		copyFileConfirmMessage:          "Action: %s\nFull path (join the lines without spaces):\n%s\nScope: %s",
 		copyFileDelete:                  "Delete",
@@ -161,6 +175,13 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTrayShowMain:           "显示 Octop",
 		copyTrayQuit:               "退出",
 
+		copyBrowserTransferConfirmTitle:   "确认网页操作",
+		copyBrowserTransferConfirmMessage: "动作：%s\n页面、目标和文件（折行直接拼接）：\n%s\n影响范围：%s",
+		copyBrowserUpload:               "选择网页附件",
+		copyBrowserUploadScope:          "将文件交给此网页。网页可能立即上传文件或修改业务数据。",
+		copyBrowserDownload:             "发起网页下载",
+		copyBrowserDownloadScope:        "使用当前浏览器会话访问此链接。网页可能修改业务数据。",
+		copyBrowserOverwriteScope:       "用本次下载的产物替换此文件。",
 		copyFileConfirmTitle:            "确认文件操作",
 		copyFileConfirmMessage:          "动作：%s\n完整路径（各行直接拼接）：\n%s\n影响范围：%s",
 		copyFileDelete:                  "删除",

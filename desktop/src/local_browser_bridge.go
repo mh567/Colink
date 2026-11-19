@@ -11,9 +11,11 @@ import (
 	"io"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -29,8 +31,17 @@ type browserRequest struct {
 	browserAction
 	ID          string `json:"request_id"`
 	Instruction string `json:"instruction,omitempty"`
+	GrantID     string `json:"grant_id,omitempty"`
+	File        string `json:"file,omitempty"`
 	Capability  string `json:"capability,omitempty"`
 	DeadlineMS  int64  `json:"deadline_ms,omitempty"`
+}
+
+func validateBrowserFilename(name string) error {
+	if name == "" || name == "." || !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || strings.ContainsFunc(name, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) }) || strings.TrimSpace(name) != name {
+		return errors.New("BROWSER_INVALID_REQUEST")
+	}
+	return nil
 }
 
 func browserOrigin(raw string) string {
@@ -183,6 +194,9 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 	}
 	page := request.TabID != "" && request.URL != ""
 	instruction := strings.TrimSpace(request.Instruction) != "" && utf8.RuneCountInString(request.Instruction) <= 8000
+	if request.FilePath != "" || request.DownloadPath != "" {
+		return request, invalid
+	}
 	switch request.Action {
 	case "open", "new_tab":
 		if request.TabID == "" && request.Instruction == "" {
@@ -224,6 +238,25 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 			}
 		}
 		return request, nil
+	case "upload":
+		if request.DownloadURL == "" && request.TabID != "" && request.URL != "" && request.GrantID != "" && request.File != "" &&
+			request.Instruction == "" && validateBrowserFilename(request.File) == nil {
+			if request.Selector != "" && (len(request.Selector) > 1024 || strings.ContainsAny(request.Selector, "\r\n")) {
+				return request, invalid
+			}
+			return request, nil
+		}
+	case "download":
+		if request.TabID != "" && request.URL != "" && request.GrantID != "" && request.File != "" &&
+			request.Instruction == "" && validateBrowserFilename(request.File) == nil {
+			if (request.DownloadURL == "") == (request.Selector == "") || (request.DownloadURL != "" && !browserHTTPURL(request.DownloadURL)) {
+				return request, invalid
+			}
+			if request.Selector != "" && (len(request.Selector) > 1024 || strings.ContainsAny(request.Selector, "\r\n")) {
+				return request, invalid
+			}
+			return request, nil
+		}
 	}
 	return request, invalid
 }
@@ -281,13 +314,15 @@ func (a *App) confirmLocalBrowserSubmit(ctx context.Context, locale Locale, mess
 
 func (a *App) handleLocalBrowser(session docxSession, origin string, request browserRequest, err error) {
 	session.Locale = a.store.get().Locale
+	session.Refresh = a.device.docxSession
+	session.Apply = func(apply func() error) error { return a.device.applyDOCX(session, apply) }
 	current := func() error { return a.device.currentDOCX(session) }
 	var result browserResult
 	if err == nil {
 		result, err = a.browser.run(session, request, current)
 	}
 	if err != nil {
-		result = browserResult{Error: err.Error()}
+		result = browserResult{Error: presentFileopsError(session.Locale, err).Error()}
 	}
 	event := struct {
 		browserResult

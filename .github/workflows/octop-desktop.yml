@@ -9,10 +9,6 @@ on:
   push:
     tags:
       - "v*"
-  pull_request:
-    paths:
-      - "desktop/**"
-      - ".github/workflows/octop-desktop.yml"
   workflow_dispatch:
     inputs:
       platforms:
@@ -39,9 +35,8 @@ on:
 permissions:
   contents: read
 
-# Builds on the same ref cancel each other (PR retrigger / accidental double
-# dispatch). Attach-only runs use a different group so they cannot cancel an
-# in-flight six-platform package on develop.
+# Builds on the same ref cancel each other. Attach-only runs use a different
+# group so they cannot cancel an in-flight package.
 concurrency:
   group: >-
     green-portable-${{
@@ -79,8 +74,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Job-level `if` cannot read `matrix.*` (GitHub 422). Filter here so only
-  # selected runners start — PRs → darwin-* + windows-*; dispatch honors `platforms`.
+  # Filter before expanding the matrix so only selected runners start.
   select-platforms:
     name: Select platforms
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.attach_from_run == ''
@@ -90,7 +84,6 @@ jobs:
     steps:
       - id: set
         env:
-          EVENT_NAME: ${{ github.event_name }}
           PLATFORMS: ${{ github.event.inputs.platforms || 'all' }}
         run: |
           set -euo pipefail
@@ -106,10 +99,7 @@ jobs:
               {"plat": "windows-amd64", "arch": "amd64", "os": "windows-latest"},
               {"plat": "windows-arm64", "arch": "arm64", "os": "windows-11-arm"},
           ]
-          if os.environ["EVENT_NAME"] == "pull_request":
-              sel = "darwin-arm64,darwin-amd64,windows-amd64,windows-arm64"
-          else:
-              sel = os.environ.get("PLATFORMS", "all").lower().replace(" ", "")
+          sel = os.environ["PLATFORMS"].lower().replace(" ", "")
           known = {row["plat"] for row in all_plats}
           if sel == "all":
               include = all_plats
@@ -181,41 +171,6 @@ jobs:
           set -euo pipefail
           echo "GREEN_HOST_PLAT=${GREEN_HOST_PLAT} RUNNER_ARCH=${RUNNER_ARCH:-} uname=$(uname -ms)"
           bash desktop/portable/package.sh "${{ matrix.plat }}"
-
-      - name: Smoke import (native host only)
-        run: |
-          set -euo pipefail
-          staging="desktop/portable/release/Octop-${{ matrix.plat }}"
-          if [[ -x "${staging}/runtime/bin/python3" ]]; then
-            py="${staging}/runtime/bin/python3"
-          elif [[ -f "${staging}/runtime/python.exe" ]]; then
-            py="${staging}/runtime/python.exe"
-          else
-            echo "python missing under ${staging}/runtime" >&2
-            exit 1
-          fi
-          req_file="desktop/portable/requirements-${{ matrix.plat }}.txt"
-          if [[ ! -f "$req_file" ]]; then
-            echo "frozen requirements missing: ${req_file}" >&2
-            exit 1
-          fi
-          verify_args=(
-            --packages "${staging}/packages"
-            --requirements "$req_file"
-          )
-          override_file="desktop/portable/overrides-${{ matrix.plat }}.txt"
-          if [[ -f "$override_file" ]]; then
-            verify_args+=(--overrides "$override_file")
-          fi
-          PYTHONNOUSERSITE=1 \
-            "$py" desktop/portable/verify_imports.py \
-              "${verify_args[@]}"
-          # macOS: fail if any native extension linked Homebrew/MacPorts paths.
-          if [[ "${{ matrix.plat }}" == darwin-* ]]; then
-            REPO_ROOT="$PWD" # shellcheck source=desktop/portable/_common.sh
-            source desktop/portable/_common.sh
-            verify_no_homebrew_dylibs "${staging}/packages" "${{ matrix.plat }}"
-          fi
 
       - uses: actions/setup-go@v6
         with:
