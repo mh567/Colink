@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Octop green portable CLI wrapper.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export OCTOP_HOME="${OCTOP_HOME:-${ROOT}/data}"
+export OCTOP_GREEN_PACKAGES="${ROOT}/packages"
+
+PY=""
+if [[ -x "${ROOT}/runtime/bin/python3" ]]; then
+  PY="${ROOT}/runtime/bin/python3"
+elif [[ -x "${ROOT}/runtime/bin/python" ]]; then
+  PY="${ROOT}/runtime/bin/python"
+elif [[ -x "${ROOT}/runtime/python.exe" ]]; then
+  PY="${ROOT}/runtime/python.exe"
+else
+  echo "octop: portable Python not found under ${ROOT}/runtime" >&2
+  exit 1
+fi
+
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH || true
+
+exec "$PY" "${ROOT}/launch.py" "$@"

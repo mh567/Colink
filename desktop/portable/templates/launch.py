@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import platform
 import runpy
 import site
 import sys
@@ -31,6 +32,14 @@ def _bootstrap() -> Path:
     if not packages.is_dir():
         sys.stderr.write(f"launch.py: packages/ missing next to {root}\n")
         raise SystemExit(1)
+
+    if (
+        sys.platform == "linux"
+        and "OPENSSL_armcap" not in os.environ
+        and platform.machine().lower() in ("aarch64", "arm64")
+    ):
+        compat = runpy.run_path(str(packages / "octop/infra/utils/arm64_compat.py"))
+        compat["ensure_arm64_openssl_compat"]()
 
     # Process .pth files (required for pywin32 layout).
     site.addsitedir(str(packages))

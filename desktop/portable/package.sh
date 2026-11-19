@@ -261,6 +261,11 @@ assemble_one() {
   cp "${REPO_ROOT}/desktop/pdf/runner.py" "${REPO_ROOT}/desktop/pdf/NotoSansSC-Regular.ttf" \
     "${REPO_ROOT}/desktop/pdf/OFL.txt" "${staging}/pdf/"
 
+  mkdir -p "${staging}/bin"
+  cp "${TEMPLATES}/bin/octop" "${staging}/bin/octop"
+  cp "${TEMPLATES}/bin/octop.cmd" "${staging}/bin/octop.cmd"
+  chmod +x "${staging}/bin/octop"
+
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"
   cp "${TEMPLATES}/launch.py" "${staging}/launch.py"
@@ -286,7 +291,7 @@ assemble_one() {
       "${REPO_ROOT}/pyproject.toml" | head -1
   } > "${staging}/VERSION.txt"
   # The bundled runtime can change while the application version stays the same.
-  printf '4\n' > "${staging}/PORTABLE-REVISION.txt"
+  printf '5\n' > "${staging}/PORTABLE-REVISION.txt"
 
   rm -f "$zip_path"
   echo "[package] ${plat}: zipping → ${zip_path}"
