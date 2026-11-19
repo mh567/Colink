@@ -163,6 +163,8 @@ func TestPortableRevisionRequiresBundledWorkers(t *testing.T) {
 		{"combined missing browser", "4", []testGreenZipFile{pptx, pdf}, false},
 		{"combined missing PDF", "4", []testGreenZipFile{pptx, browser}, false},
 		{"combined workers", "4", []testGreenZipFile{pptx, browser, pdf}, true},
+		{"revision 5 without launchers", "5", []testGreenZipFile{pptx, browser, pdf}, false},
+		{"revision 5 with launchers", "5", []testGreenZipFile{pptx, browser, pdf, {"bin/octop", "launcher"}, {"bin/octop.cmd", "launcher"}}, true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			files := append([]testGreenZipFile{{portableRevisionName, scenario.revision + "\n"}}, scenario.workers...)
@@ -1019,6 +1021,33 @@ func TestPortablePDFResourcesDoNotHideUserData(t *testing.T) {
 	}
 	if portableDataOutsideRuntime(root) {
 		t.Fatal("PDF user data would be replaced")
+	}
+}
+
+func TestPortableCLILaunchersDoNotBlockSafeRefresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("OCTOP_HOME", home)
+	t.Setenv("OCTOP_DATABASE_DRIVER", "sqlite")
+	t.Setenv("OCTOP_DATABASE_URL", "")
+	t.Setenv("OCTOP_DATABASE_SQLITE_PATH", "")
+	root := filepath.Join(home, "portable")
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"octop", "octop.cmd"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("launcher"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !portableDataOutsideRuntime(root) {
+		t.Fatal("known CLI launchers should not block a refresh")
+	}
+	if err := os.WriteFile(filepath.Join(bin, "user-data.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if portableDataOutsideRuntime(root) {
+		t.Fatal("CLI directory contains user data that must not be replaced")
 	}
 }
 

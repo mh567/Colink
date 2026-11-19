@@ -244,7 +244,7 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
-        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"4\n"
+        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"5\n"
         for worker in ("pptx", "browser"):
             assert (
                 packed.read(f"Octop-linux-amd64/{worker}/runner.py")
@@ -301,6 +301,7 @@ def test_desktop_release_validates_the_reused_portable_archive(
     portable.mkdir(parents=True)
     for name in ("_common.sh", "verify_imports.py"):
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
+    shutil.copytree(repo / "desktop/portable/templates", portable / "templates")
     shutil.copyfile(repo / "desktop" / "package-release.sh", desktop / "package-release.sh")
     (tmp_path / "pyproject.toml").write_text('version = "1.0.3b3"\n', encoding="utf-8")
     (portable / "requirements-linux-amd64.txt").write_text(
@@ -323,8 +324,11 @@ def test_desktop_release_validates_the_reused_portable_archive(
         (staging / name).mkdir(parents=True)
         (staging / name / "runner.py").write_bytes(current_runner)
     shutil.copytree(desktop / "pdf", staging / "pdf")
-    (staging / "PORTABLE-REVISION.txt").write_text("4\n")
-    (staging / "launch.py").write_text("# launcher\n")
+    (staging / "PORTABLE-REVISION.txt").write_text("5\n")
+    for name in ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd"):
+        (staging / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(portable / "templates" / name, staging / name)
+    (staging / "bin/octop").chmod(0o755)
     runtime = staging / "runtime/bin"
     runtime.mkdir(parents=True)
     (runtime / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
@@ -382,7 +386,8 @@ def test_desktop_release_validates_the_reused_portable_archive(
             archive.write(
                 staging / "PORTABLE-REVISION.txt", "Octop-linux-amd64/PORTABLE-REVISION.txt"
             )
-        archive.write(staging / "launch.py", "Octop-linux-amd64/launch.py")
+        for name in ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd"):
+            archive.write(staging / name, f"Octop-linux-amd64/{name}")
         archive.write(runtime / "python3", "Octop-linux-amd64/runtime/bin/python3")
         for path in (staging / "pdf").iterdir():
             if missing != f"pdf/{path.name}":
@@ -450,8 +455,11 @@ def portable_integrity_fixture(tmp_path):
     for relative, data in {
         "runtime/bin/python3": b"python runtime",
         "packages/octop/__init__.py": b"core dependency",
-        "launch.py": b"launcher",
-        "PORTABLE-REVISION.txt": b"4\n",
+        **{
+            name: (repo / "desktop/portable/templates" / name).read_bytes()
+            for name in ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd")
+        },
+        "PORTABLE-REVISION.txt": b"5\n",
         "browser/runner.py": (repo / "desktop/browser/runner.py").read_bytes(),
         "pptx/runner.py": (repo / "desktop/pptx/runner.py").read_bytes(),
         "pdf/runner.py": (repo / "desktop/pdf/runner.py").read_bytes(),
@@ -466,6 +474,7 @@ def portable_integrity_fixture(tmp_path):
         metadata.mkdir()
         (metadata / "RECORD").write_text(f"{dist}-1.dist-info/RECORD,,\n")
     (root / "runtime/bin/python3").chmod(0o755)
+    (root / "bin/octop").chmod(0o755)
     return module, root, tmp_path / "bundle.zip"
 
 
@@ -495,9 +504,37 @@ def test_reused_archive_accepts_current_browser_and_pdf_resources(portable_integ
     assert module._has_current_resources(archive, root.name, root / "packages")
 
 
+@pytest.mark.parametrize(("platform", "accepted"), [("linux-arm64", True), ("darwin-arm64", False)])
+def test_reused_archive_distinguishes_case_for_linux_only(
+    portable_integrity_fixture, platform, accepted
+):
+    module, root, archive = portable_integrity_fixture
+    target = root.with_name(f"Octop-{platform}")
+    root.rename(target)
+    write_integrity_archive(target, archive)
+    with zipfile.ZipFile(archive, "a") as result:
+        for name in ("Q", "q"):
+            result.writestr(f"{target.name}/share/terminfo/{name}/", b"")
+    assert module._has_current_resources(archive, target.name, target / "packages") is accepted
+
+
+def test_reused_archive_rejects_matching_stale_launcher(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "launch.py").write_text("# stale launcher\n", encoding="utf-8")
+    write_integrity_archive(root, archive)
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
 @pytest.mark.parametrize(
     "omitted",
-    ["runtime/bin/python3", "launch.py", "packages/octop/__init__.py", "browser/runner.py"],
+    [
+        "runtime/bin/python3",
+        "launch.py",
+        "bin/octop",
+        "bin/octop.cmd",
+        "packages/octop/__init__.py",
+        "browser/runner.py",
+    ],
 )
 def test_reused_archive_requires_runtime_launcher_and_core_files(
     portable_integrity_fixture, omitted

@@ -5,6 +5,8 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import plistlib
+import shlex
 import shutil
 import sys
 from dataclasses import replace
@@ -64,6 +66,69 @@ def test_resolve_octop_executable_falls_back_to_path(
     assert service_mod.resolve_octop_executable() == fake_octop
 
 
+def test_resolve_octop_executable_finds_portable_root_bin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    portable_root = tmp_path / "portable"
+    runtime_bin = portable_root / "runtime" / "bin"
+    runtime_bin.mkdir(parents=True)
+    python = runtime_bin / "python3"
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    portable_octop = portable_root / "bin" / "octop"
+    portable_octop.parent.mkdir(parents=True)
+    portable_octop.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(sys, "executable", str(python))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    assert service_mod.resolve_octop_executable() == portable_octop
+
+
+def test_render_systemd_unit_preserves_green_packages_and_armcap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / 'Portable "Test"'
+    runtime = replace(_runtime(root), octop_bin=root / "bin/octop")
+    packages = root / "packages"
+    monkeypatch.setenv("OCTOP_GREEN_PACKAGES", str(packages))
+    monkeypatch.setenv("OPENSSL_armcap", "0x3f")
+
+    unit = render_systemd_unit(runtime, user_unit=False)
+    lines = unit.splitlines()
+    assert [str(runtime.octop_bin), "run"] in [
+        shlex.split(line.removeprefix("ExecStart="))
+        for line in lines
+        if line.startswith("ExecStart=")
+    ]
+    env = [
+        value
+        for line in lines
+        if line.startswith("Environment=")
+        for value in shlex.split(line.removeprefix("Environment="))
+    ]
+    assert f"OCTOP_GREEN_PACKAGES={packages}" in env
+    assert f"OCTOP_HOME={runtime.home}" in env
+    assert "OPENSSL_armcap=0x3f" in env
+
+
+def test_render_launchd_plist_preserves_green_packages_and_armcap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "A & B"
+    runtime = replace(_runtime(root), mode="launchd", octop_bin=root / "bin/octop")
+    packages = root / "packages"
+    monkeypatch.setenv("OCTOP_GREEN_PACKAGES", str(packages))
+    monkeypatch.setenv("OPENSSL_armcap", "0x3f")
+
+    plist = plistlib.loads(render_launchd_plist(runtime).encode())
+    assert plist["ProgramArguments"] == [str(runtime.octop_bin), "run"]
+    assert plist["WorkingDirectory"] == str(root)
+    assert plist["EnvironmentVariables"]["OCTOP_GREEN_PACKAGES"] == str(packages)
+    assert plist["EnvironmentVariables"]["OPENSSL_armcap"] == "0x3f"
+
+
 def test_render_systemd_unit_user_scope(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     unit = render_systemd_unit(runtime, user_unit=True)
@@ -71,7 +136,7 @@ def test_render_systemd_unit_user_scope(tmp_path: Path) -> None:
     assert "OCTOP_SYSTEMD_USER=1" in unit
     assert "WantedBy=default.target" in unit
     assert f"User={getpass.getuser()}" not in unit
-    assert f"ExecStart={runtime.octop_bin} run\n" in unit
+    assert f'ExecStart="{runtime.octop_bin}" run\n' in unit
     assert "LimitNOFILE=" in unit
     assert "--host" not in unit
 
@@ -104,7 +169,7 @@ def test_render_systemd_unit_system_scope_uses_runtime_scope_by_default(
     unit = render_systemd_unit(runtime)
     assert f"User={user}" in unit
     assert f'Environment="HOME={account_home}"' in unit
-    assert f"Environment=OCTOP_HOME={tmp_path}" in unit
+    assert f'Environment="OCTOP_HOME={tmp_path}"' in unit
     assert "WorkingDirectory=" not in unit
     assert "WantedBy=multi-user.target" in unit
 
@@ -428,7 +493,7 @@ def test_render_systemd_unit_includes_service_mode(tmp_path: Path) -> None:
     unit = render_systemd_unit(runtime, user_unit=True)
     assert "OCTOP_SERVICE_MODE=systemd" in unit
     assert "ExecStart=" in unit
-    assert f"ExecStart={runtime.octop_bin} run\n" in unit
+    assert f'ExecStart="{runtime.octop_bin}" run\n' in unit
     assert "LimitNOFILE=" in unit
     assert "--host" not in unit
     assert "--port" not in unit
@@ -921,6 +986,8 @@ def test_needs_sudo_false_when_an_ancestor_is_writable(tmp_path: Path) -> None:
 
 class _FakeOs:
     """Minimal stand-in for `os` so we can stub `geteuid` and `W_OK` checks."""
+
+    environ = os.environ
 
     def __init__(self, *, root: bool) -> None:
         self._root = root
