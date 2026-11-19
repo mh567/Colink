@@ -4,9 +4,8 @@ Exercises the same ``ChannelManager.probe_channel`` path the dashboard uses
 via ``Gateway.probe_config`` / ``POST …/channels/test`` — so a green result
 means the real app credentials reach the real upstream.
 
-Credentials come from the repo-root ``.env`` (loaded by ``tests/live/conftest.py``)
-or from CI GitHub Secrets mapped in ``.github/workflows/ci.yml``. Missing vars
-auto-skip that case so CI stays green when a channel is not configured.
+Provide credentials through the local environment or the repo-root ``.env``
+(loaded by ``tests/live/conftest.py``). Cases with missing variables are skipped.
 
 Run locally::
 

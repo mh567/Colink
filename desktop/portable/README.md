@@ -9,7 +9,7 @@
 本能力全部落在：
 
 - `desktop/portable/**`（脚本 / 模板 / 本目录 Makefile）
-- `.github/workflows/octop-desktop.yml`（多平台 CI）
+- `.github/workflows/octop-desktop.yml`（多平台发行打包）
 - `desktop/portable/.gitignore`（`/release/` `/runtimes/` `/wheels/` 等忽略构建产物）
 - `tests/unit/test_green_launch.py`（launch.py PATH / addsitedir）
 
@@ -20,12 +20,7 @@
 make -f desktop/portable/Makefile green
 ```
 
-依赖版本必须以仓库根目录 `uv.lock` 为准：`package.sh` 使用
-`uv export --frozen`，出包后跑 `desktop/portable/verify_imports.py`
-校验关键包 pin 与 import（含 `langchain-openai` / `langchain-core` 配对），
-避免「同安装、不同环境」因版本错配或原生扩展加载失败而偶发报错。
-平台 overrides（`darwin-amd64` / `windows-arm64` 的 `cryptography==46.x`）
-会一并传入校验，避免与 lock 中的 49.x 误报不一致。
+依赖版本以仓库根目录 `uv.lock` 为准，`package.sh` 使用 `uv export --frozen`。
 
 ## 产物布局
 
@@ -108,7 +103,19 @@ OCTOP_GREEN_OFFLINE=1 bash desktop/portable/package.sh
 
 `windows-arm64` 另排除无 wheel 的 `psycopg-binary` / `sqlite-vec`，并把 `cryptography` 钉到 `46.0.0`（仅该版本提供 `win_arm64` wheel）。
 
-## CI
+## 本机验证
+
+在目标开发电脑上运行 `desktop/package-release.sh`，用包内 Python 验证关键依赖的版本和导入。只构建便携包时，可按 [verify_imports.py 的用法](verify_imports.py)单独检查；使用包内解释器，并在平台覆盖文件存在时传入 `--overrides`。
+
+含 OCR 的便携包构建完成后，运行以下命令验证离线识别样本。示例为 macOS ARM64，请将目录改为目标平台的产物目录。Windows 使用 `$staging/runtime/python.exe`。
+
+```bash
+staging=desktop/portable/release/Octop-darwin-arm64
+python="$staging/runtime/bin/python3"
+"$python" desktop/ocr/prepare.py "$staging" --python "$python"
+```
+
+## 发行打包
 
 [`.github/workflows/octop-desktop.yml`](../../.github/workflows/octop-desktop.yml) 在 6 个 runner 上出 zip：
 
@@ -125,7 +132,7 @@ Actions 使用 GitHub 上游 PBS（`PBS_BASE_URL`），本机构建默认 npmmir
 
 `linux-amd64`、`linux-arm64`、`windows-amd64`、`darwin-arm64` 便携包包含 `local-ocr` extra：RapidOCR 3.9.2、ONNX Runtime 1.28.0、pypdfium2 5.15.0，具体传递依赖由 `uv.lock` 锁定。`vendor-wheels.sh` 同步缓存这些 wheel；三个识别模型已包含在 RapidOCR wheel，组包时复制到 `ocr/models/`，运行时不下载模型或字体。Python 组件及 PDFium 的许可留在 `packages/`，补充的 RapidOCR/PaddleOCR 许可随 `ocr/licenses/` 交付。
 
-构建在目标平台原生运行 `desktop/ocr/prepare.py`，使用包内解释器识别固定两页中文样本并核对关键文字，通过后才压缩。交叉组装不能替代目标平台执行，因此包含 OCR 的目标明确拒绝跨平台组包；请使用对应原生 runner 或现有 Linux Docker 构建入口。运行时禁止 Python 网络连接，PDF 和识别文字仅通过本机子进程管道传输。
+构建使用 `desktop/ocr/prepare.py` 复制离线资源。包含 OCR 的目标需要使用对应原生平台或现有 Linux Docker 构建入口。开发人员按[本机验证](#本机验证)执行样本识别。运行时禁止 Python 网络连接，PDF 和识别文字仅通过本机子进程管道传输。
 
 本流程的文字结果不保留排版。限制为 20 MB、20 页、每页渲染不超过 1600 万像素和 60000 字符；空页、损坏、加密、超限或缺资源均明确失败，不静默截断。
 

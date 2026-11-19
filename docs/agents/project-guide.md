@@ -313,7 +313,7 @@ User-facing datetime display and cron/scheduling defaults MUST use the server ti
 - Document non-obvious fields with `Field(..., description="…")`; name models clearly.
 - Spot-check `/api/docs` after API changes — a route that renders as an empty card or untyped blob is unfinished.
 
-**Cross-platform tests:** Octop CI runs on both Linux and Windows, so tests must not assume a single platform:
+**Cross-platform tests:** Developers verify platform-specific changes on the affected development machines. Write tests that account for both Linux and Windows:
 
 - Guard POSIX-only behavior with the repo convention `@pytest.mark.skipif(os.name != "posix", reason="…")`; prefer a module-level `posix_only = pytest.mark.skipif(os.name != "posix", reason="…")` alias. Use `pytest.mark.skipif(os.name == "nt", reason="…")` when a case is Linux/macOS-only for a different reason (e.g. forbidden path characters).
 - Do not hard-code POSIX paths (`/`, `/proc`, `/etc`, `/root`, `/usr/bin/…`, `~` → HOME) in assertions that run on every platform — they resolve differently on Windows (e.g. `/` → `D:\`). Prefer opaque mock tokens via `tests.support.fakes.fake_bin_path("tool")` (uses `pathlib` / `os.sep`) when stubbing `shutil.which` / `resolve_binary`.
