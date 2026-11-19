@@ -82,6 +82,12 @@ class DocxAuthorizeBody(BaseModel):
     )
 
 
+class KnowledgeImportAuthorizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kb_id: str = Field(min_length=1, max_length=64)
+    filename: str = Field(min_length=1, max_length=255)
+
+
 class DocxAuthorization(BaseModel):
     allowed: Literal[True] = True
 
@@ -234,6 +240,33 @@ class XlsxGeneratedData(BaseModel):
         max_length=60000,
         description="Model JSON sheets/rows. The native client validates and calculates before writing.",
     )
+
+
+@router.post(
+    "/{device_id}/knowledge/authorize",
+    response_model=DocxAuthorization,
+    summary="Authorize an import from the current native device",
+    description="Requires the employee's live device, local read permission and knowledge access.",
+)
+async def authorize_knowledge_import(
+    device_id: str,
+    body: KnowledgeImportAuthorizeBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> DocxAuthorization:
+    from octop.infra.knowledge.service import KnowledgeService
+
+    server.device_manager.authorize_knowledge_import(
+        user, device_id, x_colink_device_session, body.filename
+    )
+    try:
+        KnowledgeService(server.services).get_writable_base(body.kb_id, actor_user_id=user.id)
+    except PermissionError as exc:
+        raise OctopError.localized(ErrorCode.KNOWLEDGE_FORBIDDEN) from exc
+    except LookupError as exc:
+        raise OctopError.localized(ErrorCode.KNOWLEDGE_NOT_FOUND) from exc
+    return DocxAuthorization()
 
 
 @router.post(

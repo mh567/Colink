@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type DragEvent,
 } from "react";
 import {
   Alert,
@@ -70,6 +69,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import cx from "classnames";
 
 import { useCurrentUser } from "../../hooks/useCurrentUser";
+import { useDesktopDevice } from "../../context/DesktopDeviceContext";
 import { userCan } from "../../utils/permissions";
 import type { OctopUser } from "../../api/modules/auth";
 import {
@@ -147,6 +147,7 @@ import {
 import TextDocumentEditorModal, {
   type TextDocumentFormat,
 } from "./TextDocumentEditorModal";
+import ImportConfirmation from "./ImportConfirmation";
 import styles from "./index.module.less";
 
 type BaseFormValues = {
@@ -159,10 +160,6 @@ type BaseFormValues = {
 
 type DocsViewMode = "card" | "table";
 const DOCS_VIEW_STORAGE_KEY = "octop:knowledge-bases-docs-view";
-
-const BASE_DOCUMENT_TYPES =
-  ".md,.markdown,.txt,.rst,.html,.htm,.json,.jsonl,.yaml,.yml,.csv,.tsv,.pdf,.doc,.wps,.docx,.pptx,.xls,.xlsx,.xlsm";
-const OCR_DOCUMENT_TYPES = ".png,.jpg,.jpeg,.webp";
 
 function loadDocsViewMode(): DocsViewMode {
   const stored = localStorage.getItem(DOCS_VIEW_STORAGE_KEY);
@@ -183,16 +180,17 @@ function fileExtensionLabel(filename: string): string {
   return ext.trim().toUpperCase().slice(0, 5);
 }
 
-/** Match ``<input accept>`` extension tokens (e.g. ``.pdf,.docx``). */
-function fileMatchesAccept(file: File, acceptCsv: string): boolean {
-  const tokens = acceptCsv
-    .split(",")
-    .map((token) => token.trim().toLowerCase())
-    .filter(Boolean);
-  if (tokens.length === 0) return true;
-  const name = file.name.toLowerCase();
-  return tokens.some((token) =>
-    token.startsWith(".") ? name.endsWith(token) : false,
+function sendNativeFileCommand(command: Record<string, string>) {
+  const invoke = (
+    window as Window & {
+      _wails?: { invoke?: (message: string) => void };
+    }
+  )._wails?.invoke;
+  if (!invoke) throw new Error("Desktop client unavailable");
+  invoke(
+    `wails:event:emit:desktop:docx:${encodeURIComponent(
+      JSON.stringify(command),
+    )}`,
   );
 }
 
@@ -200,9 +198,7 @@ function canManageKnowledgeBase(
   base: Pick<KnowledgeBase, "owner_user_id">,
   user: OctopUser | null,
 ): boolean {
-  return Boolean(
-    user && (user.role === "admin" || base.owner_user_id === user.id),
-  );
+  return Boolean(user && base.owner_user_id === user.id);
 }
 
 function isKnowledgeOwner(
@@ -287,6 +283,13 @@ export default function KnowledgeBasesPage() {
   const isMobile = useIsMobile();
   const timeZone = useServerTimezone();
   const user = useCurrentUser();
+  const desktop = useDesktopDevice();
+  const deviceId =
+    desktop.event?.type === "status" &&
+    desktop.event.online &&
+    desktop.event.status === "approved"
+      ? desktop.event.device_id
+      : null;
   const canConfigureKb = userCan(user, "knowledge_settings");
   const { viewMode, setViewMode, showCardView } = useCardTableView(
     loadDocsViewMode(),
@@ -684,17 +687,17 @@ export default function KnowledgeBasesPage() {
   const [baseVisibility, setBaseVisibility] =
     useState<ResourceVisibilityMode>("owner");
   const [baseGroupIds, setBaseGroupIds] = useState<string[]>([]);
-  const [uploadState, setUploadState] = useState<{
+  const [pendingImport, setPendingImport] = useState<{
     baseId: string;
-    filename: string;
-    index: number;
-    total: number;
-    percent: number;
+    folder: string;
   } | null>(null);
-  const uploadInFlightRef = useRef(false);
-  const uploadRef = useRef<HTMLInputElement>(null);
-  const dragDepthRef = useRef(0);
-  const [dragActive, setDragActive] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importGrants, setImportGrants] = useState<
+    { id: string; path: string }[]
+  >([]);
+  const activeImport = useRef<{ baseId: string; sawBusy: boolean } | null>(
+    null,
+  );
   const detailRequestGate = useRef(createDetailRequestGate());
   const {
     size: sidebarWidth,
@@ -725,9 +728,6 @@ export default function KnowledgeBasesPage() {
   );
   const canWriteSelected = canManageSelected;
   const usable = Boolean(capability?.usable);
-  const supportedDocumentTypes = capability?.ocr?.usable
-    ? `${BASE_DOCUMENT_TYPES},${OCR_DOCUMENT_TYPES}`
-    : BASE_DOCUMENT_TYPES;
   const limits = capability?.limits ?? DEFAULT_KNOWLEDGE_LIMITS;
   const ownedBaseCount = user
     ? bases.filter((base) => base.owner_user_id === user.id).length
@@ -996,6 +996,47 @@ export default function KnowledgeBasesPage() {
     },
     [t],
   );
+
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          device_id: string;
+          grants?: { id: string; path: string }[];
+          busy: boolean;
+          error?: string;
+        }>
+      ).detail;
+      if (!detail || !deviceId || detail.device_id !== deviceId) return;
+      setImportGrants(detail.grants ?? []);
+      const active = activeImport.current;
+      if (!active) return;
+      if (detail.busy) {
+        active.sawBusy = true;
+      } else if (active.sawBusy || detail.error) {
+        activeImport.current = null;
+        setImportBusy(false);
+        if (detail.error) {
+          message.error(detail.error);
+        } else {
+          message.success(t("knowledgeBases.uploaded"));
+          if (selectedIdRef.current === active.baseId)
+            void loadDetail(active.baseId);
+          void loadBases();
+        }
+      }
+    };
+    window.addEventListener("colink:docx-status", receive);
+    return () => window.removeEventListener("colink:docx-status", receive);
+  }, [deviceId, loadBases, loadDetail, message, t]);
+
+  useEffect(() => {
+    if (!deviceId && activeImport.current) {
+      activeImport.current = null;
+      setImportBusy(false);
+      message.error(t("knowledgeBases.importDeviceRequired"));
+    }
+  }, [deviceId, message, t]);
 
   useEffect(() => {
     setCurrentFolder("");
@@ -1414,134 +1455,16 @@ export default function KnowledgeBasesPage() {
     message.info(t("models.localDownloadBackground"));
   };
 
-  const uploadDocuments = async (files: FileList | File[] | null) => {
-    if (!selected || !files || !usable || isAtDocumentLimit) return;
-    if (uploadInFlightRef.current) return;
-    const baseId = selected.id;
-    const remaining =
-      documentCap === null
-        ? Number.POSITIVE_INFINITY
-        : Math.max(0, documentCap - fileCount);
-    const incoming = Array.from(files);
-    const matched = incoming.filter((file) =>
-      fileMatchesAccept(file, supportedDocumentTypes),
-    );
-    const skippedType = incoming.length - matched.length;
-    if (skippedType > 0) {
-      message.warning(
-        t("knowledgeBases.dropUploadUnsupported", { count: skippedType }),
-      );
-    }
-    const chosen = matched.slice(0, remaining);
-    if (chosen.length === 0) return;
-    if (documentCap !== null && matched.length > remaining) {
-      message.warning(
-        t("knowledgeBases.documentLimitReached", {
-          count: documentCap,
-        }),
-      );
-    }
-    const oversized = chosen.filter(
-      (file) => file.size > limits.max_document_bytes,
-    );
-    if (oversized.length > 0) {
-      message.error(
-        t("knowledgeBases.documentTooLarge", {
-          sizeMb: Math.round(limits.max_document_bytes / (1024 * 1024)),
-        }),
-      );
-      if (uploadRef.current) uploadRef.current.value = "";
+  const requestImport = () => {
+    if (!selected || !deviceId || !usable || isAtDocumentLimit || importBusy)
       return;
-    }
-    uploadInFlightRef.current = true;
     try {
-      for (const [index, file] of chosen.entries()) {
-        setUploadState({
-          baseId,
-          filename: file.name,
-          index: index + 1,
-          total: chosen.length,
-          percent: 0,
-        });
-        await knowledgeBasesApi.uploadDocument(
-          baseId,
-          file,
-          joinKnowledgePath(currentFolder, file.name),
-          (percent) =>
-            setUploadState((current) =>
-              current &&
-              current.baseId === baseId &&
-              current.filename === file.name
-                ? { ...current, percent }
-                : current,
-            ),
-        );
-        // Show each finished file while the remaining ones still upload.
-        // Skip when the user has opened another base — loadDetail would
-        // replace that view with this upload's base.
-        if (index < chosen.length - 1 && selectedIdRef.current === baseId) {
-          void loadDetail(baseId, { silent: true });
-        }
-      }
-      if (selectedIdRef.current === baseId) {
-        await loadDetail(baseId);
-      }
-      await loadBases();
-      message.success(t("knowledgeBases.uploaded"));
-    } catch (error) {
-      message.error(
-        apiErrorMessage(error, t("knowledgeBases.uploadFailed"), t),
-      );
-    } finally {
-      uploadInFlightRef.current = false;
-      setUploadState((current) =>
-        current?.baseId === baseId ? null : current,
-      );
-      if (uploadRef.current) uploadRef.current.value = "";
+      setImportGrants([]);
+      sendNativeFileCommand({ action: "list" });
+      setPendingImport({ baseId: selected.id, folder: currentFolder });
+    } catch {
+      message.error(t("knowledgeBases.importDeviceRequired"));
     }
-  };
-
-  const uploadingThisBase = uploadState?.baseId === selected?.id;
-  const uploadBusy = uploadState !== null;
-  const canDropUpload =
-    canWriteSelected && usable && !isAtDocumentLimit && !uploadBusy;
-
-  const resetDragActive = () => {
-    dragDepthRef.current = 0;
-    setDragActive(false);
-  };
-
-  const handleDocsDragEnter = (event: DragEvent<HTMLDivElement>) => {
-    if (!canDropUpload) return;
-    if (![...event.dataTransfer.types].includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current += 1;
-    setDragActive(true);
-  };
-
-  const handleDocsDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    if (!canDropUpload && !dragActive) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) setDragActive(false);
-  };
-
-  const handleDocsDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!canDropUpload) return;
-    if (![...event.dataTransfer.types].includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "copy";
-  };
-
-  const handleDocsDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    resetDragActive();
-    if (!canDropUpload) return;
-    void uploadDocuments(event.dataTransfer.files);
   };
 
   const createFolder = async () => {
@@ -2091,7 +2014,7 @@ export default function KnowledgeBasesPage() {
   const showListPane = !isMobile || mobilePane === "list";
   const showDetailPane = !isMobile || mobilePane === "detail";
   const showListPanel = showListPane && (isMobile || !listPanelCollapsed);
-  const showEnableGuide = !loading && !usable;
+  const showEnableGuide = !loading && !usable && bases.length === 0;
   const showEmptyGuide = !loading && usable && bases.length === 0;
   const emptyLayoutClassName = styles.emptyLayout;
   const setupMascot = <OctopEmptyMascot />;
@@ -2115,6 +2038,13 @@ export default function KnowledgeBasesPage() {
         ) : undefined
       }
     >
+      {!loading && capability?.checks.vector_available === false ? (
+        <Alert
+          type="error"
+          showIcon
+          message={t("apiErrors.KNOWLEDGE_VECTOR_UNAVAILABLE")}
+        />
+      ) : null}
       {loading ? (
         <div className={emptyLayoutClassName}>
           <div className={styles.centered}>
@@ -2429,22 +2359,7 @@ export default function KnowledgeBasesPage() {
                   </p>
                 </div>
               ) : !selected ? null : (
-                <div
-                  className={cx(
-                    styles.detailBody,
-                    dragActive && styles.detailBodyDropActive,
-                  )}
-                  onDragEnter={handleDocsDragEnter}
-                  onDragLeave={handleDocsDragLeave}
-                  onDragOver={handleDocsDragOver}
-                  onDrop={handleDocsDrop}
-                >
-                  {dragActive && canDropUpload ? (
-                    <div className={styles.dropOverlay} aria-hidden>
-                      <FileUp size={36} strokeWidth={1.75} />
-                      <span>{t("knowledgeBases.dropToUpload")}</span>
-                    </div>
-                  ) : null}
+                <div className={styles.detailBody}>
                   <div
                     className={cx(skillStyles.gridToolbar, styles.docsToolbar)}
                   >
@@ -2535,16 +2450,6 @@ export default function KnowledgeBasesPage() {
                           },
                         ]}
                       />
-                      <input
-                        ref={uploadRef}
-                        className={styles.fileInput}
-                        type="file"
-                        multiple
-                        accept={supportedDocumentTypes}
-                        onChange={(event) =>
-                          void uploadDocuments(event.target.files)
-                        }
-                      />
                       {canWriteSelected ? (
                         <Button
                           icon={<FolderPlus size={14} />}
@@ -2566,15 +2471,28 @@ export default function KnowledgeBasesPage() {
                         </Button>
                       ) : null}
                       {canWriteSelected ? (
-                        <Button
-                          type="primary"
-                          icon={<FileUp size={14} />}
-                          loading={uploadingThisBase}
-                          disabled={isAtDocumentLimit || uploadBusy}
-                          onClick={() => uploadRef.current?.click()}
+                        <Tooltip
+                          title={
+                            !deviceId
+                              ? t("knowledgeBases.importDeviceRequired")
+                              : undefined
+                          }
                         >
-                          {t("knowledgeBases.upload")}
-                        </Button>
+                          <Button
+                            type="primary"
+                            icon={<FileUp size={14} />}
+                            loading={importBusy}
+                            disabled={
+                              !deviceId ||
+                              !usable ||
+                              isAtDocumentLimit ||
+                              importBusy
+                            }
+                            onClick={requestImport}
+                          >
+                            {t("knowledgeBases.upload")}
+                          </Button>
+                        </Tooltip>
                       ) : null}
                     </div>
                   </div>
@@ -2691,32 +2609,6 @@ export default function KnowledgeBasesPage() {
                       </div>
                     ) : null}
                     <div className={styles.docsMain}>
-                      {uploadingThisBase && uploadState ? (
-                        <div
-                          className={styles.uploadProgress}
-                          aria-live="polite"
-                        >
-                          <Typography.Text
-                            className={styles.uploadProgressLabel}
-                            ellipsis={{ tooltip: uploadState.filename }}
-                          >
-                            {uploadState.total > 1
-                              ? t("knowledgeBases.uploadingMany", {
-                                  name: uploadState.filename,
-                                  index: uploadState.index,
-                                  total: uploadState.total,
-                                })
-                              : t("knowledgeBases.uploading", {
-                                  name: uploadState.filename,
-                                })}
-                          </Typography.Text>
-                          <Progress
-                            percent={uploadState.percent}
-                            size="small"
-                            status="active"
-                          />
-                        </div>
-                      ) : null}
                       {isAtDocumentLimit ? (
                         <Alert
                           className={styles.limitAlert}
@@ -3593,24 +3485,26 @@ export default function KnowledgeBasesPage() {
                 onChange={setDefaultOpenChecked}
               />
             </div>
-            <ResourceVisibilityGate allowOwner visibility={baseVisibility}>
-              <div className={styles.formOptionRowVisibility}>
-                <div className={styles.formOptionCopy}>
-                  <span className={styles.switchLabel}>
-                    {t("resourceVisibility.label")}
-                  </span>
+            {user?.role === "admin" && (
+              <ResourceVisibilityGate allowOwner visibility={baseVisibility}>
+                <div className={styles.formOptionRowVisibility}>
+                  <div className={styles.formOptionCopy}>
+                    <span className={styles.switchLabel}>
+                      {t("resourceVisibility.label")}
+                    </span>
+                  </div>
+                  <ResourceVisibilityFields
+                    allowOwner
+                    visibility={baseVisibility}
+                    groupIds={baseGroupIds}
+                    onChange={(next) => {
+                      setBaseVisibility(next.visibility);
+                      setBaseGroupIds(next.groupIds);
+                    }}
+                  />
                 </div>
-                <ResourceVisibilityFields
-                  allowOwner
-                  visibility={baseVisibility}
-                  groupIds={baseGroupIds}
-                  onChange={(next) => {
-                    setBaseVisibility(next.visibility);
-                    setBaseGroupIds(next.groupIds);
-                  }}
-                />
-              </div>
-            </ResourceVisibilityGate>
+              </ResourceVisibilityGate>
+            )}
           </div>
         </Form>
       </Drawer>
@@ -3972,6 +3866,36 @@ export default function KnowledgeBasesPage() {
           </Spin>
         ) : null}
       </Drawer>
+      {pendingImport ? (
+        <ImportConfirmation
+          grants={importGrants}
+          onCancel={() => setPendingImport(null)}
+          onConfirm={(grantId) => {
+            const pending = pendingImport;
+            setPendingImport(null);
+            if (
+              !deviceId ||
+              selected?.id !== pending.baseId ||
+              currentFolder !== pending.folder
+            )
+              return;
+            try {
+              activeImport.current = { baseId: pending.baseId, sawBusy: false };
+              setImportBusy(true);
+              sendNativeFileCommand({
+                action: "knowledge_import",
+                source_grant: grantId,
+                knowledge_base_id: pending.baseId,
+                knowledge_folder: pending.folder,
+              });
+            } catch {
+              activeImport.current = null;
+              setImportBusy(false);
+              message.error(t("knowledgeBases.importDeviceRequired"));
+            }
+          }}
+        />
+      ) : null}
       <Modal
         open={downloadProgressOpen}
         title={t("models.localDownloadProgressTitle")}

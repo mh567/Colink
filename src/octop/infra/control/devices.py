@@ -159,6 +159,36 @@ class DeviceManager:
             user, device_id, session_token, required, operation="local browser operation"
         )
 
+    def authorize_knowledge_import(
+        self, user: User, device_id: str, session_token: str, filename: str
+    ) -> None:
+        """Require the employee's connected device and existing local read grants."""
+        from pathlib import Path
+
+        required = {"knowledge_bases", "local_files_read"}
+        suffix = Path(filename).suffix.lower()
+        feature = {
+            ".docx": "local_docx",
+            ".doc": "local_docx",
+            ".wps": "local_docx",
+            ".xlsx": "local_xlsx",
+            ".xlsm": "local_xlsx",
+            ".xls": "local_xlsx",
+            ".csv": "local_xlsx",
+            ".tsv": "local_xlsx",
+            ".pptx": "local_pptx",
+            ".pdf": "local_pdf",
+            ".png": "local_ocr",
+            ".jpg": "local_ocr",
+            ".jpeg": "local_ocr",
+            ".webp": "local_ocr",
+        }.get(suffix)
+        if feature:
+            required.add(feature)
+        self._require_native_grants(
+            user, device_id, session_token, required, operation="knowledge import"
+        )
+
     def authorize_docx(
         self,
         user: User,

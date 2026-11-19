@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -44,7 +45,7 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" && request.Format != "pptx" && request.Format != "pdf" {
 		return request, errors.New("不支持的文件类型")
 	}
-	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && request.Action != "cancel" && !isDestructiveAction(request.Action) {
+	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && request.Action != "cancel" && request.Action != "knowledge_import" && !isDestructiveAction(request.Action) {
 		return request, errors.New("不支持该操作；不允许命令执行")
 	}
 	if request.Action == "revoke" && request.GrantID == "" {
@@ -196,6 +197,60 @@ func (a *App) handleDOCX(raw string) {
 		}
 		session.TaskChanged = func() { a.emitDOCX(session, nil) }
 		_, err = a.docx.run(session, request, func() error { return a.device.currentDOCX(session) })
+	case "knowledge_import":
+		state, stateErr := a.docx.state(session)
+		if stateErr != nil {
+			err = stateErr
+			return
+		}
+		if a.app == nil || a.window == nil {
+			err = errors.New("无法确认导入文件")
+			return
+		}
+		var directory string
+		for _, grant := range state.Grants {
+			if grant.ID == request.SourceGrant {
+				directory = grant.Path
+				break
+			}
+		}
+		if directory == "" {
+			err = errors.New("目录未获当前账号和设备授权")
+			return
+		}
+		sourcePath, selectErr := a.app.Dialog.OpenFile().
+			CanChooseFiles(true).CanChooseDirectories(false).
+			SetDirectory(directory).SetTitle(desktopText(session.Locale, copyKnowledgeSelectTitle)).
+			AttachToWindow(a.window).PromptForSingleSelection()
+		if selectErr != nil {
+			err = selectErr
+			return
+		}
+		if sourcePath == "" {
+			err = errors.New(desktopText(session.Locale, copyKnowledgeCancelled))
+			return
+		}
+		source, relErr := filepath.Rel(directory, sourcePath)
+		if relErr != nil || !filepath.IsLocal(source) {
+			err = errors.New(desktopText(session.Locale, copyKnowledgeOutsideDirectory))
+			return
+		}
+		dialog := a.app.Dialog.Question().
+			SetTitle(desktopText(session.Locale, copyKnowledgeConfirmTitle)).
+			SetMessage(desktopText(session.Locale, copyKnowledgeConfirmMessage, sourcePath, request.KnowledgeBaseID)).
+			AttachToWindow(a.window)
+		approved := false
+		dialog.AddButton("Yes").OnClick(func() { approved = true })
+		dialog.SetDefaultButton(dialog.AddButton("No"))
+		dialog.Show()
+		if !approved {
+			err = errors.New(desktopText(session.Locale, copyKnowledgeCancelled))
+			return
+		}
+		err = a.docx.importKnowledge(
+			session, request.SourceGrant, source, request.KnowledgeBaseID,
+			request.KnowledgeFolder, func() error { return a.device.currentDOCX(session) },
+		)
 	}
 }
 

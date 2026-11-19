@@ -100,7 +100,10 @@ class KnowledgeService:
         icon_name: str = "",
         icon_url: str = "",
         max_documents: int = MAX_DOCS_PER_KB,
+        is_admin: bool = False,
     ) -> KnowledgeBaseRow:
+        if shared and not is_admin:
+            raise PermissionError("knowledge base sharing requires an administrator")
         assert_knowledge_usable(
             self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
         )
@@ -128,8 +131,6 @@ class KnowledgeService:
     def list_visible_bases(
         self, *, actor_user_id: int, is_admin: bool = False
     ) -> list[KnowledgeBaseRow]:
-        if is_admin:
-            return cast(list[KnowledgeBaseRow], self._repo.list_all())
         return cast(list[KnowledgeBaseRow], self._repo.list_visible(actor_user_id))
 
     def update_base(
@@ -147,6 +148,8 @@ class KnowledgeService:
         is_admin: bool = False,
     ) -> KnowledgeBaseRow:
         self.require_owner(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        if shared and not is_admin:
+            raise PermissionError("knowledge base sharing requires an administrator")
         if max_documents is not None and (
             max_documents < 0 or max_documents > MAX_KB_MAX_DOCUMENTS
         ):
@@ -183,7 +186,7 @@ class KnowledgeService:
         """Return extracted plain text for a readable knowledge document."""
         self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
+        if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise LookupError("knowledge document not found")
@@ -205,7 +208,12 @@ class KnowledgeService:
 
         self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id or document.is_dir:
+        if (
+            document is None
+            or document.kb_id != kb_id
+            or document.is_dir
+            or document.status == "withdrawn"
+        ):
             raise LookupError("knowledge document not found")
         rows = open_knowledge_index(self._services, kb_id).list_doc_chunks(document.id)
         return {
@@ -224,7 +232,7 @@ class KnowledgeService:
         """
         self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
+        if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise LookupError("knowledge document not found")
@@ -235,7 +243,7 @@ class KnowledgeService:
 
     def document_has_original(self, document: KnowledgeDocumentRow) -> bool:
         """True when the uploaded original still exists."""
-        if document.is_dir:
+        if document.is_dir or document.status == "withdrawn":
             return False
         return self._blobs().exists(document.kb_id, document.id, document.filename)
 
@@ -245,7 +253,7 @@ class KnowledgeService:
         """Return raw UTF-8 text for an editable md/txt knowledge document."""
         self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
+        if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise LookupError("knowledge document not found")
@@ -315,7 +323,7 @@ class KnowledgeService:
         )
         self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
+        if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise LookupError("knowledge document not found")
@@ -342,7 +350,7 @@ class KnowledgeService:
         self, kb_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> KnowledgeBaseRow:
         base = self._require_base(kb_id)
-        if is_admin or base.owner_user_id == actor_user_id:
+        if base.owner_user_id == actor_user_id:
             return base
         if base.shared:
             from octop.infra.users.groups import RESOURCE_KNOWLEDGE_BASE, GroupAccess
@@ -362,7 +370,7 @@ class KnowledgeService:
         self, kb_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> KnowledgeBaseRow:
         base = self._require_base(kb_id)
-        if is_admin or base.owner_user_id == actor_user_id:
+        if base.owner_user_id == actor_user_id:
             return base
         raise PermissionError("knowledge base write access is required")
 
@@ -370,7 +378,7 @@ class KnowledgeService:
         self, kb_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> KnowledgeBaseRow:
         base = self._require_base(kb_id)
-        if is_admin or base.owner_user_id == actor_user_id:
+        if base.owner_user_id == actor_user_id:
             return base
         raise PermissionError("knowledge base owner access is required")
 
@@ -427,12 +435,27 @@ class KnowledgeService:
         document = self._repo.get_document(doc_id)
         if document is None or document.kb_id != kb_id:
             raise LookupError("knowledge document not found")
-        removed = self._repo.delete_document(doc_id)
-        for row in removed:
-            if row.is_dir:
-                continue
-            open_knowledge_index(self._services, kb_id).delete_doc(row.id)
-            self._blobs().delete(kb_id, row.id, row.filename)
+        from octop.infra.knowledge.jobs import index_commit_lock
+
+        with index_commit_lock:
+            rows = (
+                [
+                    row
+                    for row in self._repo.list_documents(kb_id)
+                    if row.id == doc_id or row.path.startswith(f"{document.path}/")
+                ]
+                if document.is_dir
+                else [document]
+            )
+            for row in rows:
+                if not row.is_dir:
+                    self._repo.update_document(row.id, status="withdrawn", error_message="")
+            for row in rows:
+                if row.is_dir:
+                    continue
+                open_knowledge_index(self._services, kb_id).delete_doc(row.id)
+                self._blobs().delete(kb_id, row.id, row.filename)
+            self._repo.delete_document(doc_id)
 
     def reindex_document(
         self, kb_id: str, doc_id: str, *, actor_user_id: int, is_admin: bool = False
@@ -442,7 +465,7 @@ class KnowledgeService:
         )
         self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
+        if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise ValueError("folders cannot be reindexed")
@@ -464,7 +487,7 @@ class KnowledgeService:
         """Rename a document (file or folder), rewriting descendant paths for folders."""
         self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
+        if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         cleaned = (new_name or "").strip()
         if not cleaned or "/" in cleaned or "\\" in cleaned:
@@ -481,18 +504,21 @@ class KnowledgeService:
 
     def delete_base(self, kb_id: str, *, actor_user_id: int, is_admin: bool = False) -> None:
         self.require_owner(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
-        database = postgres_database(self._services)
-        if database is not None:
-            from octop.infra.knowledge.pg_index import PgVectorKnowledgeIndex
+        from octop.infra.knowledge.jobs import index_commit_lock
 
-            PgVectorKnowledgeIndex(kb_id, database).delete_kb()
-        self._repo.delete_base(kb_id)
+        with index_commit_lock:
+            database = postgres_database(self._services)
+            if database is not None:
+                from octop.infra.knowledge.pg_index import PgVectorKnowledgeIndex
+
+                PgVectorKnowledgeIndex(kb_id, database).delete_kb()
+            self._repo.delete_base(kb_id)
+            self._blobs().delete_base(kb_id)
         from octop.infra.users.groups import RESOURCE_KNOWLEDGE_BASE, GroupAccess
 
         repos = getattr(self._services, "repos", None)
         if repos is not None:
             GroupAccess(repos).clear(RESOURCE_KNOWLEDGE_BASE, kb_id)
-        self._blobs().delete_base(kb_id)
 
     def _blobs(self) -> KnowledgeBlobs:
         return KnowledgeBlobs.from_services(self._services)

@@ -52,18 +52,20 @@ type docxSession struct {
 func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s.UserID, s.DeviceID) }
 
 type docxRequest struct {
-	RequestID   string `json:"request_id,omitempty"`
-	TaskID      string `json:"task_id,omitempty"`
-	GrantID     string `json:"grant_id,omitempty"`
-	AgentID     string `json:"agent_id,omitempty"`
-	Format      string `json:"format,omitempty"`
-	Action      string `json:"action"`
-	Mode        string `json:"mode,omitempty"`
-	SourceGrant string `json:"source_grant,omitempty"`
-	Source      string `json:"source,omitempty"`
-	OutputGrant string `json:"output_grant,omitempty"`
-	Output      string `json:"output,omitempty"`
-	Instruction string `json:"instruction,omitempty"`
+	RequestID       string `json:"request_id,omitempty"`
+	TaskID          string `json:"task_id,omitempty"`
+	GrantID         string `json:"grant_id,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
+	Format          string `json:"format,omitempty"`
+	Action          string `json:"action"`
+	Mode            string `json:"mode,omitempty"`
+	SourceGrant     string `json:"source_grant,omitempty"`
+	Source          string `json:"source,omitempty"`
+	OutputGrant     string `json:"output_grant,omitempty"`
+	Output          string `json:"output,omitempty"`
+	Instruction     string `json:"instruction,omitempty"`
+	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+	KnowledgeFolder string `json:"knowledge_folder,omitempty"`
 }
 type directoryGrant struct {
 	ID          string `json:"id"`

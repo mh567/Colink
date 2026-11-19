@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from dataclasses import asdict
@@ -51,6 +52,7 @@ from octop.infra.knowledge.ocr import (
     validate_ocr_settings,
 )
 from octop.infra.knowledge.params import set_embedding_limits
+from octop.infra.knowledge.plane import pgvector_available
 from octop.infra.knowledge.service import (
     MAX_BASES_PER_OWNER,
     MAX_DOCS_PER_KB,
@@ -358,7 +360,7 @@ def _enable_onnx_service(server: OctopServer, model: str) -> None:
     )
 
 
-def _require_usable(server: OctopServer, request: Request) -> None:
+async def _require_usable(server: OctopServer, request: Request) -> None:
     assert server.services is not None
     try:
         assert_knowledge_usable(server.services.settings_repo.get, server.services.provider_repo)
@@ -366,11 +368,19 @@ def _require_usable(server: OctopServer, request: Request) -> None:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
+    if not await asyncio.to_thread(pgvector_available, server.services):
+        raise OctopError.localized(
+            ErrorCode.KNOWLEDGE_VECTOR_UNAVAILABLE, resolve_request_locale(request)
+        )
 
 
-def _capability_payload(server: OctopServer) -> dict[str, Any]:
+async def _capability_payload(server: OctopServer) -> dict[str, Any]:
     assert server.services is not None
     payload = get_capability(server.services.settings_repo.get, server.services.provider_repo)
+    vector_available = await asyncio.to_thread(pgvector_available, server.services)
+    payload["checks"]["vector_available"] = vector_available
+    payload["prerequisites_ok"] = payload["prerequisites_ok"] and vector_available
+    payload["usable"] = payload["usable"] and vector_available
     payload["ocr"] = get_ocr_capability(
         server.services.settings_repo.get, server.services.provider_repo
     )
@@ -387,7 +397,7 @@ async def capability(
     server: OctopServer = Depends(get_server),
     _user: User = Depends(current_user),
 ) -> dict[str, Any]:
-    return _capability_payload(server)
+    return await _capability_payload(server)
 
 
 @router.get("/embedding-options", summary="List knowledge embedding backend options")
@@ -523,7 +533,7 @@ async def put_feature(
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
-    capability = _capability_payload(server)
+    capability = await _capability_payload(server)
     if body.enabled and selected_backend == "onnx":
         selected_model = str(capability.get("selected_model") or "").strip()
         if selected_model:
@@ -617,7 +627,7 @@ async def create_base(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         access = _group_access(server)
         if body.visibility is not None and access is not None:
             access.validate_visibility(body.visibility, body.group_ids)
@@ -636,6 +646,7 @@ async def create_base(
             icon_name=body.icon_name.strip(),
             icon_url=body.icon_url.strip(),
             max_documents=body.max_documents if body.max_documents is not None else MAX_DOCS_PER_KB,
+            is_admin=_is_admin(user),
         )
         if body.visibility is not None and access is not None:
             access.set_visibility(
@@ -906,7 +917,7 @@ async def create_text_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         document = _knowledge_service(server).create_text_document(
             kb_id,
             actor_user_id=user.id,
@@ -942,11 +953,23 @@ async def upload_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        server.device_manager.authorize_knowledge_import(
+            user,
+            request.headers.get("X-Colink-Device-Id", ""),
+            request.headers.get("X-Colink-Device-Session", ""),
+            upload.filename or "",
+        )
+        await _require_usable(server, request)
         content = await read_upload_capped(
             upload,
             max_bytes=_max_upload_bytes(server),
             code=ErrorCode.KNOWLEDGE_DOC_TOO_LARGE,
+        )
+        server.device_manager.authorize_knowledge_import(
+            user,
+            request.headers.get("X-Colink-Device-Id", ""),
+            request.headers.get("X-Colink-Device-Session", ""),
+            upload.filename or "",
         )
         document = _knowledge_service(server).upload_document(
             kb_id,
@@ -1073,7 +1096,7 @@ async def update_text_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         document = _knowledge_service(server).update_text_document(
             kb_id,
             doc_id,
@@ -1149,7 +1172,7 @@ async def reindex_document(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> dict[str, Any]:
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         document = _knowledge_service(server).reindex_document(
             kb_id, doc_id, actor_user_id=user.id, is_admin=_is_admin(user)
         )
@@ -1170,7 +1193,7 @@ async def reindex_base(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> dict[str, int]:
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         service = _knowledge_service(server)
         service.get_writable_base(kb_id, actor_user_id=user.id, is_admin=_is_admin(user))
         documents = [
@@ -1178,7 +1201,7 @@ async def reindex_base(
             for document in service.list_documents(
                 kb_id, actor_user_id=user.id, is_admin=_is_admin(user)
             )
-            if not document.is_dir
+            if not document.is_dir and document.status != "withdrawn"
         ]
         assert server.services is not None
         for document in documents:

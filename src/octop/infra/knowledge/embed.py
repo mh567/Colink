@@ -81,10 +81,20 @@ async def embed_intranet_knowledge_query(
     services: Any, query: str, *, authorize: Callable[[], None] | None = None
 ) -> list[list[float]]:
     """Embed one report query locally or through a pinned intranet endpoint."""
+    return await _embed_intranet_texts(services, [query], authorize=authorize)
+
+
+def embed_intranet_knowledge_texts(services: Any, texts: list[str]) -> list[list[float]]:
+    """Embed index chunks without sending them outside the intranet."""
+    return asyncio.run(_embed_intranet_texts(services, texts))
+
+
+async def _embed_intranet_texts(
+    services: Any, texts: list[str], *, authorize: Callable[[], None] | None = None
+) -> list[list[float]]:
     settings = services.settings_repo
     backend = (settings.get("knowledge_embedding_backend") or "onnx").strip().lower()
     model = (settings.get("knowledge_embedding_model") or "").strip()
-    texts = [query]
     if backend != "remote":
         if authorize:
             authorize()
@@ -96,7 +106,7 @@ async def embed_intranet_knowledge_query(
             if authorize:
                 authorize()
 
-    base, headers, _ = _remote_embedding_request(services, texts)
+    base, headers, batch_size = _remote_embedding_request(services, texts)
     try:
         host, pin_ip = await ssrf_guard.resolve_intranet_endpoint(base)
         async with httpx.AsyncClient(
@@ -105,22 +115,32 @@ async def embed_intranet_knowledge_query(
             trust_env=False,
             timeout=60.0,
         ) as client:
-            if authorize:
-                authorize()
-            try:
-                response = await client.post(
-                    f"{base}/embeddings",
-                    headers=headers,
-                    json={"model": model, "input": texts},
-                )
-            finally:
+            vectors: list[list[float]] = []
+            for start in range(0, len(texts), batch_size):
+                batch = texts[start : start + batch_size]
                 if authorize:
                     authorize()
+                try:
+                    response = await client.post(
+                        f"{base}/embeddings",
+                        headers=headers,
+                        json={"model": model, "input": batch},
+                    )
+                finally:
+                    if authorize:
+                        authorize()
+                vectors.extend(
+                    parse_embedding_response(
+                        _embedding_payload(response),
+                        len(batch),
+                        expected_dimension=len(vectors[0]) if vectors else None,
+                    )
+                )
     except (ValueError, httpx.InvalidURL, httpx.RequestError):
         raise KnowledgeEmbeddingError(
             "intranet knowledge embedding service is unavailable"
         ) from None
-    return parse_embedding_response(_embedding_payload(response), 1)
+    return vectors
 
 
 def _remote_embedding_request(services: Any, texts: list[str]) -> tuple[str, dict[str, str], int]:

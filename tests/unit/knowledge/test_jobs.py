@@ -116,6 +116,35 @@ def test_process_document_indexes_chunks_and_marks_ready(
     assert KnowledgeIndex(kb.id).search([1.0, 0.0], 1)[0].doc_id == doc.id
 
 
+def test_removal_during_embedding_does_not_restore_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from octop.infra.knowledge.service import KnowledgeService
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    kb = repo.create_base(owner_user_id=owner, name="Private")
+    doc = repo.create_document(
+        kb_id=kb.id, filename="sample.txt", content_type="text/plain", byte_size=6
+    )
+    write_document(kb.id, doc.id, doc.filename, b"secret")
+    services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    monkeypatch.setattr(jobs, "assert_knowledge_usable", lambda *_args: None)
+
+    def remove_during_embedding(*_args):
+        KnowledgeService(services).delete_document(kb.id, doc.id, actor_user_id=owner)
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(jobs, "embed_knowledge_texts", remove_during_embedding)
+    jobs.process_document(services, kb.id, doc.id)
+
+    assert repo.get_document(doc.id) is None
+    assert KnowledgeIndex(kb.id).list_doc_chunks(doc.id) == []
+
+
 def test_process_document_indexes_ocr_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
     pool = SqlitePool(tmp_path / "octop.db")

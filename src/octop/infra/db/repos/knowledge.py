@@ -466,7 +466,7 @@ class KnowledgeRepo:
             conn.execute(
                 "UPDATE knowledge_documents "
                 "SET status = 'pending', error_message = '', chunk_count = 0, updated_at = ? "
-                "WHERE is_dir = 0",
+                "WHERE is_dir = 0 AND status != 'withdrawn'",
                 (ts,),
             )
             rows = conn.execute(

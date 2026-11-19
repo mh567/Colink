@@ -446,6 +446,12 @@ an optional display label; when omitted, the server derives one from
 
 向量结果校验索引、有限数值、非空与维度一致性；库内维度变更不能静默混入旧索引，需走已有重建流程。索引任务失败持久化为失败状态；检索服务/索引异常明确反馈知识库故障，普通聊天继续可用，不转为全文搜索或伪装无匹配资料。
 
+PostgreSQL 模式下，`capability.checks.vector_available` 表示数据库中的 vector 类型是否可用；不可用时 `usable` 为 `false`，创建和导入等操作返回 `KNOWLEDGE_VECTOR_UNAVAILABLE`。扩展由运维准备，不由应用创建。
+
+私人知识库仅所属用户可访问和修改，管理员身份不授予读取其他用户私人库的权限。普通员工不能通过创建或更新接口将知识库设为共享；共享库的发布和管理遵循管理员权限。知识库列表、原文、预览和检索均按当前用户的访问范围过滤。
+
+`POST /knowledge-bases/{id}/documents` 要求本人在线且获准的设备会话：请求头 `X-Colink-Device-Id` 和 `X-Colink-Device-Session` 必须匹配当前用户，并具备知识库、本机文件读取及适用文件类型的权限。桌面端通过 `POST /devices/{device_id}/knowledge/authorize` 在读取前检查权限，再从本人已授权目录读取；服务端在接收完成后再次核对设备权限。资料撤回清理失败时保留 `withdrawn` 状态，可重试移除，原文预览和下载不再开放。
+
 本轮真实内网聊天、流式、工具调用、embedding 维度/配额与 PostgreSQL/pgvector 服务联测留待最终验收。受控测试不代表这些项目已通过；测试配置、启用状态及最近结果均持久化在原有数据库，不新增推理或向量服务。
 
 ## Models

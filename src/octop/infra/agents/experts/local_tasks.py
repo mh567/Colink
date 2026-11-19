@@ -135,7 +135,7 @@ async def local_expert_context(
                 query=instruction,
                 knowledge_base_ids=config.knowledge_base_ids,
                 locale=user.locale,
-                intranet_only=format in {"pptx", "pdf"},
+                intranet_only=True,
                 authorize=authorize,
             )
         except RuntimeError:

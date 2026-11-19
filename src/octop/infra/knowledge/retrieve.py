@@ -82,13 +82,10 @@ def _retrieve_context_sync(
     if not query_vectors:
         return ""
 
-    visible = visible_bases
-    if visible is None:
-        visible = (
-            services.knowledge_repo.list_all()
-            if is_admin
-            else services.knowledge_repo.list_visible(user_id)
-        )
+    visible = services.knowledge_repo.list_visible(user_id)
+    if visible_bases is not None:
+        requested = {base.id for base in visible_bases}
+        visible = [base for base in visible if base.id in requested]
     visible_by_id = {base.id: base for base in visible}
     selected_ids = _unique_ids(knowledge_base_ids)
 
