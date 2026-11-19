@@ -116,6 +116,13 @@ class DeviceManager:
         if self._connections.get(connection.device_id) is connection:
             self._connections.pop(connection.device_id)
 
+    def disconnect_user(self, user_id: int) -> None:
+        to_remove = [
+            dev_id for dev_id, conn in self._connections.items() if conn.user_id == user_id
+        ]
+        for dev_id in to_remove:
+            self._connections.pop(dev_id, None)
+
     def _require_native_grants(
         self,
         user: User,
@@ -136,6 +143,7 @@ class DeviceManager:
             or not self.is_online(row)
             or not secrets.compare_digest(connection.session_token.encode(), session_token.encode())
             or employee is None
+            or bool(employee.disabled)
             or not required.issubset(employee.permissions)
         ):
             raise OctopError(ErrorCode.FORBIDDEN, f"{operation} not authorized")

@@ -271,6 +271,16 @@ export default function LocalDocxPanel({
       }
     >
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
+        {!connected && (
+          <Alert
+            type="warning"
+            showIcon
+            message={t(
+              "localDocx.deviceDisconnected",
+              "设备连接已断开，受控操作已暂停。请在上方重新接入设备。",
+            )}
+          />
+        )}
         <div>
           <label htmlFor={`${id}-format`}>
             {t("localDocx.format", "文件类型")}

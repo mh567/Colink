@@ -443,7 +443,9 @@ async def _batch_apply_one(
             await server.user_manager.enable(row.username)
         elif action == "disable":
             await server.user_manager.disable(row.username)
+            server.device_manager.disconnect_user(row.id)
         elif action == "delete":
+            server.device_manager.disconnect_user(row.id)
             registry = getattr(getattr(server, "app_runtime", None), "agent_registry", None)
             await server.user_manager.remove(row.username, agent_manager=registry)
         elif action == "set_token_quota":
@@ -587,6 +589,7 @@ async def patch_user(
         await server.user_manager.set_email(row.username, body.email)
     if body.disabled is True:
         await server.user_manager.disable(row.username)
+        server.device_manager.disconnect_user(row.id)
     elif body.disabled is False:
         await server.user_manager.enable(row.username)
     if body.permissions is not None:
@@ -649,6 +652,7 @@ async def reset_password(
     if row is None:
         raise OctopError(ErrorCode.NOT_FOUND, "user not found")
     await server.user_manager.reset_password(row.username, body.new_password)
+    server.device_manager.disconnect_user(row.id)
 
 
 @router.delete("/{user_id}", status_code=204)
@@ -662,6 +666,7 @@ async def delete_user(
     row = server.user_manager.get_row(user_id)
     if row is None:
         raise OctopError(ErrorCode.NOT_FOUND, "user not found")
+    server.device_manager.disconnect_user(row.id)
     registry = getattr(getattr(server, "app_runtime", None), "agent_registry", None)
     await server.user_manager.remove(row.username, agent_manager=registry)
 

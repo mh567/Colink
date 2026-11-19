@@ -860,3 +860,16 @@ it("displays failure reason, completed steps and retains artifact on failed task
   expect(screen.getByText("可用产物：")).toBeInTheDocument();
   expect(screen.getByText("/成果/可用产物.docx")).toBeInTheDocument();
 });
+
+it("displays warning alert and disables operations when device connection is disconnected", async () => {
+  (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+  await act(async () => {
+    render(<LocalDocxPanel deviceId="mine" connected={false} />);
+  });
+  expect(
+    screen.getByText("设备连接已断开，受控操作已暂停。请在上方重新接入设备。"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "生成 DOCX" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "选择只读目录" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "选择读写目录" })).toBeDisabled();
+});

@@ -7514,6 +7514,7 @@
     }
   },
   "localDocx": {
+    "deviceDisconnected": "Device connection lost. Controlled operations are paused. Reconnect above.",
     "title": "Local document tasks",
     "privacy": "Original files stay on this computer. Text from the selected document is sent through the server to the configured model. Create tasks stop if a file with the same name exists.",
     "deletePrivacy": "Delete one file from the target folder.",
