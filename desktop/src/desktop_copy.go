@@ -54,6 +54,7 @@ const (
 	copyFileInvalidPath             = "file.invalid_path"
 	copyFilePathTooLong             = "file.path_too_long"
 	copyFileConfirmationUnavailable = "file.confirmation_unavailable"
+	copyFileNotConfirmed            = "file.not_confirmed"
 	copyFileCheckResult             = "file.check_result"
 	copyFileCheckBackup             = "file.check_backup"
 	copyFileIntentChanged           = "file.intent_changed"
@@ -121,6 +122,7 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileInvalidPath:             "Choose a path without control characters.",
 		copyFilePathTooLong:             "Shorten the path and try again.",
 		copyFileConfirmationUnavailable: "Open the desktop window and try again.",
+		copyFileNotConfirmed:            "Confirmation was not obtained. Check the system prompt and try again.",
 		copyFileCheckResult:             "Check the target file before starting a new task.",
 		copyFileCheckBackup:             "Check the target and this backup path: %s",
 		copyFileIntentChanged:           "The operation or target changed. Start a new task to confirm it.",
@@ -186,6 +188,7 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileInvalidPath:             "请选择不含控制字符的路径。",
 		copyFilePathTooLong:             "请缩短路径后重试。",
 		copyFileConfirmationUnavailable: "请打开桌面窗口后重试。",
+		copyFileNotConfirmed:            "未获确认。请检查系统提示后重试。",
 		copyFileCheckResult:             "请核对目标文件后再新建任务。",
 		copyFileCheckBackup:             "请核对目标文件和此备份路径：%s",
 		copyFileIntentChanged:           "操作或目标已改变，请新建任务并确认。",

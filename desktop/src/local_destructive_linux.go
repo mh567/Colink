@@ -233,6 +233,8 @@ func linuxFileopsError(err error) error {
 	switch busError.Name {
 	case fileops.CancelError:
 		return errDestructiveCancelled
+	case fileops.NotConfirmedError:
+		return fileopsCopyError(copyFileNotConfirmed)
 	case fileops.ChangedError:
 		return errDestructiveTargetChanged
 	case fileops.ExistsError:

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useDesktopChrome } from "../hooks/useDesktopChrome";
 import {
   applyDesktopChrome,
   CHROME_END_PAD_ATTR,
@@ -33,6 +35,19 @@ describe("desktopChrome", () => {
     expect(
       isDesktopShell({ _wails: { invoke: () => undefined } } as Window),
     ).toBe(true);
+  });
+
+  it("announces the remote dashboard is ready for desktop callbacks", () => {
+    const invoke = vi.fn();
+    Object.defineProperty(window, "_wails", {
+      configurable: true,
+      value: { invoke },
+    });
+
+    const { unmount } = renderHook(() => useDesktopChrome());
+    expect(invoke).toHaveBeenCalledWith("wails:runtime:ready");
+    unmount();
+    delete (window as Window & { _wails?: unknown })._wails;
   });
 
   it("uses traffic-light chrome on macOS user agents", () => {
