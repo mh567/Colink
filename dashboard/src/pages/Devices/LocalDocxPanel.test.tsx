@@ -732,3 +732,131 @@ it("revokes a directory while a task is running", async () => {
   });
   expect(screen.getByText("无法连接任务服务")).toBeInTheDocument();
 });
+
+it("distinguishes execution, awaiting confirmation, completed, failed, cancelled, and needs check statuses", async () => {
+  (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+  render(<LocalDocxPanel deviceId="mine" />);
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [],
+          tasks: [
+            {
+              id: "t1",
+              status: "running",
+              instruction: "任务1",
+              output: "out1.docx",
+            },
+            {
+              id: "t2",
+              status: "awaiting_confirmation",
+              instruction: "任务2",
+              output: "out2.docx",
+            },
+            {
+              id: "t3",
+              status: "completed",
+              instruction: "任务3",
+              output: "out3.docx",
+            },
+            {
+              id: "t4",
+              status: "failed",
+              error: "生成失败",
+              instruction: "任务4",
+              output: "out4.docx",
+            },
+            {
+              id: "t5",
+              status: "cancelled",
+              instruction: "任务5",
+              output: "out5.docx",
+            },
+            {
+              id: "t6",
+              status: "interrupted",
+              instruction: "任务6",
+              output: "out6.docx",
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  expect(screen.getByText("处理中")).toBeInTheDocument();
+  expect(screen.getByText("等待确认")).toBeInTheDocument();
+  expect(screen.getByText("已完成")).toBeInTheDocument();
+  expect(screen.getByText("失败")).toBeInTheDocument();
+  expect(screen.getByText("已取消")).toBeInTheDocument();
+  expect(screen.getByText("需要核对")).toBeInTheDocument();
+});
+
+it("allows cancelling running task and awaiting confirmation task", async () => {
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  const user = userEvent.setup();
+  render(<LocalDocxPanel deviceId="mine" />);
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: true,
+          grants: [],
+          tasks: [
+            {
+              id: "run-1",
+              status: "running",
+              instruction: "进行中任务",
+              output: "out.docx",
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  const cancelBtn = screen.getByRole("button", { name: "取消任务" });
+  await user.click(cancelBtn);
+  const command = JSON.parse(
+    decodeURIComponent(invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1]),
+  );
+  expect(command).toEqual({ action: "cancel", task_id: "run-1" });
+});
+
+it("displays failure reason, completed steps and retains artifact on failed task", async () => {
+  (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+  render(<LocalDocxPanel deviceId="mine" />);
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [],
+          tasks: [
+            {
+              id: "fail-1",
+              status: "failed",
+              error: "模型服务异常",
+              instruction: "生成文档",
+              output: "/成果/可用产物.docx",
+              steps: ["已读取源文件", "已完成文本整理"],
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  expect(screen.getByText("失败")).toBeInTheDocument();
+  expect(screen.getByText("模型服务异常")).toBeInTheDocument();
+  expect(screen.getByText("已读取源文件")).toBeInTheDocument();
+  expect(screen.getByText("已完成文本整理")).toBeInTheDocument();
+  expect(screen.getByText("可用产物：")).toBeInTheDocument();
+  expect(screen.getByText("/成果/可用产物.docx")).toBeInTheDocument();
+});

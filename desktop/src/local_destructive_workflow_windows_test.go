@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -106,7 +107,7 @@ func TestLocalFileOverwritePersistsAndReplaysTheConfirmedDocument(t *testing.T) 
 			}
 			restarted := newLocalDOCX(worker.home)
 			replay, err := restarted.run(session, request, current)
-			if err != nil || replay != task {
+			if err != nil || !reflect.DeepEqual(replay, task) {
 				t.Fatalf("replayed result: %+v, %v", replay, err)
 			}
 			if result, readErr = os.ReadFile(path); readErr != nil || !bytes.Equal(result, original) {
@@ -144,6 +145,7 @@ func TestLocalFileOverwriteStopsAfterSourceGrantRevoke(t *testing.T) {
 	}
 	session := docxSession{Base: server.URL, DeviceID: "device", UserID: 1, Secret: "secret", Context: context.Background()}
 	worker := newLocalDOCX(t.TempDir())
+	defer worker.close()
 	sourceGrant, err := worker.grant(session, sourceDir, "ro")
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +292,7 @@ func TestLocalFileDeleteReplayReturnsResultWithoutDeletingReplacement(t *testing
 	restarted := newLocalDOCX(worker.home)
 	restarted.confirmDestructive = worker.confirmDestructive
 	replay, err := restarted.run(session, request, current)
-	if err != nil || replay != task || prompts != 1 {
+	if err != nil || !reflect.DeepEqual(replay, task) || prompts != 1 {
 		t.Fatalf("replay: %+v, confirmations=%d, err=%v", replay, prompts, err)
 	}
 	request.Output = "other.docx"

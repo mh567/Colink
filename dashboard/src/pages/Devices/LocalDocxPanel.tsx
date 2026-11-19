@@ -35,6 +35,8 @@ interface LocalTask {
   operation?: Operation;
   status: string;
   error?: string;
+  recovery?: string;
+  steps?: string[];
 }
 interface NativeState {
   device_id: string;
@@ -141,7 +143,9 @@ export default function LocalDocxPanel({
     setState((previous) => ({ ...previous, busy: true, error: undefined }));
     try {
       send(
-        format !== "docx" && command.action !== "revoke"
+        format !== "docx" &&
+          command.action !== "revoke" &&
+          command.action !== "cancel"
           ? { ...command, format }
           : command,
       );
@@ -168,7 +172,15 @@ export default function LocalDocxPanel({
     completed: t("localDocx.completed", "已完成"),
     cancelled: t("localDocx.cancelled", "已取消"),
     failed: t("localDocx.failed", "失败"),
-    interrupted: t("localDocx.interrupted", "已中断"),
+    interrupted: t("localDocx.interrupted", "需要核对"),
+  };
+  const statusColors: Record<string, string> = {
+    running: "processing",
+    awaiting_confirmation: "warning",
+    completed: "success",
+    failed: "error",
+    cancelled: "default",
+    interrupted: "volcano",
   };
   const operations: Record<Operation, string> = {
     run: t("localDocx.createOperation", "生成新文件"),
@@ -623,32 +635,132 @@ export default function LocalDocxPanel({
                     paddingTop: 12,
                   }}
                 >
-                  <Tag
-                    color={
-                      task.status === "completed"
-                        ? "success"
-                        : task.status === "failed"
-                        ? "error"
-                        : "processing"
-                    }
-                  >
-                    {statuses[task.status] ?? task.status}
-                  </Tag>
-                  <Tag>{(task.format ?? "docx").toUpperCase()}</Tag>
-                  {task.operation && task.operation !== "run" && (
-                    <Tag>{operations[task.operation]}</Tag>
-                  )}
-                  <Typography.Text strong>{task.instruction}</Typography.Text>
+                  <Space wrap align="center" style={{ marginBottom: 4 }}>
+                    <Tag color={statusColors[task.status] ?? "default"}>
+                      {statuses[task.status] ?? task.status}
+                    </Tag>
+                    <Tag>{(task.format ?? "docx").toUpperCase()}</Tag>
+                    {task.operation && task.operation !== "run" && (
+                      <Tag>{operations[task.operation]}</Tag>
+                    )}
+                    {(task.status === "running" ||
+                      task.status === "awaiting_confirmation") && (
+                      <Button
+                        size="small"
+                        danger
+                        disabled={!connected}
+                        onClick={() =>
+                          dispatch({ action: "cancel", task_id: task.id })
+                        }
+                      >
+                        {t("localDocx.cancelTask", "取消任务")}
+                      </Button>
+                    )}
+                  </Space>
                   <div>
-                    <Typography.Text type="secondary">
-                      {task.source}
-                    </Typography.Text>
+                    <Typography.Text strong>{task.instruction}</Typography.Text>
                   </div>
-                  <Typography.Text style={{ overflowWrap: "anywhere" }}>
-                    {task.output}
-                  </Typography.Text>
-                  {task.error && (
-                    <Alert type="error" message={errorMessage(task.error)} />
+                  {task.source && (
+                    <div>
+                      {!task.output &&
+                        (task.status === "failed" ||
+                          task.status === "cancelled") && (
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12, marginRight: 4 }}
+                          >
+                            {t("localDocx.retainedArtifact", "可用产物：")}
+                          </Typography.Text>
+                        )}
+                      <Typography.Text type="secondary">
+                        {task.source}
+                      </Typography.Text>
+                    </div>
+                  )}
+                  {task.output && (
+                    <div>
+                      {(task.status === "failed" ||
+                        task.status === "cancelled") && (
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12, marginRight: 4 }}
+                        >
+                          {t("localDocx.retainedArtifact", "可用产物：")}
+                        </Typography.Text>
+                      )}
+                      <Typography.Text style={{ overflowWrap: "anywhere" }}>
+                        {task.output}
+                      </Typography.Text>
+                    </div>
+                  )}
+                  {task.status === "cancelled" && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message={t(
+                        "localDocx.cancelledHint",
+                        "任务已取消，未继续后续动作；已保留可用产物。",
+                      )}
+                    />
+                  )}
+                  {task.status === "awaiting_confirmation" && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message={t(
+                        "localDocx.awaitingHint",
+                        "任务待确认：待确认动作不会自动执行，请在本机弹窗确认，或取消任务后重新发起。",
+                      )}
+                    />
+                  )}
+                  {task.status === "interrupted" && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message={
+                        task.error
+                          ? errorMessage(task.error)
+                          : t(
+                              "localDocx.interruptedHint",
+                              "任务中断或结果不明，已保留已有文件，请核对目标文件后重试。",
+                            )
+                      }
+                    />
+                  )}
+                  {task.status === "failed" && task.error && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message={errorMessage(task.error)}
+                    />
+                  )}
+                  {task.steps && task.steps.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <Typography.Text
+                        type="secondary"
+                        style={{ fontSize: 12 }}
+                      >
+                        {t("localDocx.completedSteps", "已完成步骤：")}
+                      </Typography.Text>
+                      <ul
+                        style={{
+                          margin: "2px 0 0 16px",
+                          padding: 0,
+                          fontSize: 12,
+                          color: token.colorTextSecondary,
+                        }}
+                      >
+                        {task.steps.map((st, idx) => (
+                          <li key={idx}>
+                            {t(`localDocx.stepLabels.${st}`, st)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </div>
               ))}
