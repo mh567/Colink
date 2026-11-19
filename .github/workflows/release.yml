@@ -1,6 +1,6 @@
 name: Release
 
-# 版本标签 v* → 测包、发 PyPI、建 GitHub Release，再级联：
+# 版本标签 v* → 构建、发 PyPI、建 GitHub Release，再级联：
 #   - Sync Main Into Develop
 #   - Build Octop FPK（复用本 Release 的 wheel；等待 docker-publish 的多架构 GHCR 镜像）
 #
@@ -50,9 +50,6 @@ jobs:
 
       - name: Install dependencies
         run: make install
-
-      - name: Run tests
-        run: make test
 
       - name: Build package
         run: make build

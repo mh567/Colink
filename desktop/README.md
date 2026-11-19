@@ -25,10 +25,10 @@ From repo root:
 make -f desktop/portable/Makefile green
 ```
 
-CI: `.github/workflows/octop-desktop.yml` builds native platform/arch variants.
-`v*` tags and `workflow_dispatch` (platforms=`all`) run all six; pull requests
-that touch `desktop/` build `darwin-*` and `windows-*` (amd64 + arm64). Each job
-first creates the green zip and then packages the matching Wails application.
+The [desktop release workflow](../.github/workflows/octop-desktop.yml) builds
+all six native variants for `v*` tags or a manual run with `platforms=all`.
+Each job creates the green zip and packages the matching Wails application.
+Use the [local verification steps](portable/README.md#本机验证) before release.
 
 ## Build a complete desktop release
 
@@ -44,8 +44,8 @@ desktop/package-release.sh darwin-arm64 --reuse-portable
 
 Rebuild without `--reuse-portable` if the archive's presentation or browser worker differs from the current checkout.
 
-Wails requires native packaging, so all six variants are produced by the CI
-matrix on macOS, Linux, and Windows runners rather than cross-compiled locally.
+Wails requires native packaging. The release workflow uses macOS, Linux, and
+Windows runners for their respective variants.
 Windows packaging also needs [NSIS](https://nsis.sourceforge.io/) (`makensis`)
 so the `.exe` is an installer rather than a portable single-file binary.
 

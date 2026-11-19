@@ -249,7 +249,7 @@ assemble_one() {
     "${REPO_ROOT}/scripts/strip_restricted_skills.py" "${staging}/packages"
 
   if supports_local_ocr "$plat"; then
-    "$install_python" "${REPO_ROOT}/desktop/ocr/prepare.py" "$staging" --python "$install_python"
+    "$install_python" "${REPO_ROOT}/desktop/ocr/prepare.py" "$staging"
   fi
 
   local worker

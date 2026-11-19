@@ -62,8 +62,7 @@ def test_docker_publish_still_builds_arm64() -> None:
     assert "ubuntu-24.04-arm" in text
     assert "A package on the missing CPU will not run." in text
     assert "until both amd64 and arm64 exist" in text
-    boot = text.index("test_docker_image_runs_on_this_cpu_and_stays_disabled")
-    push = text.index('docker push "$tag"')
-    assert boot < push
+    assert 'docker push "$tag"' in text
+    assert "test_docker_image_runs_on_this_cpu_and_stays_disabled" not in text
     assert "load: true" in text
     assert "fail-fast: false" in text

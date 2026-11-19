@@ -121,7 +121,9 @@ git merge-base --is-ancestor origin/main HEAD
 
 代码交付默认要求完整后端检查通过；开发中的针对性检查用于快速反馈，不等同于完整检查通过。仅文档更新按文档行验证，不为文档修改安装整套运行依赖或改动源码。需要真实凭据或收费模型的测试先确认本次授权与成本范围。
 
-Linux 和 Windows 的自动检查配置在 `.github/workflows/ci.yml`。本机通过不能代替另一平台结果；界面修改还应提供实际交互结果或截图，不以构建成功证明交互正确。
+开发人员在开发电脑上运行测试，并在提交合并请求或发布前记录命令、平台和结果。GitHub Actions 保留构建、发布、仓库管理和 CodeQL 安全扫描。需要验证真实外部服务时，在本机配置所需环境变量后运行 `make test-live`。
+
+涉及平台差异的改动须在受影响的平台验证。界面修改还应记录实际交互结果或截图。涉及发布产物时，按[桌面便携包的本机验证](../../desktop/portable/README.md#本机验证)或 [Docker 镜像的本机启动测试](../../docker/README.md#local-image-boot-test)检查对应平台或架构的产物。
 
 准备获准的本地提交时，先确认 `git config --get core.hooksPath` 为 `.githooks`；未设置则执行 `make install-hooks`。当前钩子执行 `make precommit` 和控制台构建，`make precommit` 使用受影响测试选择。钩子的文档快速路径目前只匹配 `README.md` 和 `README.*.md`，不覆盖所有 Markdown；不要误称 `AGENTS.md` 提交会自动跳过代码检查，也不要擅自修改或跳过钩子。
 

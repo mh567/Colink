@@ -156,7 +156,7 @@ def test_offline_portable_packaging_reuses_its_python(tmp_path: Path) -> None:
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
-assert sys.argv[2:] == ["--python", str(root / "runtime/bin/python3")]
+assert sys.argv[2:] == []
 assert os.environ.get("TEST_BUNDLED_PYTHON") == "1"
 (root / "ocr").mkdir()
 (root / "ocr/fixture-marker.txt").write_text("bundled-python", encoding="utf-8")
