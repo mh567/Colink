@@ -94,12 +94,13 @@ type docxState struct {
 	PendingFileAudit []fileAuditReceipt `json:"pending_file_audit,omitempty"`
 }
 type docxEvent struct {
-	DeviceID         string           `json:"device_id"`
-	Grants           []directoryGrant `json:"grants"`
-	Tasks            []docxTask       `json:"tasks"`
-	Busy             bool             `json:"busy"`
-	Error            string           `json:"error,omitempty"`
-	ManagedDirectory bool             `json:"managed_directory,omitempty"`
+	KnowledgeImportRequestID string           `json:"knowledge_import_request_id,omitempty"`
+	DeviceID                 string           `json:"device_id"`
+	Grants                   []directoryGrant `json:"grants"`
+	Tasks                    []docxTask       `json:"tasks"`
+	Busy                     bool             `json:"busy"`
+	Error                    string           `json:"error,omitempty"`
+	ManagedDirectory         bool             `json:"managed_directory,omitempty"`
 }
 type localDOCX struct {
 	mu                 sync.Mutex

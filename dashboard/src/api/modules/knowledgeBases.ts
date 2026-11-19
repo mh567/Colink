@@ -5,6 +5,11 @@ import {
   requestUpload,
 } from "../request";
 
+export interface KnowledgeCitationRef {
+  kb_id: string;
+  doc_id: string;
+}
+
 export interface KnowledgeLimits {
   max_bases_per_owner: number;
   max_docs_per_kb: number;
@@ -245,6 +250,12 @@ export const knowledgeBasesApi = {
     request<void>(`/knowledge-bases/${encodeURIComponent(id)}/avatar`, {
       method: "DELETE",
     }),
+
+  citationStatus: (refs: KnowledgeCitationRef[], signal: AbortSignal) =>
+    request<{ withdrawn: KnowledgeCitationRef[] }>(
+      "/knowledge-bases/citation-status",
+      { method: "POST", body: JSON.stringify({ refs }), signal },
+    ),
 
   listDocuments: (id: string, prefix?: string) =>
     request<KnowledgeDocument[]>(

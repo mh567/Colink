@@ -41,6 +41,9 @@ async def test_import_requires_authorized_native_device(env: Any, monkeypatch: A
     )
     owner = server.services.user_repo.get_by_username("kb_import_owner")
     base = server.services.knowledge_repo.create_base(owner_user_id=owner.id, name="Private")
+    shared = server.services.knowledge_repo.create_base(
+        owner_user_id=owner.id, name="Shared", shared=True
+    )
     monkeypatch.setattr(knowledge_bases, "assert_knowledge_usable", lambda *_: None)
     monkeypatch.setattr(service, "assert_knowledge_usable", lambda *_: None)
     monkeypatch.setattr(knowledge_bases, "enqueue_index_document", lambda *_: None)
@@ -65,6 +68,16 @@ async def test_import_requires_authorized_native_device(env: Any, monkeypatch: A
             json={"kb_id": base.id, "filename": "private.txt"},
         )
         assert allowed.status_code == 200
+        upload_url = f"/api/knowledge-bases/{base.id}/documents"
+        upload_headers = {
+            **native,
+            "X-Colink-Device-Id": device_id,
+            "X-Colink-Knowledge-Import": allowed.json()["import_ticket"],
+        }
+        shared_confirmation = await client.post(
+            authorize, headers=native, json={"kb_id": shared.id, "filename": "private.txt"}
+        )
+        assert shared_confirmation.status_code == 403
         denied = await client.post(
             authorize,
             headers=native,
@@ -72,18 +85,28 @@ async def test_import_requires_authorized_native_device(env: Any, monkeypatch: A
         )
         assert denied.status_code == 403
         denied_upload = await client.post(
-            f"/api/knowledge-bases/{base.id}/documents",
+            upload_url,
             headers={**native, "X-Colink-Device-Id": device_id},
             files={"upload": ("private.docx", b"private", "application/octet-stream")},
         )
         assert denied_upload.status_code == 403
+        upload_file = {"upload": ("private.txt", b"private", "text/plain")}
+        changed_path = await client.post(
+            upload_url,
+            headers=upload_headers,
+            files=upload_file,
+            data={"path": "different/private.txt"},
+        )
+        assert changed_path.status_code == 403
         response = await client.post(
-            f"/api/knowledge-bases/{base.id}/documents",
-            headers={**native, "X-Colink-Device-Id": device_id},
-            files={"upload": ("private.txt", b"private", "text/plain")},
+            upload_url,
+            headers=upload_headers,
+            files=upload_file,
         )
         assert response.status_code == 201
         assert response.json()["filename"] == "private.txt"
+        replayed = await client.post(upload_url, headers=upload_headers, files=upload_file)
+        assert replayed.status_code == 403
         denied_other_user = await client.post(
             f"/api/knowledge-bases/{base.id}/documents",
             headers={
@@ -107,8 +130,8 @@ async def test_import_never_sends_private_text_to_public_embedding(
 ) -> None:
     import asyncio
 
-    from octop.api.routers import knowledge_bases
-    from octop.infra.knowledge import jobs, service
+    import httpx
+
     from tests.integration.test_local_docx import approved_device
 
     client, server, admin_auth = env
@@ -121,33 +144,42 @@ async def test_import_never_sends_private_text_to_public_embedding(
     owner = server.services.user_repo.get_by_username("kb_network_owner")
     base = server.services.knowledge_repo.create_base(owner_user_id=owner.id, name="Private")
     provider_id = server.services.provider_repo.create(
-        name="public-test", kind="openai", base_url="http://8.8.8.8/v1", api_key="secret"
+        name="public-test",
+        kind="openai",
+        base_url="http://8.8.8.8/v1",
+        api_key="secret",
+        models_json='[{"id": "embed", "embedding": true}]',
     )
     settings = server.services.settings_repo
     settings.set("knowledge_embedding_backend", "remote")
     settings.set("knowledge_embedding_model", "embed")
     settings.set("knowledge_embedding_provider_id", str(provider_id))
-    monkeypatch.setattr(knowledge_bases, "assert_knowledge_usable", lambda *_: None)
-    monkeypatch.setattr(service, "assert_knowledge_usable", lambda *_: None)
-    monkeypatch.setattr(jobs, "assert_knowledge_usable", lambda *_: None)
+    settings.set("knowledge_bases_enabled", "true")
     sent = []
 
-    class Client:
-        def __enter__(self):
-            return self
+    def reject(_transport, request):
+        sent.append(request.url)
+        raise AssertionError("unexpected embedding request")
 
-        def __exit__(self, *_args):
-            return None
+    async def reject_async(transport, request):
+        return reject(transport, request)
 
-        def post(self, *args, **kwargs):
-            sent.append((args, kwargs))
-            raise RuntimeError("public request")
-
-    monkeypatch.setattr("octop.infra.knowledge.embed.httpx.Client", lambda **_: Client())
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reject)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_async)
     async with approved_device(client, admin_auth, owner_auth) as (device_id, native):
+        confirmation = await client.post(
+            f"/api/devices/{device_id}/knowledge/authorize",
+            headers=native,
+            json={"kb_id": base.id, "filename": "private.txt"},
+        )
+        assert confirmation.status_code == 200
         response = await client.post(
             f"/api/knowledge-bases/{base.id}/documents",
-            headers={**native, "X-Colink-Device-Id": device_id},
+            headers={
+                **native,
+                "X-Colink-Device-Id": device_id,
+                "X-Colink-Knowledge-Import": confirmation.json()["import_ticket"],
+            },
             files={"upload": ("private.txt", b"private content", "text/plain")},
         )
         assert response.status_code == 201
@@ -211,13 +243,26 @@ async def test_private_document_preview_download_and_removal(env: Any) -> None:
         base.id, doc.id, doc.filename, b"private doc"
     )
     url = f"/api/knowledge-bases/{base.id}/documents/{doc.id}"
+    ref = {"kb_id": base.id, "doc_id": doc.id}
+    status_url = "/api/knowledge-bases/citation-status"
+    assert (await client.post(status_url, headers=owner_auth, json={"refs": [ref]})).json() == {
+        "withdrawn": []
+    }
+    rename = await client.post(f"{url}/rename", headers=owner_auth, json={"new_name": "sample.md"})
+    assert rename.status_code == 400
     assert (await client.get(f"{url}/preview", headers=owner_auth)).json()["text"] == "private doc"
     assert (await client.get(f"{url}/file", headers=owner_auth)).content == b"private doc"
     for auth in (admin_auth, other_auth):
+        assert (await client.post(status_url, headers=auth, json={"refs": [ref]})).json() == {
+            "withdrawn": [ref]
+        }
         for suffix in ("preview", "file", "chunks"):
             assert (await client.get(f"{url}/{suffix}", headers=auth)).status_code == 403
         assert (await client.delete(url, headers=auth)).status_code == 403
     assert (await client.delete(url, headers=owner_auth)).status_code == 204
+    assert (await client.post(status_url, headers=owner_auth, json={"refs": [ref]})).json() == {
+        "withdrawn": [ref]
+    }
     for suffix in ("preview", "file"):
         assert (await client.get(f"{url}/{suffix}", headers=owner_auth)).status_code == 404
 
@@ -256,6 +301,105 @@ async def test_failed_removal_stays_withdrawn_and_can_be_retried(
     assert (await client.get(f"{url}/file", headers=owner_auth)).status_code == 404
 
 
+async def test_citation_status_is_responsive_during_source_cleanup(
+    env: Any, monkeypatch: Any
+) -> None:
+    import asyncio
+    from threading import Event
+
+    from octop.infra.knowledge.index import KnowledgeIndex
+
+    client, server, admin_auth = env
+    owner = server.services.user_repo.get_by_username("admin")
+    repo = server.services.knowledge_repo
+    base = repo.create_base(owner_user_id=owner.id, name="Private")
+    doc = repo.create_document(
+        kb_id=base.id, filename="sample.txt", content_type="text/plain", byte_size=1
+    )
+    started, release = Event(), Event()
+    delete_doc = KnowledgeIndex.delete_doc
+
+    def blocked_cleanup(index: KnowledgeIndex, doc_id: str) -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("cleanup blocked the API")
+        delete_doc(index, doc_id)
+
+    monkeypatch.setattr(KnowledgeIndex, "delete_doc", blocked_cleanup)
+    deletion = asyncio.create_task(
+        client.delete(f"/api/knowledge-bases/{base.id}/documents/{doc.id}", headers=admin_auth)
+    )
+    ref = {"kb_id": base.id, "doc_id": doc.id}
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        status = await client.post(
+            "/api/knowledge-bases/citation-status", headers=admin_auth, json={"refs": [ref]}
+        )
+        assert status.json() == {"withdrawn": [ref]}
+        assert not deletion.done()
+    finally:
+        release.set()
+        result = await deletion
+    assert result.status_code == 204
+
+
+async def test_directory_withdrawal_rejects_new_descendants(env: Any, monkeypatch: Any) -> None:
+    import asyncio
+    from threading import Event
+
+    from octop.api.routers import knowledge_bases
+    from octop.infra.knowledge import service
+    from octop.infra.knowledge.blobs import KnowledgeBlobs
+
+    client, server, admin_auth = env
+    owner = server.services.user_repo.get_by_username("admin")
+    base = server.services.knowledge_repo.create_base(owner_user_id=owner.id, name="Private")
+    root = f"/api/knowledge-bases/{base.id}"
+    monkeypatch.setattr(knowledge_bases, "assert_knowledge_usable", lambda *_: None)
+    monkeypatch.setattr(service, "assert_knowledge_usable", lambda *_: None)
+    monkeypatch.setattr(knowledge_bases, "enqueue_index_document", lambda *_: None)
+    folder = await client.post(f"{root}/folders", headers=admin_auth, json={"path": "reports"})
+    folder.raise_for_status()
+    folder_url = f"{root}/documents/{folder.json()['id']}"
+    draft = {"name": "original", "format": "txt", "content": "existing", "path": "reports"}
+    (await client.post(f"{root}/documents/text", headers=admin_auth, json=draft)).raise_for_status()
+    started, release = Event(), Event()
+    original_delete = KnowledgeBlobs.delete
+
+    def paused_delete(blobs: KnowledgeBlobs, kb_id: str, doc_id: str, filename: str) -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("cleanup blocked the API")
+        original_delete(blobs, kb_id, doc_id, filename)
+
+    monkeypatch.setattr(KnowledgeBlobs, "delete", paused_delete)
+    deletion = asyncio.create_task(client.delete(folder_url, headers=admin_auth))
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        write = await client.post(
+            f"{root}/documents/text", headers=admin_auth, json={**draft, "name": "concurrent"}
+        )
+        assert write.status_code == 409
+        assert write.json()["error"]["code"] == "KNOWLEDGE_WITHDRAWAL_IN_PROGRESS"
+        nested = await client.post(
+            f"{root}/folders", headers=admin_auth, json={"path": "reports/new"}
+        )
+        assert nested.status_code == 409
+        outside = await client.post(
+            f"{root}/documents/text",
+            headers=admin_auth,
+            json={**draft, "path": "", "name": "outside"},
+        )
+        assert outside.status_code == 201
+    finally:
+        release.set()
+        result = await deletion
+    assert result.status_code == 204
+    remaining = (await client.get(f"{root}/documents", headers=admin_auth)).json()
+    assert [entry["filename"] for entry in remaining] == ["outside.txt"]
+    assert server.services.knowledge_repo.get_base(base.id).doc_count == 1
+
+
 async def test_missing_pgvector_makes_knowledge_unavailable(env: Any, monkeypatch: Any) -> None:
     from dataclasses import replace
 
@@ -292,10 +436,14 @@ async def test_missing_pgvector_makes_knowledge_unavailable(env: Any, monkeypatc
         def __exit__(self, *_args: object) -> None:
             pass
 
-        def execute(self, *_args: object) -> Any:
-            return type(
-                "Cursor", (), {"fetchone": lambda _self: (1,) if self.available else None}
-            )()
+        def execute(self, query: str, *_args: object) -> Any:
+            if "to_regtype" in query:
+                return type(
+                    "Cursor",
+                    (),
+                    {"fetchone": lambda _self: ("vector" if self.available else None, 1, 1, None)},
+                )()
+            return None
 
     monkeypatch.setattr(psycopg, "connect", lambda *_args, **_kwargs: Connection())
 
@@ -305,6 +453,13 @@ async def test_missing_pgvector_makes_knowledge_unavailable(env: Any, monkeypatc
     create = await client.post("/api/knowledge-bases", headers=admin_auth, json={"name": "Private"})
     assert create.status_code == 409
     assert create.json()["error"]["code"] == "KNOWLEDGE_VECTOR_UNAVAILABLE"
+    enable = await client.put(
+        "/api/knowledge-bases/feature",
+        headers=admin_auth,
+        json={"enabled": True, "backend": "remote"},
+    )
+    assert enable.status_code == 409
+    assert enable.json()["error"]["code"] == "KNOWLEDGE_VECTOR_UNAVAILABLE"
     Connection.available = True
     capability = await client.get("/api/knowledge-bases/capability", headers=admin_auth)
     assert capability.json()["usable"] is True

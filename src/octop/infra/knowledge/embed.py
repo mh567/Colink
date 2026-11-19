@@ -13,6 +13,7 @@ import httpx
 from octop.infra.agents.providers.onnx_service import embed_texts
 from octop.infra.agents.providers.opencode_session import ensure_opencode_session_header
 from octop.infra.agents.providers.probe import provider_headers
+from octop.infra.knowledge.gate import remote_embedding_model_ready
 from octop.infra.knowledge.params import get_embedding_limits
 from octop.infra.utils import ssrf_guard
 
@@ -22,6 +23,10 @@ _KNOWLEDGE_EMBEDDING_BATCH_LIMIT = 20
 
 class KnowledgeEmbeddingError(RuntimeError):
     """Safe failure description without upstream responses or credentials."""
+
+
+class KnowledgeEmbeddingDimensionError(KnowledgeEmbeddingError):
+    """An embedding does not fit the current vector dimension."""
 
 
 def parse_embedding_response(
@@ -57,7 +62,7 @@ def parse_embedding_response(
         if dimension is None:
             dimension = len(vector)
         if len(vector) != dimension:
-            raise KnowledgeEmbeddingError("knowledge embedding dimension mismatch")
+            raise KnowledgeEmbeddingDimensionError("knowledge embedding dimension mismatch")
         ordered[index] = [float(value) for value in vector]
     if any(vector is None for vector in ordered):
         raise KnowledgeEmbeddingError("knowledge embedding response has missing index")
@@ -72,7 +77,7 @@ def embed_knowledge_texts(services: Any, texts: list[str]) -> list[list[float]]:
     if backend != "remote":
         return embed_texts(model, texts)
 
-    base, headers, batch_size = _remote_embedding_request(services, texts)
+    base, headers, batch_size = _remote_embedding_request(services, model, texts)
     with httpx.Client(timeout=60.0) as client:
         return _embed_remote_batched(client, base, headers, model, texts, batch_size=batch_size)
 
@@ -106,7 +111,7 @@ async def _embed_intranet_texts(
             if authorize:
                 authorize()
 
-    base, headers, batch_size = _remote_embedding_request(services, texts)
+    base, headers, batch_size = _remote_embedding_request(services, model, texts)
     try:
         host, pin_ip = await ssrf_guard.resolve_intranet_endpoint(base)
         async with httpx.AsyncClient(
@@ -143,7 +148,9 @@ async def _embed_intranet_texts(
     return vectors
 
 
-def _remote_embedding_request(services: Any, texts: list[str]) -> tuple[str, dict[str, str], int]:
+def _remote_embedding_request(
+    services: Any, model: str, texts: list[str]
+) -> tuple[str, dict[str, str], int]:
     settings = services.settings_repo
     limits = get_embedding_limits(settings.get)
     max_chars = limits["embedding_max_input_chars"]
@@ -153,8 +160,8 @@ def _remote_embedding_request(services: Any, texts: list[str]) -> tuple[str, dic
         )
     provider_id = (settings.get("knowledge_embedding_provider_id") or "").strip()
     provider = services.provider_repo.get(int(provider_id)) if provider_id.isdigit() else None
-    if provider is None or not provider.base_url or not provider.api_key:
-        raise RuntimeError("knowledge remote embedding provider is not ready")
+    if provider is None or not remote_embedding_model_ready(provider, model):
+        raise KnowledgeEmbeddingError("knowledge remote embedding provider is not ready")
     headers: dict[str, str] = {"Authorization": f"Bearer {provider.api_key}"}
     extra = ensure_opencode_session_header(
         getattr(provider, "name", None),

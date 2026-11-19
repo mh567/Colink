@@ -11,7 +11,7 @@ from octop.infra.knowledge.citations import append_citations_marker, citations_f
 from octop.infra.knowledge.embed import embed_intranet_knowledge_query, embed_knowledge_texts
 from octop.infra.knowledge.gate import assert_knowledge_usable
 from octop.infra.knowledge.index import Hit
-from octop.infra.knowledge.plane import open_knowledge_index
+from octop.infra.knowledge.plane import open_knowledge_index, pgvector_available
 
 DEFAULT_RETRIEVAL_K = 8
 DEFAULT_CONTEXT_CHAR_BUDGET = 6000
@@ -35,6 +35,8 @@ async def retrieve_context(
     query_text = (query or "").strip()
     if not query_text or not knowledge_base_ids or k <= 0 or char_budget <= 0:
         return ""
+    if not await asyncio.to_thread(pgvector_available, services):
+        raise RuntimeError("knowledge vector index unavailable")
     query_vectors = None
     if intranet_only:
         assert_knowledge_usable(

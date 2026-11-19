@@ -38,17 +38,6 @@ def open_knowledge_index(services: Any, kb_id: str) -> KnowledgeIndex | PgVector
 
 
 def pgvector_available(services: Any) -> bool:
-    """Check the operator-provided vector type without changing the database."""
+    """Check that the app connection can read and write the vector index."""
     database = postgres_database(services)
-    if database is None:
-        return True
-    import psycopg
-
-    try:
-        with psycopg.connect(database.postgresql_conninfo(), connect_timeout=3) as conn:
-            return (
-                conn.execute("SELECT 1 FROM pg_type WHERE typname = 'vector'").fetchone()
-                is not None
-            )
-    except psycopg.Error:
-        return False
+    return database is None or PgVectorKnowledgeIndex.is_available(database)

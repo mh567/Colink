@@ -17,13 +17,16 @@ func TestKnowledgeImportReadsOnlyAuthorizedDirectory(t *testing.T) {
 			t.Error("native session missing")
 		}
 		if r.URL.Path == "/api/devices/device/knowledge/authorize" {
-			_, _ = w.Write([]byte(`{"allowed":true}`))
+			_, _ = w.Write([]byte(`{"import_ticket":"confirmed"}`))
 			return
 		}
 		if r.URL.Path != "/api/knowledge-bases/KB123/documents" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
+		}
+		if r.Header.Get("X-Colink-Knowledge-Import") != "confirmed" {
+			t.Error("import confirmation missing")
 		}
 		file, _, err := r.FormFile("upload")
 		if err != nil {

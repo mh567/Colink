@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -51,12 +52,16 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Action == "revoke" && request.GrantID == "" {
 		return request, fileopsCopyError(copyFileGrantIDRequired)
 	}
-	if isDestructiveAction(request.Action) && !validDestructiveID(request.RequestID) {
+	if (isDestructiveAction(request.Action) || request.Action == "knowledge_import") && !validDestructiveID(request.RequestID) {
 		return request, fileopsCopyError(copyFileInvalidIntent)
 	}
 	return request, nil
 }
 func (a *App) emitDOCX(s docxSession, err error) {
+	a.emitDOCXResult(s, err, "")
+}
+
+func (a *App) emitDOCXResult(s docxSession, err error, importID string) {
 	if a.window == nil && a.docxStatusSink == nil {
 		return
 	}
@@ -72,7 +77,7 @@ func (a *App) emitDOCX(s docxSession, err error) {
 	a.docx.mu.Lock()
 	busy := a.docx.busy
 	a.docx.mu.Unlock()
-	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy, ManagedDirectory: runtime.GOOS == "linux"}
+	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy, ManagedDirectory: runtime.GOOS == "linux", KnowledgeImportRequestID: importID}
 	if event.Grants == nil {
 		event.Grants = []directoryGrant{}
 	}
@@ -107,8 +112,12 @@ func (a *App) handleDOCX(raw string) {
 	}
 	session.Locale = a.store.get().Locale
 	request, err := parseDOCXRequest(raw)
+	var importID string
+	if request.Action == "knowledge_import" && validDestructiveID(request.RequestID) {
+		importID = request.RequestID
+	}
 	if err != nil {
-		a.emitDOCX(session, err)
+		a.emitDOCXResult(session, err, importID)
 		return
 	}
 	session.Format = request.Format
@@ -139,7 +148,7 @@ func (a *App) handleDOCX(raw string) {
 		return
 	}
 	if busy {
-		a.emitDOCX(session, errors.New("已有本机任务执行中"))
+		a.emitDOCXResult(session, errors.New("已有本机任务执行中"), importID)
 		return
 	}
 	defer func() {
@@ -148,7 +157,7 @@ func (a *App) handleDOCX(raw string) {
 		a.docx.busy = false
 		a.docx.mu.Unlock()
 		a.docx.statusMu.Unlock()
-		a.emitDOCX(session, err)
+		a.emitDOCXResult(session, err, importID)
 	}()
 	a.emitDOCX(session, nil)
 	switch request.Action {
@@ -235,14 +244,14 @@ func (a *App) handleDOCX(raw string) {
 			err = errors.New(desktopText(session.Locale, copyKnowledgeOutsideDirectory))
 			return
 		}
-		dialog := a.app.Dialog.Question().
-			SetTitle(desktopText(session.Locale, copyKnowledgeConfirmTitle)).
-			SetMessage(desktopText(session.Locale, copyKnowledgeConfirmMessage, sourcePath, request.KnowledgeBaseID)).
-			AttachToWindow(a.window)
-		approved := false
-		dialog.AddButton("Yes").OnClick(func() { approved = true })
-		dialog.SetDefaultButton(dialog.AddButton("No"))
-		dialog.Show()
+		ctx, cancel := context.WithTimeout(session.Context, 2*time.Minute)
+		defer cancel()
+		approved := waitForKnowledgeImportConfirmation(ctx, func(accept, decline func()) {
+			a.showKnowledgeImportConfirmation(ctx,
+				desktopText(session.Locale, copyKnowledgeConfirmTitle),
+				desktopText(session.Locale, copyKnowledgeConfirmMessage, sourcePath, request.KnowledgeBaseID),
+				accept, decline)
+		})
 		if !approved {
 			err = errors.New(desktopText(session.Locale, copyKnowledgeCancelled))
 			return
@@ -251,6 +260,26 @@ func (a *App) handleDOCX(raw string) {
 			session, request.SourceGrant, source, request.KnowledgeBaseID,
 			request.KnowledgeFolder, func() error { return a.device.currentDOCX(session) },
 		)
+	}
+}
+
+func waitForKnowledgeImportConfirmation(ctx context.Context, show func(accept, decline func())) bool {
+	result := make(chan bool, 1)
+	reply := func(approved bool) {
+		select {
+		case result <- approved:
+		default:
+		}
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	show(func() { reply(true) }, func() { reply(false) })
+	select {
+	case approved := <-result:
+		return approved && ctx.Err() == nil
+	case <-ctx.Done():
+		return false
 	}
 }
 

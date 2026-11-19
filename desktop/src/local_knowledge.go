@@ -26,17 +26,18 @@ func (w *localDOCX) importKnowledge(s docxSession, grantID, source, kbID, folder
 		return errors.New("无效文件")
 	}
 	var reply struct {
-		Allowed bool `json:"allowed"`
+		ImportTicket string `json:"import_ticket"`
 	}
+	destination := path.Join(folder, filename)
 	if err := current(); err != nil {
 		return err
 	}
 	if err := deviceTaskCall(s, "knowledge", "authorize", map[string]string{
-		"kb_id": kbID, "filename": filename,
+		"kb_id": kbID, "filename": filename, "path": destination,
 	}, &reply); err != nil {
 		return err
 	}
-	if !reply.Allowed {
+	if reply.ImportTicket == "" {
 		return errors.New("操作未获授权")
 	}
 	var file *os.File
@@ -107,7 +108,7 @@ func (w *localDOCX) importKnowledge(s docxSession, grantID, source, kbID, folder
 			if err := current(); err != nil {
 				return err
 			}
-			if err := form.WriteField("path", path.Join(folder, filename)); err != nil {
+			if err := form.WriteField("path", destination); err != nil {
 				return err
 			}
 			return form.Close()
@@ -125,6 +126,7 @@ func (w *localDOCX) importKnowledge(s docxSession, grantID, source, kbID, folder
 	request.Header.Set("Authorization", "Bearer "+s.Token)
 	request.Header.Set("X-Colink-Device-Id", s.DeviceID)
 	request.Header.Set("X-Colink-Device-Session", s.Secret)
+	request.Header.Set("X-Colink-Knowledge-Import", reply.ImportTicket)
 	request.Header.Set("Content-Type", form.FormDataContentType())
 	client := http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("拒绝任务请求重定向")

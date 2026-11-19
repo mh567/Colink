@@ -244,3 +244,49 @@ def test_knowledge_bytes_and_pgvector_search(
     assert index.search([1.0, 0.0, 0.0], k=3) == []
     reloaded.delete("kb1", "doc1", "notes.md")
     assert reloaded.exists("kb1", "doc1", "notes.md") is False
+
+
+@requires_postgresql
+@pytest.mark.postgresql
+def test_pgvector_readiness_requires_real_index_permissions(database: DatabaseConfig) -> None:
+    from dataclasses import replace
+    from uuid import uuid4
+
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    from octop.infra.knowledge.plane import pgvector_available
+
+    assert pgvector_available(database)
+    PgVectorKnowledgeIndex("kb1", database)
+    role_name = f"octop_vector_probe_{uuid4().hex}"
+    role = sql.Identifier(role_name)
+    conninfo = database.postgresql_conninfo()
+    restricted = replace(database, url=make_conninfo(conninfo, options=f"-c role={role_name}"))
+    with psycopg.connect(conninfo, autocommit=True) as conn:
+        try:
+            conn.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(role))
+        except psycopg.errors.InsufficientPrivilege:
+            pytest.skip("test database login cannot create a restricted role")
+        try:
+            owner = sql.Identifier(conn.execute("SELECT current_user").fetchone()[0])
+            conn.execute(sql.SQL("GRANT {} TO {}").format(role, owner))
+            conn.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
+            conn.execute(sql.SQL("GRANT SELECT ON public.knowledge_chunks TO {}").format(role))
+            with psycopg.connect(restricted.postgresql_conninfo()) as limited:
+                assert limited.execute("SELECT '[1,0]'::vector <=> '[1,0]'::vector").fetchone() == (
+                    0.0,
+                )
+            assert not pgvector_available(restricted)
+
+            conn.execute(
+                sql.SQL("GRANT INSERT, DELETE ON public.knowledge_chunks TO {}").format(role)
+            )
+            assert pgvector_available(restricted)
+            index = PgVectorKnowledgeIndex("kb1", restricted)
+            index.replace_doc_chunks("doc", ["text"], [[1.0, 0.0]])
+            assert index.search([1.0, 0.0], k=1)[0].text == "text"
+        finally:
+            conn.execute(sql.SQL("DROP OWNED BY {}").format(role))
+            conn.execute(sql.SQL("DROP ROLE {}").format(role))

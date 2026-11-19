@@ -10,21 +10,30 @@ from octop.i18n import tr
 from octop.infra.knowledge.blobs import KnowledgeBlobs
 from octop.infra.knowledge.chunk import chunk_text
 from octop.infra.knowledge.embed import (
+    KnowledgeEmbeddingDimensionError,
     KnowledgeEmbeddingError,
 )
 from octop.infra.knowledge.embed import (
     embed_intranet_knowledge_texts as embed_knowledge_texts,
 )
 from octop.infra.knowledge.gate import assert_knowledge_usable
-from octop.infra.knowledge.ocr import optional_ocr_extractor
+from octop.infra.knowledge.ocr import PrivateKnowledgeOcrError, optional_ocr_extractor
 from octop.infra.knowledge.params import get_advanced_settings
 from octop.infra.knowledge.parse import parse_document
-from octop.infra.knowledge.plane import open_knowledge_index
+from octop.infra.knowledge.plane import open_knowledge_index, pgvector_available
 
 # Parsing/OCR also consumes memory; only one document should be in flight.
 INDEX_CONCURRENCY = 1
 _index_semaphore: asyncio.Semaphore | None = None
 index_commit_lock = threading.RLock()
+INDEX_FAILURE_KEYS = {
+    "knowledge.indexing_failed",
+    "knowledge.vector_unavailable",
+    "knowledge.document_parse_failed",
+    "knowledge.private_ocr_local_required",
+    "knowledge.embedding_failed",
+    "knowledge.embedding_dimension_mismatch",
+}
 
 
 def reset_index_semaphore_for_tests() -> None:
@@ -51,20 +60,29 @@ def process_document(services: Any, kb_id: str, doc_id: str) -> None:
         if document.status == "withdrawn" or document.is_dir:
             return
         repo.update_document(doc_id, status="processing", error_message="")
+    reason = "knowledge.embedding_failed"
     try:
         assert_knowledge_usable(
             services.settings_repo.get, getattr(services, "provider_repo", None)
         )
+        reason = "knowledge.vector_unavailable"
+        if not pgvector_available(services):
+            raise RuntimeError("knowledge vector index unavailable")
+        reason = "knowledge.document_parse_failed"
         path = KnowledgeBlobs.from_services(services).ensure_local(kb_id, doc_id, document.filename)
-        text = parse_document(path, ocr=optional_ocr_extractor(services))
+        text = parse_document(
+            path, ocr=optional_ocr_extractor(services, local_only=not base.shared)
+        )
         knobs = get_advanced_settings(services.settings_repo.get)
         chunks = chunk_text(text, size=knobs["chunk_size"], overlap=knobs["chunk_overlap"])
         if not (text or "").strip() or not chunks:
             raise ValueError("knowledge document has no extractable text")
+        reason = "knowledge.embedding_failed"
         embeddings = embed_knowledge_texts(services, chunks)
         dimension = len(embeddings[0]) if embeddings else 0
         if base.embedding_dim and dimension != base.embedding_dim:
-            raise KnowledgeEmbeddingError("knowledge embedding dimension mismatch")
+            raise KnowledgeEmbeddingDimensionError("knowledge embedding dimension mismatch")
+        reason = "knowledge.indexing_failed"
         with index_commit_lock:
             current = repo.get_document(doc_id)
             if current is None or current.status == "withdrawn" or repo.get_base(kb_id) is None:
@@ -74,18 +92,22 @@ def process_document(services: Any, kb_id: str, doc_id: str) -> None:
             if dimension and base.embedding_dim != dimension:
                 repo.update_base(kb_id, embedding_dim=dimension)
     except Exception as exc:
+        if isinstance(exc, PrivateKnowledgeOcrError):
+            reason = "knowledge.private_ocr_local_required"
+        elif isinstance(exc, KnowledgeEmbeddingDimensionError):
+            reason = "knowledge.embedding_dimension_mismatch"
         with index_commit_lock:
             current = repo.get_document(doc_id)
             if current is not None and current.status != "withdrawn":
                 repo.update_document(
                     doc_id,
                     status="failed",
-                    error_message="knowledge.indexing_failed",
+                    error_message=reason,
                     chunk_count=0,
                 )
         if isinstance(exc, KnowledgeEmbeddingError):
             raise
-        raise RuntimeError(tr("knowledge.indexing_failed", "en")) from None
+        raise RuntimeError(tr(reason, "en")) from None
 
 
 def enqueue_index_document(services: Any, kb_id: str, doc_id: str) -> asyncio.Task[None]:

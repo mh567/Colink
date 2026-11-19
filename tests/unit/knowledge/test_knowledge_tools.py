@@ -103,6 +103,8 @@ async def test_admin_search_cannot_retrieve_another_users_private_base(
 
 @pytest.mark.asyncio
 async def test_search_refuses_public_embedding_endpoint(monkeypatch) -> None:
+    import httpx
+
     from octop.infra.knowledge import retrieve
 
     settings = {
@@ -119,18 +121,15 @@ async def test_search_refuses_public_embedding_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(retrieve, "assert_knowledge_usable", lambda *_args: None)
     sent = []
 
-    class Client:
-        def __enter__(self):
-            return self
+    def reject(_transport, request):
+        sent.append(request.url)
+        raise AssertionError("unexpected embedding request")
 
-        def __exit__(self, *_args):
-            return None
+    async def reject_async(transport, request):
+        return reject(transport, request)
 
-        def post(self, *args, **kwargs):
-            sent.append((args, kwargs))
-            raise RuntimeError("public request")
-
-    monkeypatch.setattr("octop.infra.knowledge.embed.httpx.Client", lambda **_: Client())
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reject)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_async)
     tool = _tool_by_name(build_knowledge_tools(services), "search_knowledge")
     with _configurable(user="1", knowledge_base_ids=["kb"]):
         result = await tool.ainvoke({"query": "private query"})

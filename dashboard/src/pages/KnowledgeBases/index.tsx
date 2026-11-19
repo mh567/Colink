@@ -695,9 +695,11 @@ export default function KnowledgeBasesPage() {
   const [importGrants, setImportGrants] = useState<
     { id: string; path: string }[]
   >([]);
-  const activeImport = useRef<{ baseId: string; sawBusy: boolean } | null>(
-    null,
-  );
+  const activeImport = useRef<{
+    baseId: string;
+    deviceId: string;
+    requestId: string;
+  } | null>(null);
   const detailRequestGate = useRef(createDetailRequestGate());
   const {
     size: sidebarWidth,
@@ -1003,27 +1005,24 @@ export default function KnowledgeBasesPage() {
         event as CustomEvent<{
           device_id: string;
           grants?: { id: string; path: string }[];
-          busy: boolean;
+          knowledge_import_request_id?: string;
           error?: string;
         }>
       ).detail;
       if (!detail || !deviceId || detail.device_id !== deviceId) return;
       setImportGrants(detail.grants ?? []);
       const active = activeImport.current;
-      if (!active) return;
-      if (detail.busy) {
-        active.sawBusy = true;
-      } else if (active.sawBusy || detail.error) {
-        activeImport.current = null;
-        setImportBusy(false);
-        if (detail.error) {
-          message.error(detail.error);
-        } else {
-          message.success(t("knowledgeBases.uploaded"));
-          if (selectedIdRef.current === active.baseId)
-            void loadDetail(active.baseId);
-          void loadBases();
-        }
+      if (!active || detail.knowledge_import_request_id !== active.requestId)
+        return;
+      activeImport.current = null;
+      setImportBusy(false);
+      if (detail.error) {
+        message.error(detail.error);
+      } else {
+        message.success(t("knowledgeBases.uploaded"));
+        if (selectedIdRef.current === active.baseId)
+          void loadDetail(active.baseId);
+        void loadBases();
       }
     };
     window.addEventListener("colink:docx-status", receive);
@@ -1031,7 +1030,7 @@ export default function KnowledgeBasesPage() {
   }, [deviceId, loadBases, loadDetail, message, t]);
 
   useEffect(() => {
-    if (!deviceId && activeImport.current) {
+    if (activeImport.current && activeImport.current.deviceId !== deviceId) {
       activeImport.current = null;
       setImportBusy(false);
       message.error(t("knowledgeBases.importDeviceRequired"));
@@ -1456,7 +1455,14 @@ export default function KnowledgeBasesPage() {
   };
 
   const requestImport = () => {
-    if (!selected || !deviceId || !usable || isAtDocumentLimit || importBusy)
+    if (
+      !selected ||
+      selected.shared ||
+      !deviceId ||
+      !usable ||
+      isAtDocumentLimit ||
+      importBusy
+    )
       return;
     try {
       setImportGrants([]);
@@ -2470,7 +2476,7 @@ export default function KnowledgeBasesPage() {
                           {t("knowledgeBases.createFile")}
                         </Button>
                       ) : null}
-                      {canWriteSelected ? (
+                      {canWriteSelected && !selected.shared ? (
                         <Tooltip
                           title={
                             !deviceId
@@ -3876,14 +3882,24 @@ export default function KnowledgeBasesPage() {
             if (
               !deviceId ||
               selected?.id !== pending.baseId ||
+              selected.shared ||
               currentFolder !== pending.folder
             )
               return;
             try {
-              activeImport.current = { baseId: pending.baseId, sawBusy: false };
+              const requestId = Array.from(
+                crypto.getRandomValues(new Uint8Array(16)),
+                (byte) => byte.toString(16).padStart(2, "0"),
+              ).join("");
+              activeImport.current = {
+                baseId: pending.baseId,
+                deviceId,
+                requestId,
+              };
               setImportBusy(true);
               sendNativeFileCommand({
                 action: "knowledge_import",
+                request_id: requestId,
                 source_grant: grantId,
                 knowledge_base_id: pending.baseId,
                 knowledge_folder: pending.folder,

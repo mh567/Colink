@@ -224,7 +224,10 @@ async def test_upload_enqueues_document_indexing(monkeypatch: pytest.MonkeyPatch
     )
     server = SimpleNamespace(
         services=_services(),
-        device_manager=SimpleNamespace(authorize_knowledge_import=lambda *_args: None),
+        device_manager=SimpleNamespace(
+            authorize_knowledge_import=lambda *_args: None,
+            consume_knowledge_import=lambda *_args, **_kwargs: None,
+        ),
     )
     user = SimpleNamespace(id=1, is_admin=False)
     upload = UploadFile(
@@ -369,7 +372,7 @@ def test_row_payload_includes_has_original(tmp_path: Path, monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_embedding_options_excludes_onnx_local_provider() -> None:
+async def test_embedding_options_excludes_onnx_local_provider_and_disabled_models() -> None:
     from octop.api.routers import knowledge_bases
 
     providers = [
@@ -388,9 +391,12 @@ async def test_embedding_options_excludes_onnx_local_provider() -> None:
         SimpleNamespace(
             id=2,
             name="OpenAI",
+            enabled=True,
             api_key="sk-test",
+            base_url="https://example.test/v1",
             get_models=lambda: [
                 {"id": "text-embedding-3-small", "name": "embed", "embedding": True},
+                {"id": "disabled-embed", "embedding": True, "enabled": False},
                 {"id": "gpt-4o", "name": "GPT-4o"},
             ],
         ),

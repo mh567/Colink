@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from octop.config import DEFAULT_MAX_UPLOAD_MB, upload_mb_to_bytes
-from octop.infra.db.repos.knowledge import KnowledgeBaseRow, KnowledgeDocumentRow
+from octop.infra.db.repos.knowledge import (
+    KnowledgeBaseRow,
+    KnowledgeDocumentRow,
+)
+from octop.infra.db.repos.knowledge import (
+    KnowledgePathWithdrawnError as KnowledgePathWithdrawnError,
+)
 from octop.infra.knowledge.blobs import KnowledgeBlobs
 from octop.infra.knowledge.gate import assert_knowledge_usable
 from octop.infra.knowledge.ocr import (
@@ -57,6 +63,13 @@ _ALLOWED_CONTENT_TYPES = set(_EXT_TO_CONTENT_TYPE.values())
 _TEXT_CONTENT_TYPES = {"text/plain", "text/markdown"}
 _TEXT_FORMAT_TO_EXT = {"md": ".md", "txt": ".txt"}
 _TEXT_FORMAT_TO_CONTENT_TYPE = {"md": "text/markdown", "txt": "text/plain"}
+
+
+def normalize_import_path(filename: str, path: str | None) -> str:
+    rel = normalize_kb_path(path or filename)
+    if filename != path_basename(rel) or Path(filename).suffix.lower() not in _EXT_TO_CONTENT_TYPE:
+        raise ValueError("invalid knowledge import filename or path")
+    return rel
 
 
 def _resolve_content_type(filename: str, content_type: str) -> str:
@@ -174,6 +187,14 @@ class KnowledgeService:
             return cast(list[KnowledgeDocumentRow], self._repo.list_documents(kb_id))
         return cast(list[KnowledgeDocumentRow], self._repo.list_children(kb_id, prefix))
 
+    def withdrawn_citations(
+        self, refs: list[tuple[str, str]], *, actor_user_id: int
+    ) -> list[tuple[str, str]]:
+        readable = self._repo.readable_document_refs(
+            actor_user_id, list(dict.fromkeys(doc_id for _, doc_id in refs))
+        )
+        return [ref for ref in refs if ref not in readable]
+
     def create_folder(
         self, kb_id: str, *, actor_user_id: int, path: str, is_admin: bool = False
     ) -> KnowledgeDocumentRow:
@@ -184,14 +205,16 @@ class KnowledgeService:
         self, kb_id: str, doc_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> dict[str, str]:
         """Return extracted plain text for a readable knowledge document."""
-        self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        base = self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
         if document is None or document.kb_id != kb_id or document.status == "withdrawn":
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise LookupError("knowledge document not found")
         path = self._blobs().ensure_local(kb_id, doc_id, document.filename)
-        text = parse_document(path, ocr=optional_ocr_extractor(self._services))
+        text = parse_document(
+            path, ocr=optional_ocr_extractor(self._services, local_only=not base.shared)
+        )
         if len(text) > _MAX_PREVIEW_CHARS:
             text = text[:_MAX_PREVIEW_CHARS]
         return {
@@ -333,14 +356,17 @@ class KnowledgeService:
         limit = self._max_document_bytes()
         if len(encoded) > limit:
             raise ValueError(f"knowledge document size exceeds maximum of {limit} bytes")
-        self._blobs().write(kb_id, document.id, document.filename, encoded)
-        self._repo.update_document(
+        blobs = self._blobs()
+        blobs.write(kb_id, document.id, document.filename, encoded)
+        if not self._repo.update_document(
             doc_id,
             byte_size=len(encoded),
             status="pending",
             error_message="",
             chunk_count=0,
-        )
+        ):
+            blobs.delete(kb_id, document.id, document.filename)
+            raise KnowledgePathWithdrawnError(document.path)
         refreshed = self._repo.get_document(doc_id)
         if refreshed is None:
             raise LookupError("knowledge document not found")
@@ -374,6 +400,12 @@ class KnowledgeService:
             return base
         raise PermissionError("knowledge base write access is required")
 
+    def get_private_import_base(self, kb_id: str, *, actor_user_id: int) -> KnowledgeBaseRow:
+        base = self.get_writable_base(kb_id, actor_user_id=actor_user_id)
+        if base.shared:
+            raise PermissionError("knowledge import requires a private knowledge base")
+        return base
+
     def require_owner(
         self, kb_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> KnowledgeBaseRow:
@@ -392,15 +424,20 @@ class KnowledgeService:
         content: bytes,
         is_admin: bool = False,
         path: str | None = None,
+        private_import: bool = False,
     ) -> KnowledgeDocumentRow:
         assert_knowledge_usable(
             self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
         )
-        base = self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        if private_import:
+            base = self.get_private_import_base(kb_id, actor_user_id=actor_user_id)
+            rel = normalize_import_path(filename, path)
+        else:
+            base = self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+            rel = normalize_kb_path(path or filename)
         limit = self._max_document_bytes()
         if len(content) > limit:
             raise ValueError(f"knowledge document size exceeds maximum of {limit} bytes")
-        rel = normalize_kb_path(path or filename)
         name = path_basename(rel)
         if not name:
             raise ValueError("invalid knowledge document filename")
@@ -421,41 +458,34 @@ class KnowledgeService:
             byte_size=len(content),
             max_documents=base.max_documents,
         )
+        blobs = self._blobs()
         try:
-            self._blobs().write(kb_id, document.id, name, content)
+            blobs.write(kb_id, document.id, name, content)
         except Exception:
             self._repo.delete_document(document.id)
             raise
+        current = self._repo.get_document(document.id)
+        if current is None or current.status == "withdrawn":
+            blobs.delete(kb_id, document.id, name)
+            raise KnowledgePathWithdrawnError(rel)
         return cast(KnowledgeDocumentRow, document)
 
     def delete_document(
         self, kb_id: str, doc_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> None:
         self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
-        document = self._repo.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
-            raise LookupError("knowledge document not found")
         from octop.infra.knowledge.jobs import index_commit_lock
 
         with index_commit_lock:
-            rows = (
-                [
-                    row
-                    for row in self._repo.list_documents(kb_id)
-                    if row.id == doc_id or row.path.startswith(f"{document.path}/")
-                ]
-                if document.is_dir
-                else [document]
-            )
-            for row in rows:
-                if not row.is_dir:
-                    self._repo.update_document(row.id, status="withdrawn", error_message="")
+            rows = self._repo.withdraw_document_tree(kb_id, doc_id)
+            if not rows:
+                raise LookupError("knowledge document not found")
             for row in rows:
                 if row.is_dir:
                     continue
                 open_knowledge_index(self._services, kb_id).delete_doc(row.id)
                 self._blobs().delete(kb_id, row.id, row.filename)
-            self._repo.delete_document(doc_id)
+            self._repo.finish_withdrawal(kb_id, [row.id for row in rows])
 
     def reindex_document(
         self, kb_id: str, doc_id: str, *, actor_user_id: int, is_admin: bool = False
@@ -469,7 +499,10 @@ class KnowledgeService:
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise ValueError("folders cannot be reindexed")
-        self._repo.update_document(doc_id, status="pending", error_message="", chunk_count=0)
+        if not self._repo.update_document(
+            doc_id, status="pending", error_message="", chunk_count=0
+        ):
+            raise LookupError("knowledge document not found")
         refreshed = self._repo.get_document(doc_id)
         if refreshed is None:
             raise LookupError("knowledge document not found")
@@ -492,6 +525,11 @@ class KnowledgeService:
         cleaned = (new_name or "").strip()
         if not cleaned or "/" in cleaned or "\\" in cleaned:
             raise ValueError("invalid knowledge document name")
+        if (
+            not document.is_dir
+            and Path(cleaned).suffix.lower() != Path(document.filename).suffix.lower()
+        ):
+            raise ValueError("invalid knowledge document name: extension must not change")
         new_path = normalize_kb_path(f"{path_parent(document.path)}/{cleaned}")
         if new_path == document.path:
             return cast(KnowledgeDocumentRow, document)

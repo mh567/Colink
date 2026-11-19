@@ -251,7 +251,7 @@ func TestLocalDOCXChecksWritePermissionAfterModelAndSessionBeforeWriting(t *test
 			data, _ := makeDOCX("原文")
 			os.WriteFile(filepath.Join(directory, "input.docx"), data, 0600)
 			worker := newLocalDOCX(t.TempDir())
-	defer worker.close()
+			defer worker.close()
 			session := docxSession{Base: server.URL, APIPath: "/api/devices/connect", DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
 			grant, err := worker.grant(session, directory, "rw")
 			if err != nil {
@@ -652,6 +652,59 @@ func TestLocalDOCXStatusUsesCurrentBusyState(t *testing.T) {
 	}
 	if event.Busy {
 		t.Fatal("status used stale busy state after task completion")
+	}
+}
+
+func TestKnowledgeImportBusyErrorBelongsOnlyToItsRequest(t *testing.T) {
+	session := docxSession{Base: "https://example.test", DeviceID: "device", UserID: 1, Secret: "secret", Generation: 1, Context: context.Background()}
+	worker := newLocalDOCX(t.TempDir())
+	worker.busy = true
+	var events []docxEvent
+	app := &App{
+		device: &deviceClient{generation: 1, docx: session},
+		store:  &settingsStore{},
+		docx:   worker,
+		docxStatusSink: func(got docxEvent) {
+			events = append(events, got)
+		},
+	}
+	const requestID = "0123456789abcdef0123456789abcdef"
+	app.handleDOCX(url.QueryEscape(`{"action":"knowledge_import","request_id":"` + requestID + `"}`))
+	app.handleDOCX(url.QueryEscape(`{"action":"list"}`))
+	if len(events) != 2 || events[0].KnowledgeImportRequestID != requestID || !events[0].Busy || events[0].Error == "" {
+		t.Fatalf("busy rejection did not identify the import request: %+v", events)
+	}
+	if events[1].KnowledgeImportRequestID != "" || events[1].Error != "" {
+		t.Fatalf("unrelated status looks like an import result: %+v", events[1])
+	}
+}
+
+func TestKnowledgeImportWaitsForNativeConfirmation(t *testing.T) {
+	for _, choice := range []string{"accept", "decline", "disconnect"} {
+		t.Run(choice, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			shown := make(chan [2]func(), 1)
+			result := make(chan bool, 1)
+			go func() {
+				result <- waitForKnowledgeImportConfirmation(ctx, func(accept, decline func()) {
+					shown <- [2]func(){accept, decline}
+				})
+			}()
+			callbacks := <-shown
+			switch choice {
+			case "accept":
+				callbacks[0]()
+			case "decline":
+				callbacks[1]()
+			case "disconnect":
+				cancel()
+				callbacks[0]()
+			}
+			if approved := <-result; approved != (choice == "accept") {
+				t.Fatalf("%s got approval=%v", choice, approved)
+			}
+		})
 	}
 }
 

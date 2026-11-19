@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from octop.infra.db.pool import DatabasePool
 from octop.infra.db.repos._base import DbRow, bool_int, map_rows, now_ts, partial_updates
@@ -17,6 +18,10 @@ from octop.infra.users.groups import RESOURCE_KNOWLEDGE_BASE, group_visibility_s
 from octop.infra.utils.ulid import new_short_id, new_ulid
 
 _DIR_CONTENT_TYPE = "application/x-directory"
+
+
+class KnowledgePathWithdrawnError(ValueError):
+    """A write would target a document or directory being withdrawn."""
 
 
 @dataclass(frozen=True)
@@ -265,26 +270,40 @@ class KnowledgeRepo:
         ).fetchone()
         return KnowledgeDocumentRow.from_row(r) if r else None
 
+    @staticmethod
+    def _lock_base(conn: Any, kb_id: str) -> None:
+        # Serialize path changes with withdrawal across PostgreSQL workers.
+        conn.execute(
+            "UPDATE knowledge_bases SET updated_at = updated_at WHERE knowledge_base_id = ?",
+            (kb_id,),
+        )
+
+    def _ensure_folders(self, conn: Any, kb_id: str, folders: list[str], ts: int) -> None:
+        for folder in folders:
+            existing = self._get_document_by_path(conn, kb_id, folder)
+            if existing is not None:
+                if not existing.is_dir:
+                    raise ValueError(f"path exists and is not a folder: {folder}")
+                if existing.status == "withdrawn":
+                    raise KnowledgePathWithdrawnError(folder)
+                continue
+            conn.execute(
+                "INSERT INTO knowledge_documents("
+                "document_id, kb_id, path, filename, is_dir, content_type, byte_size, "
+                "content_hash, status, error_message, chunk_count, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, 1, ?, 0, '', 'ready', '', 0, ?, ?)",
+                (new_ulid(), kb_id, folder, path_basename(folder), _DIR_CONTENT_TYPE, ts, ts),
+            )
+
     def ensure_folder(self, kb_id: str, path: str) -> KnowledgeDocumentRow:
         rel = normalize_kb_path(path)
         if not rel:
             raise ValueError("invalid knowledge folder path")
         ts = now_ts()
         with self._db.transaction() as conn:
-            for folder in ancestor_dirs(rel) + [rel]:
-                existing = self._get_document_by_path(conn, kb_id, folder)
-                if existing is not None:
-                    if not existing.is_dir:
-                        raise ValueError(f"path exists and is not a folder: {folder}")
-                    continue
-                conn.execute(
-                    "INSERT INTO knowledge_documents("
-                    "document_id, kb_id, path, filename, is_dir, content_type, byte_size, "
-                    "content_hash, status, error_message, chunk_count, created_at, updated_at"
-                    ") VALUES (?, ?, ?, ?, 1, ?, 0, '', 'ready', '', 0, ?, ?)",
-                    (new_ulid(), kb_id, folder, path_basename(folder), _DIR_CONTENT_TYPE, ts, ts),
-                )
-        row = self.get_document_by_path(kb_id, rel)
+            self._lock_base(conn, kb_id)
+            self._ensure_folders(conn, kb_id, ancestor_dirs(rel) + [rel], ts)
+            row = self._get_document_by_path(conn, kb_id, rel)
         if row is None:
             raise RuntimeError(f"knowledge folder insert failed: {rel}")
         return row
@@ -305,8 +324,6 @@ class KnowledgeRepo:
         if not rel:
             raise ValueError("invalid knowledge document path")
         name = path_basename(rel)
-        for folder in ancestor_dirs(rel):
-            self.ensure_folder(kb_id, folder)
         doc_id = new_ulid()
         ts = now_ts()
         # Treat both None (caller did not specify) and 0 (per-base "unlimited"
@@ -314,6 +331,8 @@ class KnowledgeRepo:
         # "at most 0 documents" and reject every create.
         enforce_limit = max_documents is not None and max_documents > 0
         with self._db.transaction() as conn:
+            self._lock_base(conn, kb_id)
+            self._ensure_folders(conn, kb_id, ancestor_dirs(rel), ts)
             if enforce_limit:
                 cursor = conn.execute(
                     "UPDATE knowledge_bases SET doc_count = doc_count + 1, updated_at = ? "
@@ -322,23 +341,22 @@ class KnowledgeRepo:
                 )
                 if cursor.rowcount != 1:
                     raise ValueError(f"knowledge bases support at most {max_documents} documents")
-            conn.execute(
+            row = conn.execute(
                 "INSERT INTO knowledge_documents("
                 "document_id, kb_id, path, filename, is_dir, content_type, byte_size, "
                 "content_hash, status, error_message, chunk_count, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, '', 0, ?, ?)",
+                ") VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, '', 0, ?, ?) RETURNING *",
                 (doc_id, kb_id, rel, name, content_type, byte_size, content_hash, status, ts, ts),
-            )
+            ).fetchone()
             if not enforce_limit:
                 conn.execute(
                     "UPDATE knowledge_bases SET doc_count = doc_count + 1, updated_at = ? "
                     "WHERE knowledge_base_id = ?",
                     (ts, kb_id),
                 )
-        row = self.get_document(doc_id)
         if row is None:
             raise RuntimeError(f"knowledge document insert failed: {doc_id}")
-        return row
+        return KnowledgeDocumentRow.from_row(row)
 
     def list_documents(self, kb_id: str) -> list[KnowledgeDocumentRow]:
         with self._db.connect() as conn:
@@ -359,6 +377,23 @@ class KnowledgeRepo:
                 (doc_id,),
             ).fetchone()
         return KnowledgeDocumentRow.from_row(r) if r else None
+
+    def readable_document_refs(self, user_id: int, doc_ids: list[str]) -> set[tuple[str, str]]:
+        if not doc_ids:
+            return set()
+        placeholders = ",".join("?" for _ in doc_ids)
+        clause = group_visibility_sql(RESOURCE_KNOWLEDGE_BASE, "kb.knowledge_base_id")
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT doc.kb_id, doc.document_id FROM knowledge_documents doc "
+                "JOIN knowledge_bases kb ON kb.knowledge_base_id = doc.kb_id "
+                f"WHERE doc.document_id IN ({placeholders}) "
+                "AND doc.is_dir = 0 AND doc.status <> 'withdrawn' "
+                "AND (kb.owner_user_id = ? OR kb.shared = 1) "
+                f"AND (kb.owner_user_id = ? OR {clause})",
+                (*doc_ids, user_id, user_id, user_id),
+            ).fetchall()
+        return {(str(row["kb_id"]), str(row["document_id"])) for row in rows}
 
     def get_document_by_path(self, kb_id: str, path: str) -> KnowledgeDocumentRow | None:
         rel = normalize_kb_path(path)
@@ -381,7 +416,7 @@ class KnowledgeRepo:
         error_message: str | None = None,
         chunk_count: int | None = None,
         path: str | None = None,
-    ) -> None:
+    ) -> bool:
         fields, params = partial_updates(
             [
                 ("filename", filename),
@@ -395,23 +430,78 @@ class KnowledgeRepo:
             ]
         )
         if not fields:
-            return
+            return False
         fields.append("updated_at = ?")
         params.append(now_ts())
         params.append(doc_id)
         with self._db.transaction() as conn:
-            conn.execute(
-                f"UPDATE knowledge_documents SET {', '.join(fields)} WHERE document_id = ?",
+            result = conn.execute(
+                f"UPDATE knowledge_documents SET {', '.join(fields)} "
+                "WHERE document_id = ? AND status <> 'withdrawn'",
                 params,
             )
+            return bool(result.rowcount == 1)
+
+    def withdraw_document_tree(self, kb_id: str, doc_id: str) -> list[KnowledgeDocumentRow]:
+        """Make an entire subtree unreadable and reserve its paths until cleanup succeeds."""
+        with self._db.transaction() as conn:
+            self._lock_base(conn, kb_id)
+            row = conn.execute(
+                "SELECT * FROM knowledge_documents WHERE kb_id = ? AND document_id = ?",
+                (kb_id, doc_id),
+            ).fetchone()
+            if row is None:
+                return []
+            document = KnowledgeDocumentRow.from_row(row)
+            predicate = "document_id = ?"
+            params: tuple[object, ...] = (doc_id,)
+            if document.is_dir:
+                prefix = f"{document.path}/"
+                predicate = "(document_id = ? OR substr(path, 1, ?) = ?)"
+                params += (len(prefix), prefix)
+            rows = conn.execute(
+                "UPDATE knowledge_documents SET status = 'withdrawn', error_message = '', "
+                f"updated_at = ? WHERE kb_id = ? AND {predicate} RETURNING *",
+                (now_ts(), kb_id, *params),
+            ).fetchall()
+            return map_rows(rows, KnowledgeDocumentRow)
+
+    def finish_withdrawal(self, kb_id: str, doc_ids: list[str]) -> None:
+        """Remove only the rows claimed before cleaning up external storage."""
+        with self._db.transaction() as conn:
+            self._lock_base(conn, kb_id)
+            placeholders = ",".join("?" for _ in doc_ids)
+            removed = conn.execute(
+                f"DELETE FROM knowledge_documents WHERE kb_id = ? "
+                f"AND status = 'withdrawn' AND document_id IN ({placeholders}) RETURNING is_dir",
+                (kb_id, *doc_ids),
+            ).fetchall()
+            file_count = sum(1 for row in removed if not row["is_dir"])
+            if file_count:
+                self._decrement_doc_count(conn, kb_id, file_count)
+
+    @staticmethod
+    def _decrement_doc_count(conn: Any, kb_id: str, file_count: int) -> None:
+        conn.execute(
+            "UPDATE knowledge_bases SET doc_count = CASE "
+            "WHEN doc_count > ? THEN doc_count - ? ELSE 0 END, "
+            "updated_at = ? WHERE knowledge_base_id = ?",
+            (file_count, file_count, now_ts(), kb_id),
+        )
 
     def delete_document(self, doc_id: str) -> list[KnowledgeDocumentRow]:
         """Delete a file or a folder (and its descendants). Return removed rows."""
-        ts = now_ts()
         document = self.get_document(doc_id)
         if document is None:
             return []
         with self._db.transaction() as conn:
+            self._lock_base(conn, document.kb_id)
+            row = conn.execute(
+                "SELECT * FROM knowledge_documents WHERE document_id = ?", (doc_id,)
+            ).fetchone()
+            if row is None:
+                return []
+            document = KnowledgeDocumentRow.from_row(row)
             if document.is_dir:
                 # Match descendants by a case-sensitive prefix, not ``path LIKE '<dir>/%'``:
                 # ``_`` and ``%`` in a folder name are LIKE wildcards (deleting ``a_b`` also
@@ -420,31 +510,19 @@ class KnowledgeRepo:
                 # meaning on both backends.
                 prefix = f"{document.path}/"
                 rows = conn.execute(
-                    "SELECT * FROM knowledge_documents WHERE kb_id = ? AND "
-                    "(path = ? OR substr(path, 1, ?) = ?)",
-                    (document.kb_id, document.path, len(prefix), prefix),
+                    "DELETE FROM knowledge_documents WHERE kb_id = ? AND "
+                    "(document_id = ? OR substr(path, 1, ?) = ?) RETURNING *",
+                    (document.kb_id, doc_id, len(prefix), prefix),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM knowledge_documents WHERE document_id = ?",
+                    "DELETE FROM knowledge_documents WHERE document_id = ? RETURNING *",
                     (doc_id,),
                 ).fetchall()
             removed = map_rows(rows, KnowledgeDocumentRow)
             file_count = sum(1 for row in removed if not row.is_dir)
-            ids = [row.id for row in removed]
-            if ids:
-                placeholders = ", ".join("?" * len(ids))
-                conn.execute(
-                    f"DELETE FROM knowledge_documents WHERE document_id IN ({placeholders})",
-                    ids,
-                )
             if file_count:
-                conn.execute(
-                    "UPDATE knowledge_bases SET doc_count = CASE "
-                    "WHEN doc_count > ? THEN doc_count - ? ELSE 0 END, "
-                    "updated_at = ? WHERE knowledge_base_id = ?",
-                    (file_count, file_count, ts, document.kb_id),
-                )
+                self._decrement_doc_count(conn, document.kb_id, file_count)
         return removed
 
     def count_documents(self, kb_id: str) -> int:
@@ -479,13 +557,20 @@ class KnowledgeRepo:
         self, kb_id: str, doc_id: str, new_name: str
     ) -> KnowledgeDocumentRow | None:
         """Rename a document (file or folder), rewriting descendant paths for folders."""
-        document = self.get_document(doc_id)
-        if document is None or document.kb_id != kb_id:
-            return None
-        parent = path_parent(document.path)
-        new_path = normalize_kb_path(f"{parent}/{new_name}")
         ts = now_ts()
         with self._db.transaction() as conn:
+            self._lock_base(conn, kb_id)
+            row = conn.execute(
+                "SELECT * FROM knowledge_documents WHERE kb_id = ? AND document_id = ?",
+                (kb_id, doc_id),
+            ).fetchone()
+            if row is None:
+                return None
+            document = KnowledgeDocumentRow.from_row(row)
+            if document.status == "withdrawn":
+                raise KnowledgePathWithdrawnError(document.path)
+            parent = path_parent(document.path)
+            new_path = normalize_kb_path(f"{parent}/{new_name}")
             if document.is_dir:
                 # Rewrite the folder's own prefix once across all descendants.
                 prefix = f"{document.path}/"

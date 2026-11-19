@@ -1,10 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "antd";
 import { FileText } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { KnowledgeCitation } from "../../../utils/parseKnowledgeCitations";
-import { knowledgeBasesApi } from "../../../api/modules/knowledgeBases";
-import { isNotFoundApiError } from "../../../utils/apiError";
+import { useWithdrawnCitations } from "./KnowledgeCitationStatusContext";
 import {
   knowledgeCitationHasNestedPath,
   knowledgeCitationTooltip,
@@ -85,39 +84,7 @@ export function KnowledgeCitationsStrip({
 }) {
   const { t } = useTranslation();
   const filePreview = useChatFilePreview();
-  const [documents, setDocuments] = useState<Record<string, string[] | null>>(
-    {},
-  );
-  const baseIds = JSON.stringify([
-    ...new Set(citations.map((citation) => citation.kbId).filter(Boolean)),
-  ]);
-
-  useEffect(() => {
-    let active = true;
-    const ids: string[] = JSON.parse(baseIds);
-    setDocuments({});
-    for (const id of ids) {
-      void knowledgeBasesApi.listDocuments(id).then(
-        (rows) => {
-          if (active)
-            setDocuments((current) => ({
-              ...current,
-              [id]: rows
-                .filter((row) => row.status !== "withdrawn")
-                .map((row) => row.id),
-            }));
-        },
-        (error: unknown) => {
-          if (active && isNotFoundApiError(error)) {
-            setDocuments((current) => ({ ...current, [id]: null }));
-          }
-        },
-      );
-    }
-    return () => {
-      active = false;
-    };
-  }, [baseIds]);
+  const isWithdrawn = useWithdrawnCitations();
 
   if (citations.length === 0) return null;
 
@@ -131,11 +98,7 @@ export function KnowledgeCitationsStrip({
           <KnowledgeCitationChip
             key={citation.docId}
             citation={citation}
-            withdrawn={
-              citation.kbId in documents &&
-              (documents[citation.kbId] === null ||
-                !documents[citation.kbId]?.includes(citation.docId))
-            }
+            withdrawn={isWithdrawn(citation)}
             onOpen={() => filePreview?.openKnowledgeCitation(citation)}
           />
         ))}
