@@ -64,6 +64,52 @@ def test_resolve_octop_executable_falls_back_to_path(
     assert service_mod.resolve_octop_executable() == fake_octop
 
 
+def test_resolve_octop_executable_finds_portable_root_bin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    portable_root = tmp_path / "portable"
+    runtime_bin = portable_root / "runtime" / "bin"
+    runtime_bin.mkdir(parents=True)
+    python = runtime_bin / "python3"
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    portable_octop = portable_root / "bin" / "octop"
+    portable_octop.parent.mkdir(parents=True)
+    portable_octop.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(sys, "executable", str(python))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    assert service_mod.resolve_octop_executable() == portable_octop
+
+
+def test_render_systemd_unit_preserves_green_packages_and_armcap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = _runtime(tmp_path)
+    monkeypatch.setenv("OCTOP_GREEN_PACKAGES", "/opt/colink/packages")
+    monkeypatch.setenv("OPENSSL_armcap", "0x3f")
+
+    unit = render_systemd_unit(runtime, user_unit=False)
+    assert "Environment=OCTOP_GREEN_PACKAGES=/opt/colink/packages" in unit
+    assert "Environment=OPENSSL_armcap=0x3f" in unit
+
+
+def test_render_launchd_plist_preserves_green_packages_and_armcap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = replace(_runtime(tmp_path), mode="launchd")
+    monkeypatch.setenv("OCTOP_GREEN_PACKAGES", "/opt/colink/packages")
+    monkeypatch.setenv("OPENSSL_armcap", "0x3f")
+
+    plist = render_launchd_plist(runtime)
+    assert "<key>OCTOP_GREEN_PACKAGES</key>" in plist
+    assert "<string>/opt/colink/packages</string>" in plist
+    assert "<key>OPENSSL_armcap</key>" in plist
+    assert "<string>0x3f</string>" in plist
+
+
 def test_render_systemd_unit_user_scope(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     unit = render_systemd_unit(runtime, user_unit=True)
@@ -921,6 +967,8 @@ def test_needs_sudo_false_when_an_ancestor_is_writable(tmp_path: Path) -> None:
 
 class _FakeOs:
     """Minimal stand-in for `os` so we can stub `geteuid` and `W_OK` checks."""
+
+    environ = os.environ
 
     def __init__(self, *, root: bool) -> None:
         self._root = root

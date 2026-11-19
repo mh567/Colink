@@ -106,3 +106,29 @@ def test_launch_has_no_provider_seed() -> None:
     assert "_seed_initial_provider" not in source
     assert "nexusapi" not in source
     assert "OCTOP_DESKTOP_OOB" not in source
+
+
+def test_bootstrap_masks_arm64_sve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "packages").mkdir()
+    module = _load_launch_module()
+    module.__file__ = str(tmp_path / "launch.py")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(os, "uname", lambda: type("Uname", (), {"machine": "aarch64"})())
+    monkeypatch.delenv("OPENSSL_armcap", raising=False)
+
+    fake_cpuinfo = tmp_path / "cpuinfo"
+    fake_cpuinfo.write_text("Features : fp asimd sve2\n", encoding="utf-8")
+
+    import builtins
+
+    real_open = builtins.open
+
+    def mock_open(file, *args, **kwargs):
+        if file == "/proc/cpuinfo":
+            return real_open(fake_cpuinfo, *args, **kwargs)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", mock_open)
+    module._bootstrap()
+    assert os.environ.get("OPENSSL_armcap") == "0x3f"  # noqa: SIM112

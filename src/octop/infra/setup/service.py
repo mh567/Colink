@@ -180,6 +180,10 @@ def resolve_octop_executable(home: Path | None = None) -> Path:
     for candidate in (
         Path(sys.executable).parent / "octop",
         Path(sys.executable).parent / "octop.exe",
+        Path(sys.executable).parent.parent / "bin" / "octop",
+        Path(sys.executable).parent.parent / "bin" / "octop.exe",
+        Path(sys.executable).parent.parent.parent / "bin" / "octop",
+        Path(sys.executable).parent.parent.parent / "bin" / "octop.exe",
     ):
         if candidate.is_file():
             return candidate
@@ -395,8 +399,13 @@ def render_systemd_unit(runtime: ServiceRuntime, *, user_unit: bool | None = Non
         f"Environment=OCTOP_HOME={runtime.home}\n"
         "Environment=OCTOP_SERVICE_MODE=systemd\n"
     )
+    env_map = getattr(os, "environ", None) or {}
     if user_unit:
         env_lines += "Environment=OCTOP_SYSTEMD_USER=1\n"
+    if "OCTOP_GREEN_PACKAGES" in env_map:
+        env_lines += f"Environment=OCTOP_GREEN_PACKAGES={env_map['OCTOP_GREEN_PACKAGES']}\n"
+    if "OPENSSL_armcap" in env_map:
+        env_lines += f"Environment=OPENSSL_armcap={env_map['OPENSSL_armcap']}\n"
     nofile = _user_nofile_cap() if user_unit else SERVICE_NOFILE_LIMIT
     nofile_line = f"LimitNOFILE={nofile}\n" if nofile is not None else ""
     return (
@@ -433,6 +442,28 @@ def render_launchd_plist(runtime: ServiceRuntime) -> str:
         if runtime.scope == "system"
         else ""
     )
+    env_dict_lines = (
+        "  <key>EnvironmentVariables</key>\n"
+        "  <dict>\n"
+        f"    <key>HOME</key>\n"
+        f"    <string>{account_home}</string>\n"
+        f"    <key>OCTOP_HOME</key>\n"
+        f"    <string>{runtime.home}</string>\n"
+        "    <key>OCTOP_SERVICE_MODE</key>\n"
+        "    <string>launchd</string>\n"
+    )
+    env_map = getattr(os, "environ", None) or {}
+    if "OCTOP_GREEN_PACKAGES" in env_map:
+        env_dict_lines += (
+            "    <key>OCTOP_GREEN_PACKAGES</key>\n"
+            f"    <string>{env_map['OCTOP_GREEN_PACKAGES']}</string>\n"
+        )
+    if "OPENSSL_armcap" in env_map:
+        env_dict_lines += (
+            f"    <key>OPENSSL_armcap</key>\n    <string>{env_map['OPENSSL_armcap']}</string>\n"
+        )
+    env_dict_lines += "  </dict>\n"
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -447,15 +478,7 @@ def render_launchd_plist(runtime: ServiceRuntime) -> str:
         f"    <string>{runtime.octop_bin}</string>\n"
         "    <string>run</string>\n"
         "  </array>\n"
-        "  <key>EnvironmentVariables</key>\n"
-        "  <dict>\n"
-        f"    <key>HOME</key>\n"
-        f"    <string>{account_home}</string>\n"
-        f"    <key>OCTOP_HOME</key>\n"
-        f"    <string>{runtime.home}</string>\n"
-        "    <key>OCTOP_SERVICE_MODE</key>\n"
-        "    <string>launchd</string>\n"
-        "  </dict>\n"
+        f"{env_dict_lines}"
         f"  <key>WorkingDirectory</key>\n"
         f"  <string>{runtime.home}</string>\n"
         "  <key>RunAtLoad</key>\n"

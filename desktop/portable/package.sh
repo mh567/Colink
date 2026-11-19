@@ -261,6 +261,11 @@ assemble_one() {
   cp "${REPO_ROOT}/desktop/pdf/runner.py" "${REPO_ROOT}/desktop/pdf/NotoSansSC-Regular.ttf" \
     "${REPO_ROOT}/desktop/pdf/OFL.txt" "${staging}/pdf/"
 
+  mkdir -p "${staging}/bin"
+  cp "${TEMPLATES}/bin/octop" "${staging}/bin/octop"
+  cp "${TEMPLATES}/bin/octop.cmd" "${staging}/bin/octop.cmd"
+  chmod +x "${staging}/bin/octop"
+
   cp "${TEMPLATES}/start.sh" "${staging}/start.sh"
   cp "${TEMPLATES}/start.bat" "${staging}/start.bat"
   cp "${TEMPLATES}/launch.py" "${staging}/launch.py"

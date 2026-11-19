@@ -9,6 +9,9 @@ from typing import Any, ClassVar
 import click
 
 from octop.cli.registry import COMMANDS
+from octop.infra.utils.arm64_compat import ensure_arm64_openssl_compat
+
+ensure_arm64_openssl_compat()
 
 
 def _ensure_utf8_stdio(
