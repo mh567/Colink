@@ -45,6 +45,8 @@ type docxSession struct {
 	Apply                                  func(func() error) error
 	TaskChanged                            func()
 	RecordRecovery                         func(string) error
+	AuditRequestID                         string
+	AuditPath                              string
 }
 
 func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s.UserID, s.DeviceID) }
@@ -52,6 +54,7 @@ func (s docxSession) scope() string { return fmt.Sprintf("%s\n%d\n%s", s.Base, s
 type docxRequest struct {
 	RequestID   string `json:"request_id,omitempty"`
 	TaskID      string `json:"task_id,omitempty"`
+	GrantID     string `json:"grant_id,omitempty"`
 	AgentID     string `json:"agent_id,omitempty"`
 	Format      string `json:"format,omitempty"`
 	Action      string `json:"action"`
@@ -84,8 +87,9 @@ type docxTask struct {
 	Steps       []string `json:"steps,omitempty"`
 }
 type docxState struct {
-	Grants []directoryGrant `json:"grants"`
-	Tasks  []docxTask       `json:"tasks"`
+	Grants           []directoryGrant   `json:"grants"`
+	Tasks            []docxTask         `json:"tasks"`
+	PendingFileAudit []fileAuditReceipt `json:"pending_file_audit,omitempty"`
 }
 type docxEvent struct {
 	DeviceID         string           `json:"device_id"`
@@ -97,6 +101,8 @@ type docxEvent struct {
 }
 type localDOCX struct {
 	mu                 sync.Mutex
+	auditMu            sync.Mutex
+	statusMu           sync.Mutex
 	home               string
 	roots              map[string]*os.Root
 	activeCancels      map[string]context.CancelFunc
@@ -269,6 +275,9 @@ func (w *localDOCX) grant(s docxSession, path, mode string) (directoryGrant, err
 func (w *localDOCX) openGrant(s docxSession, id string, write bool) (*os.Root, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.openGrantLocked(s, id, write)
+}
+func (w *localDOCX) openGrantLocked(s docxSession, id string, write bool) (*os.Root, error) {
 	states, err := w.load()
 	if err != nil {
 		return nil, err
@@ -304,6 +313,41 @@ func (w *localDOCX) openGrant(s docxSession, id string, write bool) (*os.Root, e
 		return root, nil
 	}
 	return nil, errors.New("目录未获当前账号和设备授权")
+}
+func (w *localDOCX) withGrant(s docxSession, id string, write bool, operation func(*os.Root) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	root, err := w.openGrantLocked(s, id, write)
+	if err != nil {
+		return err
+	}
+	return operation(root)
+}
+func (w *localDOCX) revoke(s docxSession, grantID string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	states, err := w.load()
+	if err != nil {
+		return err
+	}
+	state := states[s.scope()]
+	for i, grant := range state.Grants {
+		if grant.ID != grantID {
+			continue
+		}
+		state.Grants = append(state.Grants[:i], state.Grants[i+1:]...)
+		states[s.scope()] = state
+		if err = w.save(states); err != nil {
+			return err
+		}
+		key := s.scope() + "\n" + grant.ID
+		if root := w.roots[key]; root != nil {
+			delete(w.roots, key)
+			return root.Close()
+		}
+		return nil
+	}
+	return fileopsCopyError(copyFileGrantNotFound)
 }
 func docxFilename(name string) error {
 	if name == "" || !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || !strings.EqualFold(filepath.Ext(name), ".docx") || strings.TrimSpace(name) != name {
@@ -474,7 +518,12 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 	if err != nil || endpoint.IsAbs() || endpoint.Host != "" || endpoint.RawQuery != "" || endpoint.ForceQuery || !strings.HasPrefix(endpoint.Path, "/") || strings.HasPrefix(endpoint.Path, "//") || !strings.HasSuffix(endpoint.Path, "/api/devices/connect") {
 		return errors.New("无效设备任务接口地址")
 	}
-	u.Path = strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID + "/" + feature + "/" + action
+	base := strings.TrimSuffix(endpoint.Path, "/connect") + "/" + s.DeviceID
+	if feature == "file-events" {
+		u.Path = base + "/file-events"
+	} else {
+		u.Path = base + "/" + feature + "/" + action
+	}
 	u.RawPath = ""
 	u.RawQuery = ""
 	data, err := json.Marshal(body)
@@ -484,7 +533,11 @@ func deviceTaskCall(s docxSession, feature, action string, body any, result any)
 	if feature != "browser" {
 		operationContext = s.Context
 	}
-	ctx, cancel := context.WithTimeout(operationContext, 2*time.Minute)
+	timeout := 2 * time.Minute
+	if feature == "file-events" {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(operationContext, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(data))
 	if err != nil {
@@ -529,6 +582,12 @@ func authorizeDOCX(s docxSession, action string) error {
 	if s.AgentID != "" {
 		payload["agent_id"] = s.AgentID
 	}
+	if action != "read" && s.AuditRequestID != "" {
+		payload["request_id"] = s.AuditRequestID
+	}
+	if action != "read" && s.AuditPath != "" {
+		payload["path"] = filepath.Base(s.AuditPath)
+	}
 	if err := docxCall(s, "authorize", payload, &reply); err != nil {
 		return err
 	}
@@ -537,26 +596,18 @@ func authorizeDOCX(s docxSession, action string) error {
 	}
 	return nil
 }
-func (w *localDOCX) record(s docxSession, task docxTask) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	states, err := w.load()
-	if err != nil {
-		return err
-	}
-	state := states[s.scope()]
-	found := false
-	for i := range state.Tasks {
-		if state.Tasks[i].ID == task.ID {
-			state.Tasks[i] = task
-			found = true
+
+func (w *localDOCX) record(s docxSession, task docxTask, audit ...fileAuditReceipt) error {
+	return w.updateState(s, func(state *docxState) {
+		state.PendingFileAudit = append(state.PendingFileAudit, audit...)
+		for i := range state.Tasks {
+			if state.Tasks[i].ID == task.ID {
+				state.Tasks[i] = task
+				return
+			}
 		}
-	}
-	if !found {
 		state.Tasks = append(state.Tasks, task)
-	}
-	states[s.scope()] = state
-	return w.save(states)
+	})
 }
 func (w *localDOCX) registerTask(taskID string, parent context.Context) (context.Context, func()) {
 	if parent == nil {
@@ -658,11 +709,24 @@ func (w *localDOCX) cancel(s docxSession, taskID string) error {
 		}
 	}
 
+	var rejectedAudit *fileAuditReceipt
 	if validDestructiveID(taskID) {
 		dir := w.destructiveDirectory(s)
 		journalPath := filepath.Join(dir, taskID)
 		if entry, readErr := readDestructiveRecord(journalPath); readErr == nil {
 			if entry.Task.Status == "running" || entry.Task.Status == "awaiting_confirmation" {
+				if !active && entry.Task.Status == "awaiting_confirmation" && isDestructiveAction(entry.Task.Operation) {
+					auditSession := s
+					if entry.Task.Format != "" {
+						auditSession.Format = entry.Task.Format
+					} else if auditSession.Format == "" {
+						auditSession.Format = "docx"
+					}
+					auditSession.AuditRequestID = entry.Task.ID
+					auditSession.AuditPath = entry.Task.Output
+					receipt := auditSession.fileAudit("rejected", entry.Task.Operation)
+					rejectedAudit = &receipt
+				}
 				entry.Task.Status = "cancelled"
 				entry.Task.Error = ""
 				if data, marshalErr := json.Marshal(entry); marshalErr == nil {
@@ -670,6 +734,14 @@ func (w *localDOCX) cancel(s docxSession, taskID string) error {
 				}
 			}
 		}
+	}
+	if rejectedAudit != nil {
+		state.PendingFileAudit = append(state.PendingFileAudit, *rejectedAudit)
+		states[s.scope()] = state
+		if err = w.save(states); err != nil {
+			return err
+		}
+		go w.retryFileAudit(s)
 	}
 	return nil
 }
@@ -715,6 +787,8 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		}
 	}
 	task = docxTask{AgentID: request.AgentID, Format: format, ID: localID(), Instruction: request.Instruction, Source: request.Source, Output: request.Output, Status: "running", Steps: []string{}}
+	s.AuditRequestID = task.ID
+	s.AuditPath = request.Output
 	if err = filename(request.Source); err != nil {
 		if format == "pptx" {
 			return task, errors.New("PPTX_SOURCE_FILENAME")
@@ -762,7 +836,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	s.Context = ctx
 	defer releaseTask()
 	outputWritten := false
+	audited := false
 	defer func() {
+		event := "completed"
 		switch {
 		case w.isTaskCancelled(task.ID) || errors.Is(err, errDestructiveCancelled):
 			task.Status = "cancelled"
@@ -771,22 +847,33 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 				task.Output = ""
 			}
 			err = nil
+			event = "failed"
 		case w.isClosing():
 			task.Status = "interrupted"
 			task.Error = "客户端已中断；请核对目标文件后使用新文件名重试"
 			err = errors.New(task.Error)
+			event = "failed"
 		case err != nil:
 			task.Status = "failed"
 			task.Error = err.Error()
 			if !outputWritten {
 				task.Output = ""
 			}
+			event = "failed"
 		default:
 			task.Status = "completed"
 		}
-		if saveErr := w.record(s, task); saveErr != nil {
-			err = fmt.Errorf("任务结果记录失败，请核对目标文件：%w", saveErr)
+		var receipts []fileAuditReceipt
+		if audited {
+			receipts = append(receipts, s.fileAudit(event, "create"))
 		}
+		if saveErr := w.record(s, task, receipts...); saveErr != nil {
+			task.Status = "interrupted"
+			err = fmt.Errorf("任务结果记录失败，请核对目标文件：%w", saveErr)
+			task.Error = err.Error()
+			return
+		}
+		w.retryFileAudit(s)
 	}()
 	addStep := func(st string) {
 		if w.isTaskCancelled(task.ID) || w.isClosing() {
@@ -795,6 +882,10 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		task.Steps = append(task.Steps, st)
 		_ = w.record(s, task)
 	}
+	if err = authorizeDOCX(s, "create"); err != nil {
+		return task, err
+	}
+	audited = true
 	data, err := generateLocalOutput(s, request, source, current, addStep)
 	if err != nil {
 		return task, err
@@ -812,77 +903,94 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if w.isTaskCancelled(task.ID) || s.Context.Err() != nil {
 		return task, context.Canceled
 	}
-	output, err = w.openGrant(s, request.OutputGrant, true)
-	if err != nil {
-		if format == "pdf" {
-			return task, errors.New("PDF_OUTPUT_FOLDER")
+	sourceGrantInvalid := false
+	grantsAccepted := false
+	err = w.withGrant(s, request.OutputGrant, true, func(output *os.Root) error {
+		if _, sourceErr := w.openGrantLocked(s, request.SourceGrant, false); sourceErr != nil {
+			sourceGrantInvalid = true
+			if format == "pdf" {
+				return errors.New("PDF_SOURCE_FOLDER")
+			}
+			if format == "pptx" {
+				return errors.New("PPTX_SOURCE_FOLDER")
+			}
+			return sourceErr
 		}
-		if format == "pptx" {
-			return task, errPPTXOutputFolder
+		grantsAccepted = true
+		if w.cancelledTasks[task.ID] || s.Context.Err() != nil {
+			return context.Canceled
 		}
-		return task, err
-	}
-	if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
-		if createErr == nil {
-			outputWritten = true
-			addStep("已写入产物文件")
+		if handled, createErr := createLocalOutput(s, output, request.Output, data); handled {
+			return presentFileopsError(s.Locale, createErr)
 		}
-		return task, presentFileopsError(s.Locale, createErr)
-	}
-	if format == "pdf" {
-		err = writeLocalPPTXOutput(s, output, request.Output, data, func() error {
-			if w.isTaskCancelled(task.ID) || s.Context.Err() != nil {
+		write := func() error {
+			if w.cancelledTasks[task.ID] || s.Context.Err() != nil {
 				return context.Canceled
 			}
-			if err := authorizeDOCX(s, "read"); err != nil {
+			if format == "pdf" {
+				err := writeLocalPPTXOutput(s, output, request.Output, data, func() error {
+					if w.cancelledTasks[task.ID] || s.Context.Err() != nil {
+						return context.Canceled
+					}
+					if err := authorizeDOCX(s, "read"); err != nil {
+						return err
+					}
+					if err := authorizeDOCX(s, "create"); err != nil {
+						return err
+					}
+					return current()
+				})
+				if err != nil {
+					switch err.Error() {
+					case "PPTX_OUTPUT_FOLDER":
+						return errors.New("PDF_OUTPUT_FOLDER")
+					case "PPTX_OUTPUT_WRITE_FAILED":
+						return errors.New("PDF_OUTPUT_WRITE_FAILED")
+					case "PPTX_CREATE_ONLY":
+						return errors.New("PDF_CREATE_ONLY")
+					}
+				}
 				return err
 			}
-			if err := authorizeDOCX(s, "create"); err != nil {
-				return err
+			if format == "pptx" {
+				return writeLocalPPTXOutput(s, output, request.Output, data, func() error {
+					if w.cancelledTasks[task.ID] || s.Context.Err() != nil {
+						return context.Canceled
+					}
+					if err := authorizeDOCX(s, "create"); err != nil {
+						return err
+					}
+					return current()
+				})
 			}
-			return current()
-		})
-		if err != nil {
-			switch err.Error() {
-			case "PPTX_OUTPUT_FOLDER":
+			target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				return fmt.Errorf("无法新建产物（已有文件不会覆盖）：%w", err)
+			}
+			if _, err = target.Write(data); err == nil {
+				err = target.Sync()
+			}
+			closeErr := target.Close()
+			if err == nil {
+				err = closeErr
+			}
+			return err
+		}
+		if format == "pdf" || format == "pptx" || s.Apply == nil {
+			return write()
+		}
+		return s.Apply(write)
+	})
+	if err != nil && !grantsAccepted {
+		task.Output = ""
+		if !sourceGrantInvalid {
+			if format == "pdf" {
 				err = errors.New("PDF_OUTPUT_FOLDER")
-			case "PPTX_OUTPUT_WRITE_FAILED":
-				err = errors.New("PDF_OUTPUT_WRITE_FAILED")
-			case "PPTX_CREATE_ONLY":
-				err = errors.New("PDF_CREATE_ONLY")
 			}
-		} else {
-			outputWritten = true
-			addStep("已写入产物文件")
+			if format == "pptx" {
+				err = errPPTXOutputFolder
+			}
 		}
-		return task, err
-	}
-	if format == "pptx" {
-		err = writeLocalPPTXOutput(s, output, request.Output, data, func() error {
-			if w.isTaskCancelled(task.ID) || s.Context.Err() != nil {
-				return context.Canceled
-			}
-			if err := authorizeDOCX(s, "create"); err != nil {
-				return err
-			}
-			return current()
-		})
-		if err == nil {
-			outputWritten = true
-			addStep("已写入产物文件")
-		}
-		return task, err
-	}
-	target, err := output.OpenFile(request.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return task, fmt.Errorf("无法新建产物（已有文件不会覆盖）：%w", err)
-	}
-	if _, err = target.Write(data); err == nil {
-		err = target.Sync()
-	}
-	closeErr := target.Close()
-	if err == nil {
-		err = closeErr
 	}
 	if err == nil {
 		outputWritten = true

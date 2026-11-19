@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections import deque
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 from urllib.parse import SplitResult, urlsplit
@@ -25,6 +26,10 @@ ACTIONS = {
     "close_tab": {"tab_id"},
     "query": {"tab_id", "url"},
     "capture": {"tab_id", "url"},
+    "prepare_upload": {"tab_id", "url", "selector"},
+    "upload": {"tab_id", "url", "file_path", "selector"},
+    "prepare_download": {"tab_id", "url", "download_url", "selector"},
+    "download": {"tab_id", "url", "download_path", "download_url", "selector"},
     "close": set(),
 }
 
@@ -51,7 +56,7 @@ def page_url(url: str) -> SplitResult:
     raise BrowserError("BROWSER_INVALID_URL")
 
 
-def request_args(line: bytes) -> tuple[str, str, str]:
+def request_args(line: bytes) -> tuple[str, str, str, dict[str, Any]]:
     try:
         value = json.loads(line.decode("utf-8"))
     except (ValueError, RecursionError):
@@ -71,13 +76,46 @@ def request_args(line: bytes) -> tuple[str, str, str]:
         raise BrowserError("BROWSER_INVALID_REQUEST")
     if "tab_id" in ACTIONS[action] and not tab_id:
         raise BrowserError("BROWSER_INVALID_REQUEST")
-    if action in {"query", "capture"} or url:
+    if "url" in ACTIONS[action] and (action != "new_tab" or url):
         page_url(url)
-    return action, url, tab_id
+    extra: dict[str, Any] = {}
+    if action == "upload" or action == "download":
+        field = "file_path" if action == "upload" else "download_path"
+        raw = value.get(field)
+        if not isinstance(raw, str) or not raw:
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        path = Path(raw)
+        if (
+            not path.is_absolute()
+            or path.is_symlink()
+            or not (path.is_file() if action == "upload" else path.is_dir())
+        ):
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        extra[field] = str(path)
+    if action.endswith(("upload", "download")):
+        selector = value.get("selector", "")
+        if (
+            not isinstance(selector, str)
+            or len(selector) > 1024
+            or any(ord(c) < 32 for c in selector)
+        ):
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        extra["selector"] = selector
+    if action.endswith("download"):
+        link = value.get("download_url", "")
+        if not isinstance(link, str) or bool(link) == bool(selector):
+            raise BrowserError("BROWSER_INVALID_REQUEST")
+        if link:
+            page_url(link)
+        extra["download_url"] = link
+    return action, url, tab_id, extra
 
 
 START_TIMEOUT = 12
 COMMAND_TIMEOUT = 5
+DOWNLOAD_TIMEOUT = 25
+TRANSFER_LIMIT = 20 * 1024 * 1024
+DOWNLOAD_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 MESSAGE_LIMIT = 16 * 1024 * 1024
 TEXT_LIMIT = 60000
 IMAGE_LIMIT = 3 * 1024 * 1024
@@ -179,7 +217,100 @@ def display_url(url: str) -> str:
         return ""
 
 
+def _chrome_for_testing_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    pw_roots: list[Path] = []
+    if env_pw := os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        pw_roots.append(Path(env_pw))
+    if sys.platform == "darwin":
+        pw_roots.extend(
+            [
+                Path.home() / "Library" / "Caches" / "ms-playwright",
+                Path("/Library/Caches/ms-playwright"),
+            ]
+        )
+        candidates.extend(
+            [
+                Path(
+                    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+                ),
+                Path.home()
+                / "Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            ]
+        )
+    elif sys.platform == "win32":
+        if local := os.environ.get("LOCALAPPDATA"):
+            pw_roots.append(Path(local) / "ms-playwright")
+        for root_name in (
+            "ProgramW6432",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "LOCALAPPDATA",
+        ):
+            if root_val := os.environ.get(root_name):
+                candidates.append(
+                    Path(root_val) / "Google/Chrome for Testing/Application/chrome.exe"
+                )
+    elif sys.platform.startswith("linux"):
+        pw_roots.extend(
+            [
+                Path.home() / ".cache" / "ms-playwright",
+                Path("/root/.cache/ms-playwright"),
+            ]
+        )
+        candidates.append(Path("/usr/bin/google-chrome-for-testing"))
+
+    for root in pw_roots:
+        if root.is_dir():
+            try:
+                cdirs = sorted(
+                    [p for p in root.glob("chromium-*") if p.is_dir()],
+                    key=lambda p: (
+                        int(p.name.rsplit("-", 1)[-1])
+                        if p.name.rsplit("-", 1)[-1].isdigit()
+                        else -1
+                    ),
+                    reverse=True,
+                )
+                for cdir in cdirs:
+                    if sys.platform == "darwin":
+                        cft = (
+                            "Google Chrome for Testing.app",
+                            "Contents",
+                            "MacOS",
+                            "Google Chrome for Testing",
+                        )
+                        candidates.extend(
+                            [
+                                cdir.joinpath("chrome-mac-arm64", *cft),
+                                cdir.joinpath("chrome-mac-x64", *cft),
+                                cdir.joinpath(
+                                    "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"
+                                ),
+                            ]
+                        )
+                    elif sys.platform == "win32":
+                        candidates.extend(
+                            [
+                                cdir / "chrome-win64" / "chrome.exe",
+                                cdir / "chrome-win" / "chrome.exe",
+                            ]
+                        )
+                    else:
+                        candidates.extend(
+                            [
+                                cdir / "chrome-linux64" / "chrome",
+                                cdir / "chrome-linux" / "chrome",
+                            ]
+                        )
+            except OSError:
+                pass
+
+    return candidates
+
+
 def browser_executable() -> Path | None:
+    cft = _chrome_for_testing_candidates()
     if sys.platform == "win32":
         roots = [
             os.environ.get(name)
@@ -189,13 +320,13 @@ def browser_executable() -> Path | None:
             Path("Google/Chrome/Application/chrome.exe"),
             Path("Microsoft/Edge/Application/msedge.exe"),
         )
-        candidates = [Path(root) / suffix for root in roots if root for suffix in suffixes]
+        candidates = [*cft, *[Path(root) / suffix for root in roots if root for suffix in suffixes]]
     elif sys.platform == "darwin":
-        candidates = [Path("/Applications/Chromium.app/Contents/MacOS/Chromium")]
+        candidates = [*cft, Path("/Applications/Chromium.app/Contents/MacOS/Chromium")]
     elif sys.platform.startswith("linux"):
-        candidates = [Path("/usr/bin/chromium"), Path("/usr/bin/chromium-browser")]
+        candidates = [*cft, Path("/usr/bin/chromium"), Path("/usr/bin/chromium-browser")]
     else:
-        candidates = []
+        candidates = [*cft]
     return next((path for path in candidates if path.is_absolute() and path.is_file()), None)
 
 
@@ -226,6 +357,7 @@ class PipeClient:
         self.buffer = bytearray()
         self.next_id = 0
         self.usable = True
+        self.download_events: deque[dict[str, Any]] | None = None
 
     def exchange(self, command: dict[str, Any]) -> dict[str, Any]:
         payload = memoryview(json.dumps(command).encode("utf-8") + b"\0")
@@ -249,6 +381,13 @@ class PipeClient:
             offset = 0
             if not isinstance(message, dict):
                 raise ValueError("Invalid DevTools pipe message")
+            if self.download_events is not None and message.get("method") in {
+                "Browser.downloadWillBegin",
+                "Browser.downloadProgress",
+            }:
+                if len(self.download_events) >= 128:
+                    raise ValueError("Too many download events")
+                self.download_events.append(message)
             if message.get("id") == command["id"] and message.get("sessionId") == command.get(
                 "sessionId"
             ):
@@ -347,6 +486,7 @@ class LocalBrowser:
         self.process: subprocess.Popen[bytes] | None = None
         self.client: PipeClient | None = None
         self.listed_urls: dict[str, str] = {}
+        self.prepared: tuple[Any, ...] | None = None
 
     async def start(self) -> None:
         if (
@@ -563,7 +703,9 @@ class LocalBrowser:
             raise BrowserError("BROWSER_READ_BLOCKED")
         return result
 
-    async def action(self, name: str, url: str, tab_id: str) -> dict[str, Any]:
+    async def action(self, name: str, url: str, tab_id: str, **kwargs: Any) -> dict[str, Any]:
+        if not name.endswith(("upload", "download")):
+            self.prepared = None
         if name == "close":
             await self.close()
             return {}
@@ -580,12 +722,250 @@ class LocalBrowser:
             await self.connection().send(method, {"targetId": tab_id})
         if name in {"query", "capture"}:
             return await self.inspect(tab_id, url, capture=name == "capture")
+        if name.endswith(("upload", "download")):
+            return await self.transfer(name, tab_id, url, **kwargs)
         return {"tabs": await self.tabs()}
+
+    async def transfer(
+        self,
+        action: str,
+        tab_id: str,
+        expected: str,
+        *,
+        selector: str = "",
+        file_path: str = "",
+        download_path: str = "",
+        download_url: str = "",
+    ) -> dict[str, Any]:
+        from octop_browser.cdp.client import CDPSessionError
+
+        prepare = action.startswith("prepare_")
+        kind = action.removeprefix("prepare_")
+        approved, self.prepared = self.prepared, None
+        if not prepare and approved is None:
+            raise BrowserError("BROWSER_ACTION_CHANGED")
+        expected = display_url(expected)
+        source = (await self.selected_tab(tab_id))["url"]
+        if (
+            not expected
+            or display_url(source) != expected
+            or self.listed_urls.get(tab_id) != source
+        ):
+            raise BrowserError("BROWSER_READ_BLOCKED")
+
+        client = self.connection()
+        session_id = ""
+        initiated = False
+        try:
+            session_id = (
+                await client.send("Target.attachToTarget", {"targetId": tab_id, "flatten": True})
+            )["sessionId"]
+            page = PageSession(client, session_id)
+            context, before = await self.wait_for_page(page, source, capture=False)
+            frame = (await page.send("Page.getFrameTree"))["frameTree"]["frame"]["id"]
+            if kind == "upload":
+                selector = selector or 'input[type="file"]'
+                result = await page.send(
+                    "Runtime.evaluate",
+                    {
+                        "expression": (
+                            "(() => { const el = document.querySelector("
+                            + json.dumps(selector)
+                            + "); return el?.localName === 'input' && el.type === 'file' && "
+                            "!el.matches(':disabled') ? el : null; })()"
+                        ),
+                        "contextId": context,
+                        "returnByValue": False,
+                    },
+                )
+                node = result.get("result", {}).get("objectId")
+                if not node:
+                    raise BrowserError("BROWSER_ELEMENT_NOT_FOUND")
+                target = (await page.send("DOM.describeNode", {"objectId": node}))["node"][
+                    "backendNodeId"
+                ]
+                label = selector
+            else:
+                result = await page.send(
+                    "Runtime.evaluate",
+                    {
+                        "expression": (
+                            "(() => { const el = "
+                            + (
+                                "document.querySelector(" + json.dumps(selector) + ")"
+                                if selector
+                                else "null"
+                            )
+                            + "; const href = "
+                            + (
+                                "el?.localName === 'a' && el.hasAttribute('href') ? el.href : ''"
+                                if selector
+                                else json.dumps(download_url)
+                            )
+                            + "; if (!href) return null; const url = new URL(href); "
+                            "url.hash = ''; return url.origin === location.origin ? url.href : null; })()"
+                        ),
+                        "contextId": context,
+                        "returnByValue": True,
+                    },
+                )
+                target = result.get("result", {}).get("value")
+                if not isinstance(target, str):
+                    raise BrowserError("BROWSER_INVALID_URL")
+                page_url(target)
+                label = target
+            intent = (kind, tab_id, source, before["document"], frame, selector, target)
+            if prepare:
+                self.prepared = intent
+                return {"url": source, "title": before["title"][:512], "target": label}
+            if approved != intent:
+                raise BrowserError("BROWSER_ACTION_CHANGED")
+            initiated = True
+            if kind == "upload":
+                await page.send("DOM.setFileInputFiles", {"files": [file_path], "objectId": node})
+                # Chromium fires input/change itself. Report selection only: the site owns submission.
+                return {"file": Path(file_path).name, "url": expected}
+            artifact = await self.download(
+                client, page, context, frame, target, Path(download_path)
+            )
+            return {"file": artifact.name, "size": artifact.stat().st_size, "url": expected}
+        except CDPSessionError:
+            raise BrowserError(
+                "BROWSER_TRANSFER_UNCERTAIN" if initiated else "BROWSER_TASK_FAILED"
+            ) from None
+        except TimeoutError:
+            raise BrowserError("BROWSER_TRANSFER_UNCERTAIN") from None
+        finally:
+            if session_id:
+                with contextlib.suppress(CDPSessionError):
+                    await client.send("Target.detachFromTarget", {"sessionId": session_id})
+
+    async def download(
+        self,
+        client: PipeClient,
+        page: PageSession,
+        context: int,
+        frame: str,
+        expected: str,
+        directory: Path,
+    ) -> Path:
+        # Reject redirects before the browser follows them: consent applies to the exact link.
+        response = await client.send(
+            "Runtime.evaluate",
+            {
+                "expression": """(async () => {
+                    const response = await fetch("""
+                + json.dumps(expected)
+                + """, {
+                        redirect: 'error', credentials: 'same-origin', mode: 'same-origin',
+                        signal: AbortSignal.timeout(23000),
+                    });
+                    if (!response.ok || !response.body) return null;
+                    const reader = response.body.getReader();
+                    let size = 0;
+                    const parts = [];
+                    while (true) {
+                        const {value, done} = await reader.read();
+                        if (done) break;
+                        size += value.byteLength;
+                        if (size > """
+                + str(TRANSFER_LIMIT)
+                + """) {
+                            await reader.cancel();
+                            return 'too_large';
+                        }
+                        parts.push(value);
+                    }
+                    return URL.createObjectURL(new Blob(parts));
+                })()""",
+                "awaitPromise": True,
+                "contextId": context,
+                "returnByValue": True,
+            },
+            session_id=page.session_id,
+            timeout=DOWNLOAD_TIMEOUT,
+        )
+        blob = response.get("result", {}).get("value")
+        if blob == "too_large":
+            raise BrowserError("BROWSER_FILE_TOO_LARGE")
+        if not isinstance(blob, str) or not blob.startswith("blob:"):
+            raise BrowserError("BROWSER_TRANSFER_UNCERTAIN")
+        client.download_events = deque()
+        guid = ""
+        completed = False
+        try:
+            await client.send(
+                "Browser.setDownloadBehavior",
+                {
+                    "behavior": "allowAndName",
+                    "downloadPath": str(directory),
+                    "eventsEnabled": True,
+                },
+            )
+            result = await page.send(
+                "Runtime.evaluate",
+                {
+                    "expression": """(() => {
+                    const a = document.createElement('a');
+                    a.href = """
+                    + json.dumps(blob)
+                    + """;
+                    a.download = '';
+                    a.click();
+                })()""",
+                    "contextId": context,
+                    "returnByValue": True,
+                },
+            )
+            if "exceptionDetails" in result:
+                raise BrowserError("BROWSER_TRANSFER_UNCERTAIN")
+            async with asyncio.timeout(8):
+                while True:
+                    # The serial debug pipe receives events alongside command replies.
+                    await client.send("Browser.getVersion")
+                    while client.download_events:
+                        event = client.download_events.popleft()
+                        params = event["params"]
+                        if event["method"] == "Browser.downloadWillBegin":
+                            if guid or params["frameId"] != frame or params["url"] != blob:
+                                raise BrowserError("BROWSER_TRANSFER_UNCERTAIN")
+                            guid = params["guid"]
+                            if not DOWNLOAD_ID.fullmatch(guid):
+                                raise BrowserError("BROWSER_TASK_FAILED")
+                            continue
+                        if not guid or params.get("guid") != guid:
+                            raise BrowserError("BROWSER_TRANSFER_UNCERTAIN")
+                        if params.get("receivedBytes", 0) > TRANSFER_LIMIT:
+                            raise BrowserError("BROWSER_FILE_TOO_LARGE")
+                        if params["state"] == "canceled":
+                            raise BrowserError("BROWSER_TASK_FAILED")
+                        if params["state"] == "completed":
+                            artifact = directory / guid
+                            if artifact.is_symlink() or not artifact.is_file():
+                                raise BrowserError("BROWSER_TASK_FAILED")
+                            completed = True
+                            return artifact
+                    await asyncio.sleep(0.1)
+        finally:
+            client.download_events = None
+            if guid and not completed:
+                with contextlib.suppress(Exception):
+                    await client.send("Browser.cancelDownload", {"guid": guid})
+            await client.send("Browser.setDownloadBehavior", {"behavior": "deny"})
+            with contextlib.suppress(Exception):
+                await page.send(
+                    "Runtime.evaluate",
+                    {
+                        "expression": "URL.revokeObjectURL(" + json.dumps(blob) + ")",
+                        "contextId": context,
+                    },
+                )
 
     async def close(self) -> None:
         client, process = self.client, self.process
         self.client, self.process = None, None
         self.listed_urls.clear()
+        self.prepared = None
         if client is not None and client.usable and process is not None and process.poll() is None:
             with contextlib.suppress(Exception):
                 await client.send("Browser.close", timeout=1)
@@ -615,8 +995,8 @@ async def serve(profile: Path, source: BinaryIO, output: TextIO) -> None:
             try:
                 if len(line) > REQUEST_LIMIT:
                     raise BrowserError("BROWSER_INVALID_REQUEST")
-                action, url, tab_id = request_args(line)
-                reply = await browser.action(action, url, tab_id)
+                action, url, tab_id, extra = request_args(line)
+                reply = await browser.action(action, url, tab_id, **extra)
             except BrowserError as exc:
                 reply = {"error": str(exc)}
             except Exception:

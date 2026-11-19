@@ -127,7 +127,7 @@ def browser(runner, tmp_path, monkeypatch):
             method, params = command["method"], command["params"]
             session_id = command.get("sessionId")
             self.commands.append((method, params))
-            if method.startswith(("Page.", "Runtime.")):
+            if method.startswith(("Page.", "Runtime.", "DOM.")):
                 assert session_id == "session:A"
                 result = self.page_result(method, params)
             else:
@@ -162,6 +162,10 @@ def browser(runner, tmp_path, monkeypatch):
             if method == "Target.closeTarget":
                 del self.pages[params["targetId"]]
                 return {"success": True}
+            if method == "Browser.setDownloadBehavior":
+                self.download_behavior = params
+                if params["behavior"] == "allowAndName":
+                    self.last_allowed_download = params
             if method == "Browser.close":
                 self.alive = False
             return {}
@@ -175,8 +179,24 @@ def browser(runner, tmp_path, monkeypatch):
                 return {"frameTree": {"frame": {"id": "frame", "url": url}}}
             if method == "Page.createIsolatedWorld":
                 return {"executionContextId": 17}
+            if method == "DOM.describeNode":
+                return {"node": {"backendNodeId": getattr(self, "node_id", 1)}}
+            if method == "DOM.setFileInputFiles":
+                self.uploaded_files = params["files"]
+                return {}
             if method == "Runtime.evaluate":
-                if "document: performance.timeOrigin" not in params["expression"]:
+                expr = params["expression"]
+                if "URL.createObjectURL" in expr:
+                    return {"result": {"value": "blob:https://intranet.test/approved"}}
+                if "url.origin === location.origin" in expr:
+                    return {"result": {"value": getattr(self, "target_url", None)}}
+                if "document.querySelector" in expr:
+                    if getattr(self, "element_not_found", False):
+                        return {"result": {"subtype": "null"}}
+                    return {"result": {"objectId": "obj:file_input"}}
+                if "document: performance.timeOrigin" not in expr:
+                    if "a.click();" in expr and hasattr(self, "on_evaluate"):
+                        self.on_evaluate()
                     return {"result": {"value": "{}"}}
                 return {
                     "result": {
@@ -202,9 +222,13 @@ def browser(runner, tmp_path, monkeypatch):
     executable = tmp_path / "browser.exe"
     monkeypatch.setattr(runner, "browser_executable", lambda: executable)
     monkeypatch.setattr(runner.subprocess, "Popen", browser)
-    monkeypatch.setattr(
-        runner.PipeClient, "exchange", lambda self, command: browser.exchange(command)
-    )
+
+    def exchange(client, command):
+        browser.client = client
+        return browser.exchange(command)
+
+    monkeypatch.setattr(runner.PipeClient, "exchange", exchange)
+
     return browser
 
 
@@ -567,3 +591,91 @@ def test_edge_private_pipe_and_read_only_evidence(runner, tmp_path, monkeypatch)
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_prepared_upload_is_single_use_and_bound_to_the_file_input(runner, browser, tmp_path):
+    upload = tmp_path / "sample.txt"
+    upload.write_text("sample")
+    action = {"tab_id": "A", "url": "https://intranet.test/orders", "selector": "#attachment"}
+    prepare = {"action": "prepare_upload", **action}
+    perform = {"action": "upload", "file_path": str(upload), **action}
+    profile = tmp_path / "profile"
+    replies = _request(runner, profile, {"action": "open"}, prepare, perform, perform)
+    assert replies[1]["target"] == "#attachment"
+    assert replies[2]["file"] == "sample.txt"
+    assert replies[3] == {"error": "BROWSER_ACTION_CHANGED"}
+    assert browser.uploaded_files == [str(upload)]
+    assert sum(method == "DOM.setFileInputFiles" for method, _ in browser.commands) == 1
+
+    invalid = _request(runner, profile, {**perform, "file_path": "relative.txt"})
+    assert invalid == [{"error": "BROWSER_INVALID_REQUEST"}]
+
+
+def test_download_only_accepts_the_completed_file_for_its_frame_and_link(runner, browser, tmp_path):
+    destination = tmp_path / "downloads"
+    destination.mkdir()
+    guid = "84564e8c-6b21-4b63-8be7-a486401f0906"
+    actual = destination / guid
+    unrelated = destination / "a-unrelated.txt"
+    browser.target_url = "https://intranet.test/export"
+    event_url = "blob:https://intranet.test/approved"
+
+    def finish_download():
+        unrelated.write_bytes(b"unrelated")
+        actual.write_bytes(b"actual")
+        events = browser.client.download_events
+        events.append(
+            {
+                "method": "Browser.downloadWillBegin",
+                "params": {"guid": guid, "frameId": "frame", "url": event_url},
+            }
+        )
+        events.append(
+            {
+                "method": "Browser.downloadProgress",
+                "params": {"guid": guid, "state": "completed", "receivedBytes": 6},
+            }
+        )
+
+    browser.on_evaluate = finish_download
+    params = {
+        "tab_id": "A",
+        "url": "https://intranet.test/orders",
+        "download_url": browser.target_url,
+    }
+    requests = (
+        {"action": "open"},
+        {"action": "prepare_download", **params},
+        {"action": "download", "download_path": str(destination), **params},
+    )
+    result = _request(runner, tmp_path / "profile", *requests)[-1]
+    assert result == {"file": guid, "size": 6, "url": "https://intranet.test/orders"}
+    assert browser.last_allowed_download["behavior"] == "allowAndName"
+    assert browser.download_behavior == {"behavior": "deny"}
+
+    event_url = "blob:https://intranet.test/unrelated"
+    result = _request(runner, tmp_path / "profile", *requests)[-1]
+    assert result == {"error": "BROWSER_TRANSFER_UNCERTAIN"}
+
+
+def test_download_requires_exactly_one_source_and_prepared_action(runner, browser, tmp_path):
+    base = "https://intranet.test/orders"
+    download = {
+        "action": "download",
+        "url": base,
+        "tab_id": "A",
+        "download_path": str(tmp_path),
+    }
+    requests = [
+        download,
+        {**download, "download_url": base, "selector": "#download"},
+    ]
+    replies = _request(runner, tmp_path / "profile", *requests)
+    assert replies == [{"error": "BROWSER_INVALID_REQUEST"}] * 2
+    assert _request(
+        runner,
+        tmp_path / "profile",
+        {"action": "open"},
+        {"action": "list"},
+        {**download, "download_url": base},
+    )[-1] == {"error": "BROWSER_ACTION_CHANGED"}

@@ -41,6 +41,7 @@ type App struct {
 	drops            dropServer
 	device           *deviceClient
 	docx             *localDOCX
+	docxStatusSink   func(docxEvent)
 	browser          *localBrowser
 	browserBridgeKey [32]byte
 	ownsListenPort   bool
@@ -374,10 +375,12 @@ func main() {
 		store: store,
 		sleep: &sleepGuard{},
 	}
-	api.device = &deviceClient{emit: api.emitDeviceStatus}
 	api.docx = newLocalDOCX(octopHome())
+	api.device = &deviceClient{emit: api.emitDeviceStatus, retryAudit: api.docx.retryFileAudit}
 	api.docx.confirmDestructive = api.confirmLocalFile
 	api.browser = newLocalBrowser(octopHome())
+	api.browser.docx = api.docx
+	api.browser.confirmDestructive = api.confirmLocalFile
 	rand.Read(api.browserBridgeKey[:])
 
 	app := application.New(api.withBrowserMessages(application.Options{

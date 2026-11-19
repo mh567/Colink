@@ -44,25 +44,33 @@ func parseDOCXRequest(raw string) (docxRequest, error) {
 	if request.Format != "" && request.Format != "docx" && request.Format != "xlsx" && request.Format != "ocr" && request.Format != "pptx" && request.Format != "pdf" {
 		return request, errors.New("不支持的文件类型")
 	}
-	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "run" && request.Action != "cancel" && !isDestructiveAction(request.Action) {
+	if request.Action != "list" && request.Action != "grant" && request.Action != "grant_managed" && request.Action != "revoke" && request.Action != "run" && request.Action != "cancel" && !isDestructiveAction(request.Action) {
 		return request, errors.New("不支持该操作；不允许命令执行")
+	}
+	if request.Action == "revoke" && request.GrantID == "" {
+		return request, fileopsCopyError(copyFileGrantIDRequired)
 	}
 	if isDestructiveAction(request.Action) && !validDestructiveID(request.RequestID) {
 		return request, fileopsCopyError(copyFileInvalidIntent)
 	}
 	return request, nil
 }
-func (a *App) emitDOCX(s docxSession, busy bool, err error) {
-	if a.window == nil {
+func (a *App) emitDOCX(s docxSession, err error) {
+	if a.window == nil && a.docxStatusSink == nil {
 		return
 	}
-	if a.device.currentDOCX(s) != nil {
+	a.docx.statusMu.Lock()
+	defer a.docx.statusMu.Unlock()
+	if a.device.currentDOCX(s) != nil && !a.device.sameDOCXGeneration(s) {
 		return
 	}
 	state, stateErr := a.docx.state(s)
 	if err == nil {
 		err = stateErr
 	}
+	a.docx.mu.Lock()
+	busy := a.docx.busy
+	a.docx.mu.Unlock()
 	event := docxEvent{DeviceID: s.DeviceID, Grants: state.Grants, Tasks: state.Tasks, Busy: busy, ManagedDirectory: runtime.GOOS == "linux"}
 	if event.Grants == nil {
 		event.Grants = []directoryGrant{}
@@ -81,6 +89,10 @@ func (a *App) emitDOCX(s docxSession, busy bool, err error) {
 			event.Grants[i].Overwrite = true
 		}
 	}
+	if a.docxStatusSink != nil {
+		a.docxStatusSink(event)
+		return
+	}
 	data, marshalErr := json.Marshal(event)
 	if marshalErr != nil {
 		return
@@ -95,18 +107,25 @@ func (a *App) handleDOCX(raw string) {
 	session.Locale = a.store.get().Locale
 	request, err := parseDOCXRequest(raw)
 	if err != nil {
-		a.emitDOCX(session, false, err)
+		a.emitDOCX(session, err)
 		return
 	}
 	session.Format = request.Format
+	a.docx.statusMu.Lock()
 	a.docx.mu.Lock()
 	busy := a.docx.busy
-	if request.Action != "list" && request.Action != "cancel" && !busy {
+	if request.Action != "list" && request.Action != "revoke" && request.Action != "cancel" && !busy {
 		a.docx.busy = true
 	}
 	a.docx.mu.Unlock()
+	a.docx.statusMu.Unlock()
 	if request.Action == "list" {
-		a.emitDOCX(session, busy, nil)
+		a.emitDOCX(session, nil)
+		return
+	}
+	if request.Action == "revoke" {
+		err = a.docx.revoke(session, request.GrantID)
+		a.emitDOCX(session, err)
 		return
 	}
 	if request.Action == "cancel" {
@@ -115,23 +134,22 @@ func (a *App) handleDOCX(raw string) {
 			targetID = request.RequestID
 		}
 		cancelErr := a.docx.cancel(session, targetID)
-		a.docx.mu.Lock()
-		currentBusy := a.docx.busy
-		a.docx.mu.Unlock()
-		a.emitDOCX(session, currentBusy, cancelErr)
+		a.emitDOCX(session, cancelErr)
 		return
 	}
 	if busy {
-		a.emitDOCX(session, true, errors.New("已有本机任务执行中"))
+		a.emitDOCX(session, errors.New("已有本机任务执行中"))
 		return
 	}
 	defer func() {
+		a.docx.statusMu.Lock()
 		a.docx.mu.Lock()
 		a.docx.busy = false
 		a.docx.mu.Unlock()
-		a.emitDOCX(session, false, err)
+		a.docx.statusMu.Unlock()
+		a.emitDOCX(session, err)
 	}()
-	a.emitDOCX(session, true, nil)
+	a.emitDOCX(session, nil)
 	switch request.Action {
 	case "grant":
 		if request.Mode != "ro" && request.Mode != "rw" {
@@ -176,7 +194,7 @@ func (a *App) handleDOCX(raw string) {
 		session.Apply = func(apply func() error) error {
 			return a.device.applyDOCX(session, apply)
 		}
-		session.TaskChanged = func() { a.emitDOCX(session, true, nil) }
+		session.TaskChanged = func() { a.emitDOCX(session, nil) }
 		_, err = a.docx.run(session, request, func() error { return a.device.currentDOCX(session) })
 	}
 }
@@ -189,13 +207,25 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 		return false, errors.New(desktopText(locale, copyFileConfirmationUnavailable))
 	}
 	var action, scope string
+	title, message := copyFileConfirmTitle, copyFileConfirmMessage
 	switch operation {
 	case "delete":
 		action, scope = copyFileDelete, copyFileDeleteScope
 	case "overwrite":
 		action, scope = copyFileOverwrite, copyFileOverwriteScope
+	case "browser_overwrite":
+		action, scope = copyFileOverwrite, copyBrowserOverwriteScope
+	case "browser_upload":
+		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		action, scope = copyBrowserUpload, copyBrowserUploadScope
+	case "browser_download":
+		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		action, scope = copyBrowserDownload, copyBrowserDownloadScope
 	default:
 		return false, fileopsCopyError(copyFileInvalidIntent)
+	}
+	if !safeDestructivePath(path) {
+		return false, fileopsCopyError(copyFileInvalidPath)
 	}
 	const width, maxLines = 28, 10
 	runes := []rune(path)
@@ -209,8 +239,8 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 	}
 	lines = append(lines, string(runes))
 	dialog := a.app.Dialog.Question().
-		SetTitle(desktopText(locale, copyFileConfirmTitle)).
-		SetMessage(desktopText(locale, copyFileConfirmMessage, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
+		SetTitle(desktopText(locale, title)).
+		SetMessage(desktopText(locale, message, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
 		AttachToWindow(a.window)
 	approved := false
 	dialog.AddButton("Yes").OnClick(func() { approved = true })

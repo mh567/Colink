@@ -192,6 +192,8 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		return task, err
 	}
 	task = docxTask{ID: request.RequestID, AgentID: s.AgentID, Format: s.Format, Operation: request.Action, Output: request.Output, Instruction: request.Instruction, Status: "running", Steps: []string{}}
+	s.AuditRequestID = request.RequestID
+	s.AuditPath = request.Output
 	journal, entry, replay, err := w.claimDestructive(s, request, task)
 	if err != nil {
 		return task, err
@@ -226,18 +228,24 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	addStep("已登记操作意图与约束")
 	awaitingConfirmation := false
+	audited := false
 	defer func() {
+		event := "completed"
+		sendAudit := audited
 		switch {
 		case w.isTaskCancelled(task.ID) || errors.Is(err, errDestructiveCancelled):
 			task.Status = "cancelled"
 			task.Error = ""
 			err = nil
+			event = "rejected"
 		case w.isClosing() && awaitingConfirmation:
 			task.Status = "awaiting_confirmation"
 			task.Error = ""
+			sendAudit = false
 		case w.isClosing():
 			markInterrupted(&task, s.Locale)
 			err = errors.New(task.Error)
+			event = "failed"
 		case err != nil:
 			if task.Status != "interrupted" {
 				task.Status = "failed"
@@ -248,18 +256,27 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 				task.Error = interruptedFileMessage(task, s.Locale)
 				err = errors.New(task.Error)
 			}
+			event = "failed"
 		default:
 			task.Status = "completed"
 		}
-		if saveErr := persist(); saveErr != nil {
+		var auditErr error
+		if sendAudit {
+			auditErr = w.enqueueFileAudit(s, s.fileAudit(event, request.Action))
+		}
+		if saveErr := persist(); saveErr != nil || auditErr != nil {
 			task.Status = "interrupted"
 			task.Error = interruptedFileMessage(task, s.Locale)
 			err = errors.New(task.Error)
+		}
+		if sendAudit {
+			w.retryFileAudit(s)
 		}
 	}()
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}
+	audited = true
 	addStep("已核验操作权限")
 	output, err := w.openGrant(s, request.OutputGrant, true)
 	if err != nil {
@@ -314,9 +331,6 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
 	}
-	if _, err = w.openGrant(s, request.OutputGrant, true); err != nil {
-		return task, err
-	}
 	if err = current(); err != nil {
 		return task, err
 	}
@@ -326,6 +340,9 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	if w.isTaskCancelled(task.ID) {
 		return task, errDestructiveCancelled
+	}
+	if err = w.enqueueFileAudit(s, s.fileAudit("confirmed", request.Action)); err != nil {
+		return task, err
 	}
 	task.Status = "running"
 	if err = persist(); err != nil {
@@ -343,12 +360,27 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		}
 		return target.commit(ctx, data, proof)
 	}
-	if s.Apply != nil {
-		err = s.Apply(apply)
-	} else {
-		err = apply()
+	grantChecked, sourceGrantInvalid := false, false
+	err = w.withGrant(s, request.OutputGrant, true, func(*os.Root) error {
+		grantChecked = true
+		if request.Action == "overwrite" {
+			if _, err := w.openGrantLocked(s, request.SourceGrant, false); err != nil {
+				sourceGrantInvalid = true
+				return err
+			}
+		}
+		if err := current(); err != nil {
+			return err
+		}
+		if s.Apply != nil {
+			return s.Apply(apply)
+		}
+		return apply()
+	})
+	if err != nil && (!grantChecked || sourceGrantInvalid) {
+		task.Output = ""
 	}
-	if err != nil && !errors.Is(err, errDestructiveTargetChanged) {
+	if err != nil && !errors.Is(err, errDestructiveTargetChanged) && grantChecked && !sourceGrantInvalid {
 		task.Status = "interrupted"
 	}
 	if err == nil {

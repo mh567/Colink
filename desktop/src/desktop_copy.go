@@ -32,6 +32,13 @@ const (
 )
 
 const (
+	copyBrowserConfirmTitle         = "browser.confirmtitle"
+	copyBrowserConfirmMessage       = "browser.confirmmessage"
+	copyBrowserUpload               = "browser.upload"
+	copyBrowserUploadScope          = "browser.uploadscope"
+	copyBrowserDownload             = "browser.download"
+	copyBrowserDownloadScope        = "browser.downloadscope"
+	copyBrowserOverwriteScope       = "browser.overwritescope"
 	copyFileConfirmTitle            = "file.confirm_title"
 	copyFileConfirmMessage          = "file.confirm_message"
 	copyFileDelete                  = "file.delete"
@@ -52,6 +59,8 @@ const (
 	copyFileManagedFailed           = "file.managed_failed"
 	copyFileManagedDenied           = "file.managed_denied"
 	copyFileDirectoryChanged        = "file.directory_changed"
+	copyFileGrantIDRequired         = "file.grant_id_required"
+	copyFileGrantNotFound           = "file.grant_not_found"
 	copyFileOperationFailed         = "file.operation_failed"
 	copyFileUnsupported             = "file.unsupported"
 )
@@ -85,6 +94,13 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTrayShowMain:           "Show Octop",
 		copyTrayQuit:               "Quit",
 
+		copyBrowserConfirmTitle:         "Confirm browser action",
+		copyBrowserConfirmMessage:       "Action: %s\nPage, target and file (join wrapped lines without spaces):\n%s\nScope: %s",
+		copyBrowserUpload:               "Select web attachment",
+		copyBrowserUploadScope:          "Give the file to this page. The website may upload it or modify business data immediately.",
+		copyBrowserDownload:             "Request web download",
+		copyBrowserDownloadScope:        "Request this link using the browser session. The website may change business data.",
+		copyBrowserOverwriteScope:       "Replace this file with the downloaded artifact.",
 		copyFileConfirmTitle:            "Confirm file operation",
 		copyFileConfirmMessage:          "Action: %s\nFull path (join the lines without spaces):\n%s\nScope: %s",
 		copyFileDelete:                  "Delete",
@@ -105,6 +121,8 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileManagedFailed:           "Check the managed directory and target file, then try again.",
 		copyFileManagedDenied:           "Check the approved device connection and file operation permissions on the configured server.",
 		copyFileDirectoryChanged:        "Grant access to the directory again.",
+		copyFileGrantIDRequired:         "Directory grant ID is missing.",
+		copyFileGrantNotFound:           "The directory grant does not exist.",
 		copyFileOperationFailed:         "Check the target file and directory permissions before trying again.",
 		copyFileUnsupported:             "Use a supported desktop client for this file operation.",
 	},
@@ -136,6 +154,13 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTrayShowMain:           "显示 Octop",
 		copyTrayQuit:               "退出",
 
+		copyBrowserConfirmTitle:         "确认网页操作",
+		copyBrowserConfirmMessage:       "动作：%s\n页面、目标和文件（折行直接拼接）：\n%s\n影响范围：%s",
+		copyBrowserUpload:               "选择网页附件",
+		copyBrowserUploadScope:          "将文件交给此网页。网页可能立即上传文件或修改业务数据。",
+		copyBrowserDownload:             "发起网页下载",
+		copyBrowserDownloadScope:        "使用当前浏览器会话访问此链接。网页可能修改业务数据。",
+		copyBrowserOverwriteScope:       "用本次下载的产物替换此文件。",
 		copyFileConfirmTitle:            "确认文件操作",
 		copyFileConfirmMessage:          "动作：%s\n完整路径（各行直接拼接）：\n%s\n影响范围：%s",
 		copyFileDelete:                  "删除",
@@ -156,6 +181,8 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileManagedFailed:           "请核对受管目录和目标文件后重试。",
 		copyFileManagedDenied:           "请核对已批准的设备连接和服务器上的文件操作权限。",
 		copyFileDirectoryChanged:        "请重新授权目标目录。",
+		copyFileGrantIDRequired:         "缺少目录授权标识。",
+		copyFileGrantNotFound:           "目录授权不存在。",
 		copyFileOperationFailed:         "请核对目标文件和目录权限后重试。",
 		copyFileUnsupported:             "请使用支持此文件操作的桌面客户端。",
 	},

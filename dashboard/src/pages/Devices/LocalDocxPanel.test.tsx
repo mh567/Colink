@@ -648,6 +648,91 @@ it("submits a text PDF with an eligible expert using the keyboard", async () => 
   expect(screen.getByText("/成果/result.pdf")).toBeInTheDocument();
 });
 
+it("revokes a directory while a task is running", async () => {
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  render(<LocalDocxPanel deviceId="mine" />);
+  const user = userEvent.setup();
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: true,
+          grants: [{ id: "output-grant", path: "/成果", mode: "rw" }],
+          tasks: [
+            {
+              id: "running",
+              instruction: "整理",
+              source: "/资料/会议.docx",
+              output: "/成果/纪要.docx",
+              status: "running",
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  await user.click(
+    screen.getByRole("button", { name: "撤销 /成果 的目录授权" }),
+  );
+  expect(
+    JSON.parse(
+      decodeURIComponent(
+        invoke.mock.calls.at(-1)![0].split("desktop:docx:")[1],
+      ),
+    ),
+  ).toEqual({ action: "revoke", grant_id: "output-grant" });
+
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: true,
+          grants: [],
+          tasks: [
+            {
+              id: "revoked",
+              instruction: "整理",
+              source: "/资料/会议.docx",
+              output: "/成果/纪要.docx",
+              status: "failed",
+              error: "目录未获当前账号和设备授权",
+            },
+          ],
+        },
+      }),
+    );
+  });
+  expect(screen.queryByText("/成果")).toBeNull();
+  expect(screen.getByText("失败")).toBeInTheDocument();
+
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [],
+          tasks: [
+            {
+              id: "disconnected",
+              instruction: "整理",
+              source: "/资料/会议.docx",
+              output: "/成果/纪要.docx",
+              status: "failed",
+              error: "无法连接任务服务",
+            },
+          ],
+        },
+      }),
+    );
+  });
+  expect(screen.getByText("无法连接任务服务")).toBeInTheDocument();
+});
+
 it("distinguishes execution, awaiting confirmation, completed, failed, cancelled, and needs check statuses", async () => {
   (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
   render(<LocalDocxPanel deviceId="mine" />);

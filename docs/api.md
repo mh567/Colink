@@ -146,16 +146,20 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 本票不新增运行依赖，复用 Go 标准库、已锁定的 WebSocket 库和 `cryptography`，运行不从公网补装。按 2026-11-06 的开发确认，T01 的真实模型任务与麒麟干净环境验收缺口继续保留，分别由 #4/#5 和 #7 补齐；本票的设备接入测试不替代这些验收。
 
-## 本机浏览器只读查询
+## 本机浏览器查询与附件
 
 管理员在用户权限中授予“本机浏览器查询”（`local_browser`）。员工在桌面客户端接入已批准的本人设备，从设备页打开专用浏览器并亲自登录。员工可在浏览器中打开查询结果，或在面板中打开已知的查询地址。例如，打开示例订单 `DEMO-42` 的结果标签，在面板中选择该标签并询问库存数量。答案与来源一同显示，可单独截图核对。
 
 | 方法 | 路径 | 请求与结果 |
 | --- | --- | --- |
-| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作可为 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture` 或 `close`。通过时返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作可为 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture`、`close`、`upload`、`download` 或 `overwrite`。通过时返回 `{allowed:true}` |
 | `POST` | `/devices/{device_id}/browser/query` | 同上。请求 `{instruction,text}`，分别最多 8,000 和 60,000 字符。已授权的企业内网模型返回 `{text}` |
 
-原生客户端在启动浏览器、打开网址及读取页面前分别校验会话与动作权限。查询和截图绑定选中标签的完整地址，地址变化后先刷新标签列表。界面来源省略查询参数和片段。同名同地址的标签需要先在专用浏览器中定位并核对。登录配置与截图留在本机。查询只把提问和提取到的页面可见文字发送给授权的企业模型，禁用模型调用追踪。如果页面内容超出读取上限，或有无法读取的嵌入页面，查询结果会标明内容不完整。业务系统里的填表、提交和附件操作由员工在浏览器窗口内完成。
+原生客户端在启动浏览器、打开网址及读取页面前分别校验会话与动作权限。查询和截图绑定选中标签的完整地址，地址变化后先刷新标签列表。界面来源省略查询参数和片段。同名同地址的标签需要先在专用浏览器中定位并核对。登录配置与截图留在本机。查询只把提问和提取到的页面可见文字发送给授权的企业模型，禁用模型调用追踪。如果页面内容超出读取上限，或有无法读取的嵌入页面，查询结果会标明内容不完整。业务系统的填表和提交由员工在浏览器窗口内核对；面板可通过已授权文件和可识别的下载链接处理附件。
+
+- `upload` 需要本机目录读取授权和 `local_files_read`；确认后只把文件选入网页，提交结果在业务网页上核对。
+- `download` 需要读写目录和 `local_files_create`；只接受与当前网页同源的直接链接或指向该链接的 CSS 选择器（二选一）。跨站、跳转到不同地址和无法关联的下载不会保存。
+- 网页动作先显示当前页面完整地址、目标和文件，由员工在桌面客户端确认。下载完成后才处理落盘；覆盖还需 `local_files_overwrite` 和第二次确认，Windows 使用桌面确认，Linux 使用受管目录服务。其他平台不支持覆盖。单个文件限 20 MiB。
 
 ## 本机 DOCX 任务
 
@@ -167,6 +171,12 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 |--------|------|------|-------|
 | `POST` | `/devices/{device_id}/docx/authorize` | 员工令牌＋`X-Colink-Device-Session` | `action` 可为 `read`、`create`、`overwrite`、`delete`。校验当前设备归属、在线状态、功能及动作权限，返回 `{allowed:true}` |
 | `POST` | `/devices/{device_id}/docx/generate` | 同上，须持有读取及所选写入动作的权限 | `{instruction,text,action?}`，`action` 默认为 `create`，覆盖任务传 `overwrite`。任务描述最多 8,000 字符，必要正文最多 60,000 字符。返回 `{text}`，最多 60,000 字符 |
+
+覆盖、删除和新建等实际文件修改会写入 90 天审计。授权请求可带 `request_id`（32 位小写十六进制）和文件名 `path`；原生客户端在确认、拒绝、完成或失败后调用 `POST /devices/{device_id}/file-events`。审计只保留身份、设备、动作、文件名和结果，不含口令、模型密钥或原文。管理员在安全设置中查询，不能因此读取员工私有文件。员工删除会话不会删掉保留期内的这些记录。
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `POST` | `/devices/{device_id}/file-events` | 员工令牌＋`X-Colink-Device-Session` | `{request_id,event,format,operation,path?,error_code?}`。回执须对应同一员工、设备、格式、动作和文件名的授权记录；覆盖或删除成功前须记录确认。相同回执重复提交仍返回 `{recorded:true}`；关联不符或状态冲突时返回 `409`。桌面端先在本机保存待提交回执，连接恢复后重试。 |
 
 已批准的 WebSocket `status` 帧增加 `session_token`，仅保留在原生客户端，不透传页面、列表或审计。它与本人访问令牌一起证明当前设备会话；重新连接产生新值，断线、撤销、停用或重置口令后失效。生成前及模型返回后均重新核对权限。客户端在实际读写处另行核对本机目录授权，不能以服务端批准代替目录边界。
 
@@ -791,7 +801,7 @@ endpoint (public, mounted directly in `api/app.py`).
 | `GET`    | `/usage/summary` | user | token usage summary for the current user |
 | `GET`    | `/admin/usage` | admin | global token usage summary |
 | `GET`    | `/admin/overview` | admin | `{user_count, agent_count, ...}` |
-| `GET`    | `/admin/audit-log` | admin | recent audit rows |
+| `GET`    | `/admin/audit-log` | admin | Read-only query; `request_id` filters by operation ID before the row limit. Only native file events are hidden and pruned after 90 days; login, role changes and other audit events are unaffected. |
 | `GET`    | `/admin/metrics` | admin | `{messages_total, stream_errors_total, cron_runs_total, cron_errors_total, agent_active, ...}` |
 
 ## Envs

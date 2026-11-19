@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,18 +12,43 @@ import (
 	"testing"
 )
 
+func checkOCRRequest(t *testing.T, r *http.Request, output string) map[string]string {
+	t.Helper()
+	var body map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Error(err)
+	}
+	var want map[string]string
+	switch r.URL.Path {
+	case "/api/devices/device/ocr/authorize":
+		if body["action"] == "read" {
+			want = map[string]string{"action": "read"}
+		} else {
+			want = map[string]string{"action": "create", "request_id": body["request_id"], "path": output}
+		}
+	case "/api/devices/device/file-events":
+		want = map[string]string{"format": "ocr", "operation": "create", "request_id": body["request_id"], "path": output, "event": "completed"}
+		if body["event"] == "failed" {
+			want["event"], want["error_code"] = "failed", "failed"
+		}
+	}
+	if want == nil || !maps.Equal(body, want) || (want["request_id"] != "" || want["path"] != "") && !validDestructiveID(body["request_id"]) {
+		t.Errorf("unexpected OCR request: %s %v", r.URL.Path, body)
+	}
+	return body
+}
+
 func TestLocalOCRMissingResourcesFailsWithoutUploadingSource(t *testing.T) {
 	t.Setenv("OCTOP_HOME", t.TempDir())
 	var calls []string
+	var receipt map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.URL.Path)
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
+		body := checkOCRRequest(t, r, "识别.txt")
+		if handleFileAudit(w, r) {
+			receipt = body
+			return
 		}
-		if len(body) != 1 || body["action"] != "read" {
-			t.Errorf("unexpected upload: %v", body)
-		}
+		calls = append(calls, body["action"])
 		w.Write([]byte(`{"allowed":true}`))
 	}))
 	defer server.Close()
@@ -40,8 +66,8 @@ func TestLocalOCRMissingResourcesFailsWithoutUploadingSource(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "OCR") || task.Status != "failed" {
 		t.Fatalf("%+v %v", task, err)
 	}
-	if len(calls) != 1 || !strings.HasSuffix(calls[0], "/ocr/authorize") {
-		t.Fatalf("requests: %v", calls)
+	if strings.Join(calls, ",") != "create,read" || receipt["event"] != "failed" || receipt["request_id"] != task.ID {
+		t.Fatalf("requests: %v; receipt: %v", calls, receipt)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "识别.txt")); !os.IsNotExist(err) {
 		t.Fatalf("created artifact: %v", err)
@@ -92,12 +118,17 @@ func TestLocalOCRRealTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
+	var receipts []map[string]string
 	denyWrite := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
-		if len(body) != 1 || (body["action"] != "read" && body["action"] != "create") || !strings.HasSuffix(r.URL.Path, "/ocr/authorize") {
-			t.Errorf("unexpected upload: %s %v", r.URL.Path, body)
+		output := "识别.txt"
+		if denyWrite {
+			output = "禁止.txt"
+		}
+		body := checkOCRRequest(t, r, output)
+		if handleFileAudit(w, r) {
+			receipts = append(receipts, body)
+			return
 		}
 		calls = append(calls, body["action"])
 		if denyWrite && body["action"] == "create" {
@@ -131,10 +162,10 @@ func TestLocalOCRRealTask(t *testing.T) {
 			t.Errorf("missing %s in %s", key, output)
 		}
 	}
-	if task.Status != "completed" || strings.Join(calls, ",") != "read,create" {
-		t.Fatalf("%+v requests=%v", task, calls)
+	if task.Status != "completed" || strings.Join(calls, ",") != "create,read,create" || len(receipts) != 1 || receipts[0]["event"] != "completed" || receipts[0]["request_id"] != task.ID {
+		t.Fatalf("%+v requests=%v receipts=%v", task, calls, receipts)
 	}
-	_, err = worker.run(session, request, func() error { return nil })
+	failed, err := worker.run(session, request, func() error { return nil })
 	if err == nil {
 		t.Fatal("overwrote existing file")
 	}
@@ -150,6 +181,9 @@ func TestLocalOCRRealTask(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(dir, "禁止.txt")); !os.IsNotExist(err) {
 		t.Fatalf("created file after revoked write: %v", err)
+	}
+	if len(receipts) != 2 || receipts[1]["event"] != "failed" || receipts[1]["request_id"] != failed.ID {
+		t.Fatalf("unexpected audit receipts: %v", receipts)
 	}
 	state, err := newLocalDOCX(worker.home).state(session)
 	if err != nil || len(state.Tasks) != 3 || state.Tasks[0].Status != "completed" || state.Tasks[2].Status != "failed" {

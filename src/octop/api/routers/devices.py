@@ -70,22 +70,63 @@ class DocxAuthorizeBody(BaseModel):
         max_length=64,
         description="Optional employee-owned expert, rechecked before the native file action.",
     )
+    request_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Client file-operation id used to correlate authorization, confirmation and result.",
+    )
+    path: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Authorized file name. Directories are discarded before audit storage.",
+    )
 
 
 class DocxAuthorization(BaseModel):
     allowed: Literal[True] = True
 
 
+class FileEventBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    event: Literal["confirmed", "rejected", "completed", "failed"]
+    format: Literal["docx", "xlsx", "pptx", "pdf", "ocr"]
+    operation: Literal["create", "overwrite", "delete"]
+    path: str | None = Field(default=None, max_length=255)
+    error_code: str | None = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[a-z0-9_]+$",
+        description="Stable machine code for a failed file operation. Never send file contents.",
+    )
+
+
+class FileEventAccepted(BaseModel):
+    recorded: Literal[True] = True
+
+
 class OcrAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["read", "create"]
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+    request_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    path: str | None = Field(default=None, max_length=255)
 
 
 class BrowserAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
-        "open", "list", "new_tab", "select_tab", "close_tab", "query", "capture", "close"
+        "open",
+        "list",
+        "new_tab",
+        "select_tab",
+        "close_tab",
+        "query",
+        "capture",
+        "close",
+        "upload",
+        "download",
+        "overwrite",
     ]
 
 
@@ -109,6 +150,8 @@ class PdfAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["read", "create"]
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+    request_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    path: str | None = Field(default=None, max_length=255)
 
 
 class PdfGenerateBody(BaseModel):
@@ -133,6 +176,8 @@ class PptxSourceBody(BaseModel):
 
 class PptxAuthorizeBody(PptxSourceBody):
     action: Literal["read", "create"]
+    request_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    path: str | None = Field(default=None, max_length=255)
 
 
 class PptxGenerateBody(PptxSourceBody):
@@ -206,7 +251,13 @@ async def authorize_docx(
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(
-        user, device_id, x_colink_device_session, body.action, agent_id=body.agent_id
+        user,
+        device_id,
+        x_colink_device_session,
+        body.action,
+        agent_id=body.agent_id,
+        request_id=body.request_id,
+        path=body.path,
     )
     return DocxAuthorization()
 
@@ -226,9 +277,46 @@ async def authorize_xlsx(
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(
-        user, device_id, x_colink_device_session, body.action, format="xlsx", agent_id=body.agent_id
+        user,
+        device_id,
+        x_colink_device_session,
+        body.action,
+        format="xlsx",
+        agent_id=body.agent_id,
+        request_id=body.request_id,
+        path=body.path,
     )
     return DocxAuthorization()
+
+
+@router.post(
+    "/{device_id}/file-events",
+    response_model=FileEventAccepted,
+    summary="Record confirmation or result of a native file modification",
+    description="Native clients report confirmation, rejection and execution results. "
+    "The payload stores identity, device, action and file name only — never passwords, "
+    "model keys or original file contents. Administrators can query the trail; they do not "
+    "gain access to employee private files.",
+)
+async def submit_file_event(
+    device_id: str,
+    body: FileEventBody,
+    x_colink_device_session: str = Header(default="", max_length=128),
+    user: User = Depends(current_user),
+    server: OctopServer = Depends(get_server),
+) -> FileEventAccepted:
+    server.device_manager.record_file_client_event(
+        user,
+        device_id,
+        x_colink_device_session,
+        request_id=body.request_id,
+        event=body.event,
+        format=body.format,
+        operation=body.operation,
+        path=body.path,
+        error_code=body.error_code,
+    )
+    return FileEventAccepted()
 
 
 @router.post(
@@ -253,6 +341,8 @@ async def authorize_pptx(
         format="pptx",
         agent_id=body.agent_id,
         source_format=body.source_format,
+        request_id=body.request_id,
+        path=body.path,
     )
     return DocxAuthorization()
 
@@ -271,7 +361,14 @@ async def authorize_pdf(
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(
-        user, device_id, x_colink_device_session, body.action, format="pdf", agent_id=body.agent_id
+        user,
+        device_id,
+        x_colink_device_session,
+        body.action,
+        format="pdf",
+        agent_id=body.agent_id,
+        request_id=body.request_id,
+        path=body.path,
     )
     return DocxAuthorization()
 
@@ -320,7 +417,13 @@ async def authorize_ocr(
     server: OctopServer = Depends(get_server),
 ) -> DocxAuthorization:
     server.device_manager.authorize_docx(
-        user, device_id, x_colink_device_session, body.action, format="ocr"
+        user,
+        device_id,
+        x_colink_device_session,
+        body.action,
+        format="ocr",
+        request_id=body.request_id,
+        path=body.path,
     )
     return DocxAuthorization()
 
@@ -339,7 +442,9 @@ async def authorize_browser(
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> BrowserAuthorization:
-    server.device_manager.authorize_browser(user, device_id, x_colink_device_session)
+    server.device_manager.authorize_browser(
+        user, device_id, x_colink_device_session, action=body.action
+    )
     return BrowserAuthorization()
 
 

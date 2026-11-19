@@ -582,4 +582,172 @@ describe("本人设备的本机浏览器任务", () => {
     expect(result.getByText(tab.url)).toBeVisible();
     expect(result.queryByText(/private=|#first/)).not.toBeInTheDocument();
   });
+
+  it("设备断连后保留本机任务失败原因并禁用操作", async () => {
+    const { user } = startPage();
+    await user.click(screen.getByRole("button", { name: "接入当前设备" }));
+    await connectDevice("approved", true);
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      busy: true,
+      grants: [{ id: "grant", path: "/资料", mode: "rw" }],
+      tasks: [
+        {
+          id: "task-1",
+          instruction: "整理",
+          source: "/资料/输入.docx",
+          output: "/资料/结果.docx",
+          status: "running",
+        },
+      ],
+    });
+    expect(screen.getByLabelText("本机任务记录")).toBeInTheDocument();
+
+    await emit("colink:device-status", {
+      type: "error",
+      code: "DEVICE_CLIENT_ERROR",
+      message: "connection closed",
+    });
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      busy: false,
+      grants: [{ id: "grant", path: "/资料", mode: "rw" }],
+      tasks: [
+        {
+          id: "task-1",
+          instruction: "整理",
+          source: "/资料/输入.docx",
+          output: "/资料/结果.docx",
+          status: "failed",
+          error: "设备会话已改变，任务已停止",
+        },
+      ],
+    });
+
+    expect(screen.getByLabelText("本机任务记录")).toBeInTheDocument();
+    expect(screen.getByText("设备会话已改变，任务已停止")).toBeInTheDocument();
+    expect(screen.getByLabelText("文件类型")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "撤销 /资料 的目录授权" }),
+    ).toBeDisabled();
+  });
+
+  it("遵循目录授权向网页上传附件并显示成功回执", async () => {
+    const { invoke, user, panel, click, reply } = await startBrowserPanel();
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      grants: [{ id: "grant-upload", path: "/data/docs", mode: "ro" }],
+    });
+    await click("打开专用浏览器");
+    await reply({ tabs: [tab], tab_id: tab.id });
+
+    const grantSelect = panel.getByLabelText("选择上传目录授权");
+    await user.selectOptions(grantSelect, "grant-upload");
+    const fileInput = panel.getByLabelText("上传文件名");
+    await user.click(fileInput);
+    await user.paste("invoice.pdf");
+    const selectorInput = panel.getByLabelText("文件输入选择器（可选）");
+    await user.click(selectorInput);
+    await user.paste("input#upload-field");
+
+    await click("上传附件到页面");
+    const uploadReq = lastRequest(invoke);
+    expect(uploadReq).toMatchObject({
+      action: "upload",
+      tab_id: tab.id,
+      url: tab.url,
+      grant_id: "grant-upload",
+      file: "invoice.pdf",
+      selector: "input#upload-field",
+    });
+
+    await reply({ file: "invoice.pdf" });
+    expect(
+      await panel.findByText(
+        "已为网页选择附件：invoice.pdf。请在网页上核对提交结果。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("遵循读写授权下载网页产物并在回执后显示保存结果", async () => {
+    const { invoke, user, panel, click, reply } = await startBrowserPanel();
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      grants: [
+        { id: "grant-ro", path: "/data/ro", mode: "ro" },
+        { id: "grant-rw", path: "/data/rw", mode: "rw" },
+      ],
+    });
+    await click("打开专用浏览器");
+    await reply({ tabs: [tab], tab_id: tab.id });
+
+    const grantSelect = panel.getByLabelText("选择下载目录授权");
+    await user.selectOptions(grantSelect, "grant-rw");
+    const fileInput = panel.getByLabelText("保存文件名");
+    await user.click(fileInput);
+    await user.paste("report.xlsx");
+    const urlInput = panel.getByLabelText("下载链接（可选）");
+    await user.click(urlInput);
+    await user.paste("https://intranet.example/report.xlsx");
+    const selectorInput = panel.getByLabelText("下载链接选择器（可选）");
+    await user.click(selectorInput);
+    await user.paste("#download-link");
+    expect(
+      panel.getByRole("button", { name: "下载产物到授权目录" }),
+    ).toBeDisabled();
+    await user.clear(selectorInput);
+
+    await click("下载产物到授权目录");
+    const dlReq = lastRequest(invoke);
+    expect(dlReq).toMatchObject({
+      action: "download",
+      tab_id: tab.id,
+      url: tab.url,
+      grant_id: "grant-rw",
+      file: "report.xlsx",
+      download_url: "https://intranet.example/report.xlsx",
+    });
+
+    await reply({ file: "report.xlsx", size: 2048 });
+    expect(
+      await panel.findByText("产物已成功保存：report.xlsx（2048 字节）"),
+    ).toBeInTheDocument();
+  });
+
+  it("上传或下载遇到异常或取消覆盖时展示清晰错误提示", async () => {
+    const { user, panel, click, reply } = await startBrowserPanel();
+    await emit("colink:docx-status", {
+      device_id: "desktop-ada",
+      grants: [{ id: "grant-rw", path: "/data/rw", mode: "rw" }],
+    });
+    await click("打开专用浏览器");
+    await reply({ tabs: [tab], tab_id: tab.id });
+
+    // Upload with missing file error
+    await user.selectOptions(
+      panel.getByLabelText("选择上传目录授权"),
+      "grant-rw",
+    );
+    await user.click(panel.getByLabelText("上传文件名"));
+    await user.paste("missing.pdf");
+    await click("上传附件到页面");
+    await reply({ error: "BROWSER_FILE_NOT_FOUND" });
+    expect(
+      await panel.findByText("授权文件不存在或无法读取。"),
+    ).toBeInTheDocument();
+
+    // Download with overwrite cancellation
+    await user.selectOptions(
+      panel.getByLabelText("选择下载目录授权"),
+      "grant-rw",
+    );
+    await user.click(panel.getByLabelText("保存文件名"));
+    await user.paste("existing.pdf");
+    const link = panel.getByLabelText("下载链接（可选）");
+    await user.click(link);
+    await user.paste("https://intranet.example/report.xlsx");
+    await click("下载产物到授权目录");
+    await reply({ error: "file operation cancelled" });
+    expect(await panel.findByText("已取消本次操作。")).toBeInTheDocument();
+  });
 });
