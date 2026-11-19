@@ -19,10 +19,13 @@ http://127.0.0.1:8088). Data dir = ./data (OCTOP_HOME).
 
 First launch follows the normal Octop setup wizard (create admin password).
 
+CLI: use ./bin/octop on macOS/Linux or bin\octop.cmd on Windows.
+
 Layout
 ------
   runtime/     portable CPython
   packages/    Octop + locked dependencies (site-packages)
+  bin/         octop / octop.cmd CLI launchers
   launch.py    entry bootstrap (loads packages/ + Windows pywin32 DLLs)
   start.sh / start.bat
   README.txt

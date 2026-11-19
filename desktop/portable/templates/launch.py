@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import platform
 import runpy
 import site
 import sys
@@ -32,6 +33,14 @@ def _bootstrap() -> Path:
         sys.stderr.write(f"launch.py: packages/ missing next to {root}\n")
         raise SystemExit(1)
 
+    if (
+        sys.platform == "linux"
+        and "OPENSSL_armcap" not in os.environ
+        and platform.machine().lower() in ("aarch64", "arm64")
+    ):
+        compat = runpy.run_path(str(packages / "octop/infra/utils/arm64_compat.py"))
+        compat["ensure_arm64_openssl_compat"]()
+
     # Process .pth files (required for pywin32 layout).
     site.addsitedir(str(packages))
     # Python subprocesses do not inherit additions to the parent's sys.path.
@@ -40,16 +49,6 @@ def _bootstrap() -> Path:
         os.environ["PYTHONPATH"] = (
             str(packages) + os.pathsep + pythonpath if pythonpath else str(packages)
         )
-
-    if sys.platform == "linux" and os.uname().machine in ("aarch64", "arm64"):
-        if "OPENSSL_armcap" not in os.environ:
-            try:
-                with open("/proc/cpuinfo", encoding="utf-8") as _f:
-                    _cpuinfo = _f.read()
-                if "sve2" in _cpuinfo and " sve " not in _cpuinfo:
-                    os.environ["OPENSSL_armcap"] = "0x3f"  # noqa: SIM112
-            except Exception:
-                pass
 
     if sys.platform == "win32":
         dll_dir = packages / "pywin32_system32"

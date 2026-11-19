@@ -6,15 +6,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export OCTOP_HOME="${OCTOP_HOME:-${ROOT}/data}"
 export OCTOP_GREEN_PACKAGES="${ROOT}/packages"
 
-# Mask SVE on Linux ARM64 if kernel falsely advertises sve2 without sve (prevents OpenSSL SIGILL)
-if [[ "$(uname -s)" == "Linux" && ("$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64") ]]; then
-  if [[ -z "${OPENSSL_armcap:-}" ]]; then
-    if grep -q "sve2" /proc/cpuinfo 2>/dev/null && ! grep -q " sve " /proc/cpuinfo 2>/dev/null; then
-      export OPENSSL_armcap=0x3f
-    fi
-  fi
-fi
-
 PY=""
 if [[ -x "${ROOT}/runtime/bin/python3" ]]; then
   PY="${ROOT}/runtime/bin/python3"

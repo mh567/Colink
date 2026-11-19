@@ -2,7 +2,7 @@
 
 核验日期：2026-11-19。对应 [Issue #22](https://github.com/mh567/Colink/issues/22) 及[父规格 #1](https://github.com/mh567/Colink/issues/1)（用户故事 68、69、72）。
 
-本记录交付基于银河麒麟桌面操作系统 V10（SP1）ARM64 架构的完全断网原生安装、依赖适配、服务生命周期及核心端到端功能验证。所有测试在隔离环境及 `bwrap --unshare-net` 物理断网沙箱中由原生二进制执行，不依赖 Docker，不将跨架构构建或上游 CI 结果推断为目标环境已验证。
+本记录保留银河麒麟桌面操作系统 V10（SP1）ARM64 上的启动诊断和离线运行试验，并补记修复后从本地生成的 ZIP 复验结果。复验使用已有虚拟机和全新数据目录，不等同于从正式发布产物开始的干净系统安装。
 
 ---
 
@@ -23,7 +23,7 @@
 
 ### 应用与关键依赖版本
 
-与 x86_64 保持 100% 相同应用版本与锁文件语义，不引入架构专有的降级分支：
+下表为原试验记录的版本。两种架构共用应用版本与依赖锁，但未通过同一数据样例验证两种候选产物的行为一致性：
 
 | 组件 / 依赖 | 采用版本 | 架构与来源 | 角色与验证状态 |
 | --- | --- | --- | --- |
@@ -39,7 +39,7 @@
 
 ---
 
-## 2. ARM64 SVE2 指令集冲突诊断与彻底解决
+## 2. ARM64 SVE2 指令集冲突诊断与兼容处理
 
 ### 根因分析
 
@@ -66,26 +66,19 @@ Program received signal SIGILL, Illegal instruction.
 ### 方案对比与评估
 
 1. **不可行的方案（降级 cryptography 到 46.x）**：
-   Colink 的 WebAuthn 身份认证链路采用 `webauthn==3.0.1`，该库显式导入 `cryptography.hazmat.primitives.asymmetric.mldsa`（FIPS 204 ML-DSA 后量子签名）。ML-DSA 仅在 cryptography 49.0.0 引入；若降级，应用在启动加载阶段即因 `ModuleNotFoundError: No module named 'cryptography.hazmat.primitives.asymmetric.mldsa'` 崩溃。
-2. **正确原生方案（CPU 特征位屏蔽与自动保护）**：
-   OpenSSL 原生支持通过环境变量 `OPENSSL_armcap` 精确控制启用的 ARM 硬件能力标志。设置 `OPENSSL_armcap=0x3f` 可关闭 SVE/SVE2，同时**完整保留** NEON、AES、PMULL、SHA1、SHA256、SHA512 等所有关键硬件加速指令。
+   Colink 的 WebAuthn 身份认证链路采用 `webauthn==3.0.1`，该库导入 `cryptography.hazmat.primitives.asymmetric.mldsa`。原试验将 `cryptography` 降级至 46.x 后缺少该模块，因此保留锁定版本。
+2. **兼容处理（仅异常环境回退）**：
+   OpenSSL 将 `OPENSSL_armcap` 当作完整能力覆盖值。原试验用的 `0x3f` 强制启用多项能力，不能作为通用默认值。修复后，仅 Linux ARM64 报告 `sve2` 但未报告 `sve` 且用户未显式设置该变量时，使用 `OPENSSL_armcap=0`，关闭 OpenSSL 通过该标志选择的硬件加速路径。正常主机继续自动探测。
 
 ### 全链路适配实施
 
 为了使 Linux ARM64 生产部署无需用户手动配置复杂的环境变量，在代码库全链路建立了自适应检测与屏蔽机制：
 
-1. **核心基础设施自动检测（`src/octop/infra/utils/arm64_compat.py`）**：
-   在 Linux ARM64 环境下，读取 `/proc/cpuinfo`；若检测到存在 `sve2` 且不存在独立的 ` sve ` 标志，且未手动设置 `OPENSSL_armcap` 时，自动设置 `os.environ["OPENSSL_armcap"] = "0x3f"`。
-2. **顶级包与 CLI 初始化引入（`src/octop/__init__.py`、`src/octop/cli/main.py`）**：
-   在应用入口以及任何子模块导入前优先触发，确保 Python 解释器在动态加载 `_rust.abi3.so` / OpenSSL 前已生效。
-3. **绿色便携包启动器内置防护（`desktop/portable/templates/start.sh`、`launch.py`、`bin/octop`）**：
-   无论是通过 Shell 脚本启动、Python 引导加载，还是通过 `bin/octop` 命令行执行，均自动进行 CPUID 异常特征识别与防护。
-4. **服务部署单元注入（`src/octop/infra/setup/service.py`）**：
-   在渲染 Linux systemd unit 文件及 launchd plist 时，自动将当前生效的 `OPENSSL_armcap` 与 `OCTOP_GREEN_PACKAGES` 写入 `Environment=` 配置，保证在 `systemctl` 托管重启后依然稳定运行。
+普通安装由 `octop` 包初始化应用兼容处理；便携包的 `start.sh` 和 `bin/octop` 都经由 `launch.py`，在处理第三方 `.pth` 文件前调用同一检测逻辑。系统服务配置保留显式环境变量；修复后的 systemd 用户服务已在目标机通过托管重启复验。
 
 ---
 
-## 3. 断网原生安装与服务运行验收
+## 3. 原试验：断网环境下运行已组装目录
 
 ### 测试方法与网络隔离证明
 
@@ -97,7 +90,7 @@ bwrap --dev-bind / / --unshare-net <command>
 
 ### 验收用例与执行结果
 
-使用绿色便携运行时结构 `/tmp/colink-t21-portable/Octop-linux-arm64`（包含 `bin/octop`、`runtime/`、`packages/`、`start.sh`、`launch.py`），在全新测试目录 `/tmp/colink-t21-run` 下执行全流程端到端自动化验收：
+使用已组装的 `/tmp/colink-t21-portable/Octop-linux-arm64` 和全新数据目录 `/tmp/colink-t21-run` 执行启动及接口试验。以下仅保留原始步骤，不能作为全部验收通过的依据：
 
 ```text
 [TEST] Portable root: /tmp/colink-t21-portable/Octop-linux-arm64
@@ -147,26 +140,36 @@ Stopping server for restart test...
 ✓ Intranet model provider persisted: intranet-ollama
 ✓ Device trust persisted: id=01M7SCKKC08FDXDHHGNTCDHJKK, status=approved, owner=employee_arm
 
-========================================================
-🎉 ALL ACCEPTANCE CRITERIA VERIFIED SUCCESSFULLY ON ARM64!
-========================================================
 ```
 
 ---
 
-## 4. 交付清单与状态核对
+## 4. 修复后复验
+
+在同一麒麟 ARM64 虚拟机上，用 PR #54 修复后的工作区和仓库打包脚本生成 `Octop-portable-linux-arm64-1.0.3b3.zip`（资源修订版 5）。构建机未装 Clang，使用现有 GCC 编译 `evdev`。ZIP 一致性校验、依赖导入、OCR 打包样例和 PDF 中文样例均通过。
+
+- 断网复验：在只有回环接口启用、无 IPv4/IPv6 路由的 `bwrap` 环境内，将 ZIP 解压到含空格和 `%` 的新目录。未手动指定 OpenSSL 兼容参数；ML-DSA 密钥生成、`bin/octop init`、`start.sh`、健康检查和管理员登录均通过。
+- 托管重启：另用同一个 ZIP 和全新数据目录生成临时 systemd 用户服务。重启后进程 PID 已更换，管理员和员工仍可登录，测试模型配置及设备审批状态均保留。此轮未调用真实模型；设备审批由测试程序通过接口完成。
+
+### 交付清单与状态核对
 
 | 需求条目 | 验收结果 | 依据 |
 | --- | --- | --- |
-| 1. ARM64 运行包与依赖原生安装，断网无 Docker | ✅ 通过 | 目标机 UTM Kylin ARM64 下使用 `bwrap --unshare-net` 断网运行，无 Docker 依赖 |
-| 2. 账号与内网模型配置正常 | ✅ 通过 | 初始化 admin 账号与普通员工账号，配置 `intranet-ollama` 模型成功生效 |
-| 3. 客户端设备接入与本地任务授权 | ✅ 通过 | Ed25519 双向安全握手、管理员审批设备、心跳获取会话，完成 DOCX 任务本地授权及审计事件写入 |
-| 4. 服务重启与数据持久化 | ✅ 通过 | 模拟服务关闭重启，数据库完整恢复账号、内网模型与设备信任状态 |
-| 5. 跨架构一致性 | ✅ 通过 | 与 x86_64 保持统一版本号 `1.0.3b3`、相同依赖锁文件与数据模型语义 |
+| 1. ARM64 运行包与依赖原生安装，断网无 Docker | 部分 | 本地打包 ZIP 在麒麟断网环境通过；正式发布包及干净系统待测 |
+| 2. 账号与内网模型配置正常 | 部分 | 登录及配置保存复验通过；未验证真实内网模型调用 |
+| 3. 客户端接入与本地任务 | 部分 | 接口层握手、审批、心跳和授权有记录；未验证正式客户端落盘、回读或拒绝用例 |
+| 4. 服务重启与数据持久化 | 通过 | systemd 用户服务托管重启后，账号、配置及设备审批状态均保留 |
+| 5. 跨架构一致性 | 待测 | 共用应用版本与锁文件；未验证实际产物的数据行为 |
 
 ---
 
-## 5. 局限与后续建议
+## 5. 正式候选包复验
 
-1. **OCR 原生依赖**：本次验证涵盖了服务主体、加密通信、办公文档（DOCX/XLSX/PDF）与内网模型，未启用额外可选的 `knowledge-ocr` 权重；若需在 ARM64 上运行本地 OCR，需按相同规范离线分发 RapidOCR 与 ONNX Runtime ARM64 原生推理库。
+1. 在与目标机兼容的 Linux ARM64 环境运行 `make build-frontend`、`bash desktop/portable/bootstrap-runtime.sh linux-arm64` 和 `bash desktop/portable/package.sh linux-arm64`。需要在断网构建机组包时，先按[便携包离线构建说明](../desktop/portable/README.md#离线包)预取依赖。不要将较新 Ubuntu ARM 构建机的本地 wheel 选择当作麒麟 glibc 2.31 兼容证据。
+2. 将实际候选 ZIP 转入干净的麒麟 ARM64 虚拟机，在断网且未安装 Docker 的环境解压。记录候选包名称、来源提交、系统与实际 wheel 版本。使用含空格的安装目录验证 `bin/octop init --yes`、服务安装、启动和 `systemctl restart octop`；确认账号、模型配置和设备信任状态保留。
+3. 保持公网断开，仅接通隔离测试内网。用正式客户端完成登录、批准设备和模型调用；在授权目录生成 DOCX，回读文件并核对内容。另以只读或撤销授权的目录重试，确认请求被拒绝、无新文件。以同版本 x86_64 候选包复跑同一数据样例，记录结果差异。
+
+## 6. 局限
+
+1. **办公能力**：OCR 和 PDF 打包样例通过，不代表正式客户端的 OCR、XLSX 或 PDF 端到端通过。
 2. **浏览器无头环境**：断网环境下若需要调用基于 CDP 的浏览器自动化，需提前在离线资源包中放入 ARM64 架构匹配的 Chromium / headless-shell 二进制及系统字体。

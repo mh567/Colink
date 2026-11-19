@@ -291,7 +291,7 @@ assemble_one() {
       "${REPO_ROOT}/pyproject.toml" | head -1
   } > "${staging}/VERSION.txt"
   # The bundled runtime can change while the application version stays the same.
-  printf '4\n' > "${staging}/PORTABLE-REVISION.txt"
+  printf '5\n' > "${staging}/PORTABLE-REVISION.txt"
 
   rm -f "$zip_path"
   echo "[package] ${plat}: zipping → ${zip_path}"

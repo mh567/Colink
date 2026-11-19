@@ -35,6 +35,7 @@ make -f desktop/portable/Makefile green
 Octop-<plat>/
   runtime/       # python-build-standalone
   packages/      # Octop + 依赖（site-packages，可搬迁）
+  bin/           # octop / octop.cmd 命令行入口
   launch.py      # 启动引导（site.addsitedir / Windows pywin32）
   start.sh       # macOS / Linux
   start.bat      # Windows

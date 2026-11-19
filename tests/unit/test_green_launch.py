@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import os
+import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -109,26 +111,37 @@ def test_launch_has_no_provider_seed() -> None:
 
 
 def test_bootstrap_masks_arm64_sve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (tmp_path / "packages").mkdir()
+    packages = tmp_path / "packages"
+    helper = packages / "octop/infra/utils/arm64_compat.py"
+    helper.parent.mkdir(parents=True)
+    source = Path(__file__).resolve().parents[2] / "src/octop/infra/utils/arm64_compat.py"
+    shutil.copyfile(source, helper)
     module = _load_launch_module()
     module.__file__ = str(tmp_path / "launch.py")
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(os, "uname", lambda: type("Uname", (), {"machine": "aarch64"})())
+    monkeypatch.delattr(os, "uname", raising=False)
+    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
+    monkeypatch.delenv("PYTHONPATH", raising=False)
     monkeypatch.delenv("OPENSSL_armcap", raising=False)
 
     fake_cpuinfo = tmp_path / "cpuinfo"
     fake_cpuinfo.write_text("Features : fp asimd sve2\n", encoding="utf-8")
+    (packages / "observe.pth").write_text(
+        "import os; os.environ['TEST_EARLY_ARMCAP'] = os.environ.get('OPENSSL_armcap', 'unset')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("TEST_EARLY_ARMCAP", raising=False)
+    real_read_text = Path.read_text
 
-    import builtins
-
-    real_open = builtins.open
-
-    def mock_open(file, *args, **kwargs):
-        if file == "/proc/cpuinfo":
-            return real_open(fake_cpuinfo, *args, **kwargs)
-        return real_open(file, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", mock_open)
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda path, *args, **kwargs: real_read_text(
+            fake_cpuinfo if path == Path("/proc/cpuinfo") else path, *args, **kwargs
+        ),
+    )
     module._bootstrap()
-    assert os.environ.get("OPENSSL_armcap") == "0x3f"  # noqa: SIM112
+    assert os.environ.get("TEST_EARLY_ARMCAP") == "0"

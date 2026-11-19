@@ -134,9 +134,14 @@ func hasNewerPortableRevision(root string) bool {
 			readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil
 	case 3:
 		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil
-	default:
+	case 4:
 		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil &&
 			readPortableBundleFile(files, "pdf/runner.py", 64<<10) != nil
+	default:
+		return readPortableBundleFile(files, "browser/runner.py", 64<<10) != nil &&
+			readPortableBundleFile(files, "pdf/runner.py", 64<<10) != nil &&
+			readPortableBundleFile(files, "bin/octop", 64<<10) != nil &&
+			readPortableBundleFile(files, "bin/octop.cmd", 64<<10) != nil
 	}
 }
 
@@ -148,6 +153,20 @@ func portableDataOutsideRuntime(root string) bool {
 	// The standalone launcher and directory grants can store user data here.
 	for _, entry := range entries {
 		switch entry.Name() {
+		case "bin":
+			if !entry.IsDir() {
+				return false
+			}
+			launchers, err := os.ReadDir(filepath.Join(root, "bin"))
+			if err != nil {
+				return false
+			}
+			for _, launcher := range launchers {
+				if (launcher.Name() != "octop" && launcher.Name() != "octop.cmd") ||
+					!launcher.Type().IsRegular() {
+					return false
+				}
+			}
 		case "pdf":
 			if !entry.IsDir() {
 				return false
