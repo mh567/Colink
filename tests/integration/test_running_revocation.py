@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from octop.infra.errors import ErrorCode, OctopError
 from tests.integration import test_devices
 from tests.integration.test_local_docx import approved_device, seed_intranet_provider
 from tests.support.auth import create_user
@@ -215,3 +216,32 @@ async def test_service_disconnect_halts_running_operations(env):
         json={"action": "read"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_failed_account_deletion_keeps_device_connected(env, monkeypatch, batch):
+    client, server, admin = env
+    employee = await create_user(client, admin, username="alice", permissions=DOCX_GRANTS)
+    employee_id = (await client.get("/api/auth/me", headers=employee)).json()["id"]
+
+    def reject_deletion(_owned_agents):
+        raise OctopError.localized(ErrorCode.AGENT_BUSY)
+
+    monkeypatch.setattr(
+        server.app_runtime.agent_registry, "assert_agents_deletable", reject_deletion
+    )
+    async with approved_device(client, admin, employee) as (device_id, native):
+        if batch:
+            response = await client.post(
+                "/api/users/batch",
+                headers=admin,
+                json={"action": "delete", "user_ids": [employee_id]},
+            )
+            assert response.json()["results"][0]["code"] == "AGENT_BUSY"
+        else:
+            response = await client.delete(f"/api/users/{employee_id}", headers=admin)
+            assert response.status_code == 409
+        response = await client.post(
+            f"/api/devices/{device_id}/docx/authorize", headers=native, json={"action": "read"}
+        )
+        assert response.json() == {"allowed": True}

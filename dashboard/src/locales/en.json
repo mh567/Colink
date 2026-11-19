@@ -157,6 +157,7 @@
     "UPDATE_TARGET_NOT_NEWER": "Target version {{target}} must be newer than installed version {{current}}. Reinstalling or downgrading is not supported.",
     "NOT_FOUND": "Not found.",
     "USER_DISABLED": "This account has been disabled.",
+    "DEVICE_REVOKED": "Device access was revoked. Ask your administrator to approve the device again.",
     "LOGIN_LOCKED": "Too many failed sign-in attempts. Try again in {{minutes}} minutes.",
     "USERNAME_TAKEN": "Username is already taken.",
     "EMAIL_TAKEN": "Email is already taken.",

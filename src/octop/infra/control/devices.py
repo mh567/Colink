@@ -37,6 +37,9 @@ class DeviceConnection:
     mfa_version: int
     seen_at: float
     session_token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
+    disconnected: asyncio.Future[ErrorCode] = field(
+        default_factory=lambda: asyncio.get_running_loop().create_future(), repr=False
+    )
 
 
 class DeviceManager:
@@ -66,8 +69,10 @@ class DeviceManager:
         row = self.services.device_repo.enroll(
             user_id=user.id, public_key=public_key, name=name, platform=platform
         )
-        if row.owner_user_id != user.id or row.status == "revoked":
+        if row.owner_user_id != user.id:
             raise OctopError(ErrorCode.FORBIDDEN, "device is not allowed for this employee")
+        if row.status == "revoked":
+            raise OctopError.localized(ErrorCode.DEVICE_REVOKED)
         previous = self._connections.get(row.device_id)
         if previous is not None and self._connection_valid(previous):
             raise OctopError(ErrorCode.FORBIDDEN, "device already has a live connection")
@@ -112,16 +117,16 @@ class DeviceManager:
             and self._connection_valid(connection)
         )
 
-    def disconnect(self, connection: DeviceConnection) -> None:
+    def disconnect(self, connection: DeviceConnection, *, reason: ErrorCode | None = None) -> None:
         if self._connections.get(connection.device_id) is connection:
             self._connections.pop(connection.device_id)
+        if reason is not None and not connection.disconnected.done():
+            connection.disconnected.set_result(reason)
 
-    def disconnect_user(self, user_id: int) -> None:
-        to_remove = [
-            dev_id for dev_id, conn in self._connections.items() if conn.user_id == user_id
-        ]
-        for dev_id in to_remove:
-            self._connections.pop(dev_id, None)
+    def disconnect_user(self, user_id: int, *, reason: ErrorCode) -> None:
+        for connection in list(self._connections.values()):
+            if connection.user_id == user_id:
+                self.disconnect(connection, reason=reason)
 
     def _require_native_grants(
         self,
@@ -287,7 +292,8 @@ class DeviceManager:
         )
 
     def clear(self) -> None:
-        self._connections.clear()
+        for connection in list(self._connections.values()):
+            self.disconnect(connection, reason=ErrorCode.FORBIDDEN)
 
     async def query_browser_text(
         self,
@@ -513,8 +519,8 @@ class DeviceManager:
         if status == "approved":
             self._active_user(row.owner_user_id)
         self.services.device_repo.set_status(device_id, status)
-        if status == "revoked":
-            self._connections.pop(device_id, None)
+        if status == "revoked" and (connection := self._connections.get(device_id)) is not None:
+            self.disconnect(connection, reason=ErrorCode.DEVICE_REVOKED)
         self.services.audit_repo.write(
             actor=actor.username, action=f"device.{status}", target=device_id
         )

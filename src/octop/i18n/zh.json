@@ -404,6 +404,7 @@
     "UPDATE_TARGET_NOT_NEWER": "目标版本 {target} 必须高于已安装版本 {current}，不支持重装同版本或降级。",
     "NOT_FOUND": "未找到。",
     "USER_DISABLED": "账号已禁用。",
+    "DEVICE_REVOKED": "设备授权已撤销，请联系管理员重新批准。",
     "LOGIN_LOCKED": "登录失败次数过多，请 {minutes} 分钟后再试。",
     "USERNAME_TAKEN": "用户名已被占用。",
     "EMAIL_TAKEN": "邮箱已被占用。",

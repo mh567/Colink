@@ -95,7 +95,7 @@ func (w *localDOCX) destructiveTasks(s docxSession) ([]docxTask, error) {
 			continue
 		}
 		task := entry.Task
-		if _, active := w.activeCancels[task.ID]; !active {
+		if _, active := w.activeTasks[task.ID]; !active {
 			markInterrupted(&task, s.Locale)
 		}
 		tasks = append(tasks, task)
@@ -208,7 +208,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		}
 		return task, err
 	}
-	ctx, releaseTask := w.registerTask(task.ID, s.Context)
+	ctx, releaseTask := w.registerTask(s, task.ID, request)
 	s.Context = ctx
 	defer releaseTask()
 	persist := func() error {
@@ -298,7 +298,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 			return task, sourceErr
 		}
 		task.Source = filepath.Join(source.Name(), request.Source)
-		data, err = generateLocalOutput(s, request, source, current, addStep)
+		data, err = w.generateLocalOutput(s, request, source, current, addStep)
 		if err != nil {
 			return task, err
 		}
@@ -328,16 +328,6 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	awaitingConfirmation = false
 	addStep("已通过本机操作核对与确认")
-	if err = authorizeDOCX(s, request.Action); err != nil {
-		return task, err
-	}
-	if err = current(); err != nil {
-		return task, err
-	}
-	proof, err := refreshDOCXSession(s)
-	if err != nil {
-		return task, err
-	}
 	if w.isTaskCancelled(task.ID) {
 		return task, errDestructiveCancelled
 	}
@@ -346,6 +336,16 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	task.Status = "running"
 	if err = persist(); err != nil {
+		return task, err
+	}
+	if err = current(); err != nil {
+		return task, err
+	}
+	if err = authorizeDOCX(s, request.Action); err != nil {
+		return task, err
+	}
+	proof, err := refreshDOCXSession(s)
+	if err != nil {
 		return task, err
 	}
 	apply := func() error {

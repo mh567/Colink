@@ -147,7 +147,11 @@ func (a *App) handleDOCX(raw string) {
 		a.docx.busy = false
 		a.docx.mu.Unlock()
 		a.docx.statusMu.Unlock()
-		a.emitDOCX(session, err)
+		if latest, sessionErr := a.device.docxSession(); sessionErr == nil && latest.scope() == session.scope() {
+			a.emitDOCX(latest, err)
+		} else {
+			a.emitDOCX(session, err)
+		}
 	}()
 	a.emitDOCX(session, nil)
 	switch request.Action {

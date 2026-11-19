@@ -105,6 +105,7 @@ export default function DevicesPage() {
       }[status],
     );
   const connectedDeviceId =
+    native.busy !== "disconnect" &&
     native.event?.type === "status" &&
     native.event.status === "approved" &&
     native.event.online
@@ -314,6 +315,9 @@ export default function DevicesPage() {
             key={docxDeviceId}
             deviceId={docxDeviceId}
             connected={connectedDeviceId === docxDeviceId}
+            disconnectCode={
+              native.event?.type === "error" ? native.event.code : undefined
+            }
           />
         )}
         {native.available &&

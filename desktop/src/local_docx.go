@@ -99,13 +99,18 @@ type docxEvent struct {
 	Error            string           `json:"error,omitempty"`
 	ManagedDirectory bool             `json:"managed_directory,omitempty"`
 }
+type runningLocalTask struct {
+	scope, sourceGrant, outputGrant string
+	cancel                          context.CancelCauseFunc
+}
+
 type localDOCX struct {
 	mu                 sync.Mutex
 	auditMu            sync.Mutex
 	statusMu           sync.Mutex
 	home               string
 	roots              map[string]*os.Root
-	activeCancels      map[string]context.CancelFunc
+	activeTasks        map[string]runningLocalTask
 	cancelledTasks     map[string]bool
 	closing            bool
 	busy               bool
@@ -116,7 +121,7 @@ func newLocalDOCX(home string) *localDOCX {
 	return &localDOCX{
 		home:           home,
 		roots:          map[string]*os.Root{},
-		activeCancels:  map[string]context.CancelFunc{},
+		activeTasks:    map[string]runningLocalTask{},
 		cancelledTasks: map[string]bool{},
 	}
 }
@@ -192,7 +197,7 @@ func (w *localDOCX) state(s docxSession) (docxState, error) {
 	changed := false
 	for i := range state.Tasks {
 		if state.Tasks[i].Status == "running" {
-			if _, active := w.activeCancels[state.Tasks[i].ID]; active {
+			if _, active := w.activeTasks[state.Tasks[i].ID]; active {
 				continue
 			}
 			state.Tasks[i].Status = "interrupted"
@@ -340,7 +345,13 @@ func (w *localDOCX) revoke(s docxSession, grantID string) error {
 		if err = w.save(states); err != nil {
 			return err
 		}
-		key := s.scope() + "\n" + grant.ID
+		scope := s.scope()
+		for _, task := range w.activeTasks {
+			if task.scope == scope && (task.sourceGrant == grantID || task.outputGrant == grantID) {
+				task.cancel(fileopsCopyError(copyFileGrantNotFound))
+			}
+		}
+		key := scope + "\n" + grant.ID
 		if root := w.roots[key]; root != nil {
 			delete(w.roots, key)
 			return root.Close()
@@ -609,37 +620,38 @@ func (w *localDOCX) record(s docxSession, task docxTask, audit ...fileAuditRecei
 		state.Tasks = append(state.Tasks, task)
 	})
 }
-func (w *localDOCX) registerTask(taskID string, parent context.Context) (context.Context, func()) {
+func (w *localDOCX) registerTask(s docxSession, taskID string, request docxRequest) (context.Context, func()) {
+	parent := s.Context
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(parent)
 	w.mu.Lock()
-	if w.activeCancels == nil {
-		w.activeCancels = make(map[string]context.CancelFunc)
+	if w.activeTasks == nil {
+		w.activeTasks = make(map[string]runningLocalTask)
 	}
 	if w.cancelledTasks == nil {
 		w.cancelledTasks = make(map[string]bool)
 	}
 	delete(w.cancelledTasks, taskID)
-	w.activeCancels[taskID] = cancel
+	w.activeTasks[taskID] = runningLocalTask{s.scope(), request.SourceGrant, request.OutputGrant, cancel}
 	closing := w.closing
 	w.mu.Unlock()
 	if closing {
-		cancel()
+		cancel(nil)
 	}
 	return ctx, func() {
 		w.mu.Lock()
-		delete(w.activeCancels, taskID)
+		delete(w.activeTasks, taskID)
 		w.mu.Unlock()
-		cancel()
+		cancel(nil)
 	}
 }
 
 func (w *localDOCX) isTaskActive(taskID string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_, active := w.activeCancels[taskID]
+	_, active := w.activeTasks[taskID]
 	return active
 }
 
@@ -662,15 +674,11 @@ func (w *localDOCX) close() {
 		r.Close()
 		delete(w.roots, k)
 	}
-	cancels := make([]context.CancelFunc, 0, len(w.activeCancels))
-	for _, cancel := range w.activeCancels {
-		cancels = append(cancels, cancel)
+	for _, task := range w.activeTasks {
+		task.cancel(nil)
 	}
-	w.activeCancels = map[string]context.CancelFunc{}
+	clear(w.activeTasks)
 	w.mu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
-	}
 }
 
 func (w *localDOCX) cancel(s docxSession, taskID string) error {
@@ -679,10 +687,10 @@ func (w *localDOCX) cancel(s docxSession, taskID string) error {
 		w.cancelledTasks = make(map[string]bool)
 	}
 	w.cancelledTasks[taskID] = true
-	cancel, active := w.activeCancels[taskID]
+	task, active := w.activeTasks[taskID]
 	w.mu.Unlock()
-	if active && cancel != nil {
-		cancel()
+	if active {
+		task.cancel(nil)
 	}
 
 	w.mu.Lock()
@@ -832,7 +840,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	if err = w.record(s, task); err != nil {
 		return task, err
 	}
-	ctx, releaseTask := w.registerTask(task.ID, s.Context)
+	ctx, releaseTask := w.registerTask(s, task.ID, request)
 	s.Context = ctx
 	defer releaseTask()
 	outputWritten := false
@@ -886,23 +894,20 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		return task, err
 	}
 	audited = true
-	data, err := generateLocalOutput(s, request, source, current, addStep)
+	data, err := w.generateLocalOutput(s, request, source, current, addStep)
 	if err != nil {
 		return task, err
 	}
 	if w.isTaskCancelled(task.ID) || s.Context.Err() != nil {
 		return task, context.Canceled
 	}
-	if err = authorizeDOCX(s, "create"); err != nil {
-		return task, err
-	}
-	addStep("已核验生成权限")
 	if err = current(); err != nil {
 		return task, err
 	}
-	if w.isTaskCancelled(task.ID) || s.Context.Err() != nil {
-		return task, context.Canceled
+	if err = authorizeDOCX(s, "create"); err != nil {
+		return task, err
 	}
+	task.Steps = append(task.Steps, "已核验生成权限")
 	sourceGrantInvalid := false
 	grantsAccepted := false
 	err = w.withGrant(s, request.OutputGrant, true, func(output *os.Root) error {
@@ -917,6 +922,9 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 			return sourceErr
 		}
 		grantsAccepted = true
+		if err := current(); err != nil {
+			return err
+		}
 		if w.cancelledTasks[task.ID] || s.Context.Err() != nil {
 			return context.Canceled
 		}
@@ -999,7 +1007,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	return task, err
 }
 
-func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, current func() error, onStep ...func(string)) ([]byte, error) {
+func (w *localDOCX) generateLocalOutput(s docxSession, request docxRequest, source *os.Root, current func() error, onStep ...func(string)) ([]byte, error) {
 	step := func(st string) {
 		for _, fn := range onStep {
 			if fn != nil {
@@ -1067,7 +1075,7 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		return nil, err
 	}
 	step("已读取源文件")
-	if err = s.Context.Err(); err != nil {
+	if err = context.Cause(s.Context); err != nil {
 		return nil, err
 	}
 	var data []byte
@@ -1088,10 +1096,17 @@ func generateLocalOutput(s docxSession, request docxRequest, source *os.Root, cu
 		if request.AgentID != "" {
 			payload["agent_id"] = request.AgentID
 		}
-		if err = docxCall(s, "generate", payload, &generated); err != nil {
+		if err = w.withGrant(s, request.SourceGrant, false, func(*os.Root) error {
+			_, err := w.openGrantLocked(s, request.OutputGrant, true)
+			return err
+		}); err != nil {
 			return nil, err
 		}
-		if err = s.Context.Err(); err != nil {
+		err = docxCall(s, "generate", payload, &generated)
+		if cause := context.Cause(s.Context); cause != nil {
+			return nil, cause
+		}
+		if err != nil {
 			return nil, err
 		}
 		step("已生成内容")
