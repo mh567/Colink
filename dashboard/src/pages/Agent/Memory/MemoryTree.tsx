@@ -57,7 +57,7 @@ import {
 } from "../../../api/modules/memoryDashboard";
 import Markdown from "../../../components/Markdown/LazyMarkdown";
 import MemoryPipelineEmpty from "./shared/MemoryPipelineEmpty";
-import { confirmDeprecateAtom } from "./shared/deprecateAtom";
+import { confirmForgetAtom } from "./shared/forgetAtom";
 import { confirmEditAtom } from "./shared/editAtom";
 import CreateAtomModal from "./shared/createAtom";
 import LineageStrip from "./shared/LineageStrip";
@@ -316,7 +316,7 @@ export default function MemoryTree({ agentId, initialExpandEntityId }: Props) {
                         })
                       }
                       onDeprecate={(atom) =>
-                        confirmDeprecateAtom({
+                        confirmForgetAtom({
                           agentId,
                           atom,
                           onSuccess: () => void fetchAtoms(atom.entity_id),
@@ -818,14 +818,14 @@ function AtomDetailDrawer({
                 <Button
                   danger
                   onClick={() =>
-                    confirmDeprecateAtom({
+                    confirmForgetAtom({
                       agentId,
                       atom,
                       onSuccess: () => onDeprecated(atom),
                     })
                   }
                 >
-                  {t("memory.tree.deprecate")}
+                  {t("memory.tree.forget", "彻底遗忘这条记忆")}
                 </Button>
               </Space>
             </>
