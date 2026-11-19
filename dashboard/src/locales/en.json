@@ -7521,7 +7521,18 @@
     "retainedArtifact": "Retained artifact:",
     "interruptedHint": "Task interrupted or state unclear. Existing files retained. Please verify target file before retrying.",
     "cancelledHint": "Task cancelled without further action. Usable artifacts retained.",
-    "awaitingHint": "Awaiting confirmation: will not auto-execute. Please confirm or cancel.",
+    "awaitingHint": "Awaiting confirmation: will not auto-execute. Confirm in the native dialog, or cancel and start a new task.",
+    "stepLabels": {
+      "已登记操作意图与约束": "Recorded operation intent and constraints",
+      "已核验操作权限": "Verified operation permission",
+      "已读取源文件": "Read source file",
+      "已生成内容": "Generated content",
+      "已完成文本整理": "Completed text organization",
+      "已核验生成权限": "Verified creation permission",
+      "已通过本机操作核对与确认": "Confirmed local operation",
+      "已写入产物文件": "Wrote output file",
+      "已提交文件变更": "Committed file changes"
+    },
     "limits": "Supports DOCX files directly inside authorized folders (no subfolders), up to 20 MB and 60,000 text characters. Generates editable body text without preserving the original layout.",
     "format": "File type"
   },

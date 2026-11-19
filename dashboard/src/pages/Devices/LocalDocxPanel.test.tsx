@@ -772,5 +772,6 @@ it("displays failure reason, completed steps and retains artifact on failed task
   expect(screen.getByText("模型服务异常")).toBeInTheDocument();
   expect(screen.getByText("已读取源文件")).toBeInTheDocument();
   expect(screen.getByText("已完成文本整理")).toBeInTheDocument();
+  expect(screen.getByText("可用产物：")).toBeInTheDocument();
   expect(screen.getByText("/成果/可用产物.docx")).toBeInTheDocument();
 });

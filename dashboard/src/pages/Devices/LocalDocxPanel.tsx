@@ -59,7 +59,13 @@ function send(command: Record<string, string>) {
   );
 }
 
-export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
+export default function LocalDocxPanel({
+  deviceId,
+  connected = true,
+}: {
+  deviceId: string;
+  connected?: boolean;
+}) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const id = useId();
@@ -133,6 +139,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
   }, [deviceId]);
 
   const dispatch = (command: Record<string, string>) => {
+    if (!connected) return;
     setState((previous) => ({ ...previous, busy: true, error: undefined }));
     try {
       send(format !== "docx" ? { ...command, format } : command);
@@ -621,6 +628,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                       <Button
                         size="small"
                         danger
+                        disabled={!connected}
                         onClick={() =>
                           dispatch({ action: "cancel", task_id: task.id })
                         }
@@ -632,14 +640,39 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                   <div>
                     <Typography.Text strong>{task.instruction}</Typography.Text>
                   </div>
-                  <div>
-                    <Typography.Text type="secondary">
-                      {task.source}
-                    </Typography.Text>
-                  </div>
-                  <Typography.Text style={{ overflowWrap: "anywhere" }}>
-                    {task.output}
-                  </Typography.Text>
+                  {task.source && (
+                    <div>
+                      {!task.output &&
+                        (task.status === "failed" ||
+                          task.status === "cancelled") && (
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12, marginRight: 4 }}
+                          >
+                            {t("localDocx.retainedArtifact", "可用产物：")}
+                          </Typography.Text>
+                        )}
+                      <Typography.Text type="secondary">
+                        {task.source}
+                      </Typography.Text>
+                    </div>
+                  )}
+                  {task.output && (
+                    <div>
+                      {(task.status === "failed" ||
+                        task.status === "cancelled") && (
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12, marginRight: 4 }}
+                        >
+                          {t("localDocx.retainedArtifact", "可用产物：")}
+                        </Typography.Text>
+                      )}
+                      <Typography.Text style={{ overflowWrap: "anywhere" }}>
+                        {task.output}
+                      </Typography.Text>
+                    </div>
+                  )}
                   {task.status === "cancelled" && (
                     <Alert
                       type="info"
@@ -658,7 +691,7 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                       style={{ marginTop: 8 }}
                       message={t(
                         "localDocx.awaitingHint",
-                        "任务待确认：待确认动作不会自动执行，请核对后确认或取消。",
+                        "任务待确认：待确认动作不会自动执行，请在本机弹窗确认，或取消任务后重新发起。",
                       )}
                     />
                   )}
@@ -702,7 +735,9 @@ export default function LocalDocxPanel({ deviceId }: { deviceId: string }) {
                         }}
                       >
                         {task.steps.map((st, idx) => (
-                          <li key={idx}>{st}</li>
+                          <li key={idx}>
+                            {t(`localDocx.stepLabels.${st}`, st)}
+                          </li>
                         ))}
                       </ul>
                     </div>

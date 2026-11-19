@@ -198,7 +198,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	}
 	if replay {
 		task = entry.Task
-		if task.Status != "awaiting_confirmation" && !w.busy {
+		if task.Status != "awaiting_confirmation" && !w.isTaskActive(task.ID) {
 			markInterrupted(&task, s.Locale)
 		}
 		if task.Error != "" {
@@ -206,20 +206,9 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		}
 		return task, err
 	}
-	ctx, cancel := context.WithCancel(s.Context)
+	ctx, releaseTask := w.registerTask(task.ID, s.Context)
 	s.Context = ctx
-	w.mu.Lock()
-	if w.activeCancels == nil {
-		w.activeCancels = make(map[string]context.CancelFunc)
-	}
-	w.activeCancels[task.ID] = cancel
-	w.mu.Unlock()
-	defer func() {
-		w.mu.Lock()
-		delete(w.activeCancels, task.ID)
-		w.mu.Unlock()
-		cancel()
-	}()
+	defer releaseTask()
 	persist := func() error {
 		entry.Task = task
 		data, marshalErr := json.Marshal(entry)
@@ -229,15 +218,26 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		return saveLocalTaskJSON(journal, data)
 	}
 	addStep := func(st string) {
+		if w.isTaskCancelled(task.ID) || w.isClosing() {
+			return
+		}
 		task.Steps = append(task.Steps, st)
 		_ = persist()
 	}
 	addStep("已登记操作意图与约束")
+	awaitingConfirmation := false
 	defer func() {
 		switch {
-		case errors.Is(err, errDestructiveCancelled) || errors.Is(err, context.Canceled) || task.Status == "cancelled":
+		case w.isTaskCancelled(task.ID) || errors.Is(err, errDestructiveCancelled):
 			task.Status = "cancelled"
+			task.Error = ""
 			err = nil
+		case w.isClosing() && awaitingConfirmation:
+			task.Status = "awaiting_confirmation"
+			task.Error = ""
+		case w.isClosing():
+			markInterrupted(&task, s.Locale)
+			err = errors.New(task.Error)
 		case err != nil:
 			if task.Status != "interrupted" {
 				task.Status = "failed"
@@ -290,6 +290,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		return task, err
 	}
 	task.Status = "awaiting_confirmation"
+	awaitingConfirmation = true
 	if err = persist(); err != nil {
 		return task, err
 	}
@@ -305,6 +306,10 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	if err = target.confirm(s.Context, prompt, data); err != nil {
 		return task, err
 	}
+	if w.isTaskCancelled(task.ID) {
+		return task, errDestructiveCancelled
+	}
+	awaitingConfirmation = false
 	addStep("已通过本机操作核对与确认")
 	if err = authorizeDOCX(s, request.Action); err != nil {
 		return task, err
@@ -318,6 +323,9 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	proof, err := refreshDOCXSession(s)
 	if err != nil {
 		return task, err
+	}
+	if w.isTaskCancelled(task.ID) {
+		return task, errDestructiveCancelled
 	}
 	task.Status = "running"
 	if err = persist(); err != nil {

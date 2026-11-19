@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +22,15 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 	worker := newLocalDOCX(home)
 	defer worker.close()
 
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/generate") {
+			w.Write([]byte(`{"text":"新周报内容"}`))
+			return
+		}
+		w.Write([]byte(`{"allowed":true}`))
+	}))
+	defer server.Close()
+
 	directory := t.TempDir()
 	source, err := makeDOCX("原始内容")
 	if err != nil {
@@ -29,12 +41,18 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 		t.Fatal(err)
 	}
 
-	session := docxSession{
-		Base:     "https://example.test",
-		DeviceID: "dev1",
-		UserID:   1,
-		Secret:   "secret",
-		Context:  context.Background(),
+	baseSession := docxSession{
+		Base:       server.URL,
+		DeviceID:   "dev1",
+		UserID:     1,
+		Token:      "token",
+		Secret:     "secret",
+		Generation: 1,
+		Context:    context.Background(),
+	}
+	session := baseSession
+	session.Refresh = func() (docxSession, error) {
+		return baseSession, nil
 	}
 	grant, err := worker.grant(session, directory, "rw")
 	if err != nil {
@@ -53,27 +71,48 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 		Instruction: "整理",
 	}
 
-	// Record initial task that reached awaiting_confirmation before process termination
-	initTask := docxTask{
-		ID:          requestID,
-		Format:      "docx",
-		Operation:   "overwrite",
-		Output:      docPath,
-		Instruction: "整理",
-		Status:      "awaiting_confirmation",
-		Steps:       []string{"已登记操作意图与约束", "已核验操作权限"},
-	}
-	journal, entry, _, err := worker.claimDestructive(session, req, initTask)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry.Task = initTask
-	data, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = saveLocalTaskJSON(journal, data); err != nil {
-		t.Fatal(err)
+	var wg sync.WaitGroup
+	expectedSteps := 2
+	if runtime.GOOS == "windows" {
+		expectedSteps = 4
+		confirmEntered := make(chan struct{})
+		worker.confirmDestructive = func(ctx context.Context, _ Locale, _, _ string) (bool, error) {
+			close(confirmEntered)
+			<-ctx.Done()
+			return false, ctx.Err()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = worker.run(session, req, func() error { return nil })
+		}()
+		select {
+		case <-confirmEntered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out waiting for destructive confirmation prompt")
+		}
+	} else {
+		initTask := docxTask{
+			ID:          requestID,
+			Format:      "docx",
+			Operation:   "overwrite",
+			Output:      docPath,
+			Instruction: "整理",
+			Status:      "awaiting_confirmation",
+			Steps:       []string{"已登记操作意图与约束", "已核验操作权限"},
+		}
+		journal, entry, _, claimErr := worker.claimDestructive(session, req, initTask)
+		if claimErr != nil {
+			t.Fatal(claimErr)
+		}
+		entry.Task = initTask
+		data, marshalErr := json.Marshal(entry)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if err = saveLocalTaskJSON(journal, data); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Verify task is currently awaiting_confirmation
@@ -92,8 +131,9 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 		t.Fatalf("expected awaiting_confirmation before restart, got: %+v", found)
 	}
 
-	// Now simulate client process killed / restarted
+	// Simulate client process shutdown / restart while awaiting confirmation
 	worker.close()
+	wg.Wait()
 
 	// Boot new client instance after restart
 	restarted := newLocalDOCX(home)
@@ -115,13 +155,15 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 		t.Fatal("task lost after restart")
 	}
 
-	// Acceptance criteria:
-	// "客户端重启后恢复相应状态和产物关联，待确认动作不能自动执行。"
 	if restartedTask.Status != "awaiting_confirmation" {
 		t.Fatalf("expected status awaiting_confirmation after restart, but got: %q", restartedTask.Status)
 	}
-	if len(restartedTask.Steps) != 2 {
-		t.Fatalf("expected 2 completed steps preserved, got: %+v", restartedTask.Steps)
+	if len(restartedTask.Steps) != expectedSteps {
+		t.Fatalf("expected %d completed steps preserved, got: %+v", expectedSteps, restartedTask.Steps)
+	}
+	currentContent, err := os.ReadFile(docPath)
+	if err != nil || !bytes.Equal(currentContent, source) {
+		t.Fatalf("target file was modified without confirmation: err=%v", err)
 	}
 
 	// Replay must return existing awaiting_confirmation task without auto-executing
@@ -160,6 +202,7 @@ func TestLocalDOCXCancelRunningTaskStopsExecutionAndPreservesArtifacts(t *testin
 	defer worker.close()
 
 	generationStarted := make(chan struct{})
+	serverDone := make(chan struct{})
 	var generatedCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,13 +211,14 @@ func TestLocalDOCXCancelRunningTaskStopsExecutionAndPreservesArtifacts(t *testin
 			close(generationStarted)
 			select {
 			case <-r.Context().Done():
-			case <-time.After(500 * time.Millisecond):
+			case <-serverDone:
 			}
 			return
 		}
 		w.Write([]byte(`{"allowed":true}`))
 	}))
 	defer server.Close()
+	defer close(serverDone)
 
 	directory := t.TempDir()
 	source, err := makeDOCX("原始内容")
@@ -185,13 +229,18 @@ func TestLocalDOCXCancelRunningTaskStopsExecutionAndPreservesArtifacts(t *testin
 		t.Fatal(err)
 	}
 
-	session := docxSession{
-		Base:     server.URL,
-		DeviceID: "dev1",
-		UserID:   1,
-		Token:    "token",
-		Secret:   "secret",
-		Context:  context.Background(),
+	baseSession := docxSession{
+		Base:       server.URL,
+		DeviceID:   "dev1",
+		UserID:     1,
+		Token:      "token",
+		Secret:     "secret",
+		Generation: 1,
+		Context:    context.Background(),
+	}
+	session := baseSession
+	session.Refresh = func() (docxSession, error) {
+		return baseSession, nil
 	}
 	grant, err := worker.grant(session, directory, "rw")
 	if err != nil {
@@ -253,14 +302,95 @@ func TestLocalDOCXCancelRunningTaskStopsExecutionAndPreservesArtifacts(t *testin
 	if finalTask.Status != "cancelled" {
 		t.Fatalf("expected task status to be cancelled, got: %s (err: %v)", finalTask.Status, runErr)
 	}
+	if finalTask.Output != "" {
+		t.Fatalf("expected uncreated output path to be cleared on cancel, got: %q", finalTask.Output)
+	}
 	// "已读取源文件" should have been recorded as completed step
 	if len(finalTask.Steps) == 0 {
 		t.Fatal("expected completed steps to be recorded before cancellation")
 	}
 
-	// Original input artifact must still exist
+	// Original input artifact must still exist, and output file must not be created
 	if _, statErr := os.Stat(filepath.Join(directory, "输入.docx")); statErr != nil {
 		t.Fatalf("original input was lost: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, "成果.docx")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("cancelled task should not create output file, got: %v", statErr)
+	}
+}
+
+func TestLocalDOCXDisconnectDuringGenerationFailsInsteadOfCancelling(t *testing.T) {
+	home := t.TempDir()
+	worker := newLocalDOCX(home)
+	defer worker.close()
+
+	generationStarted := make(chan struct{})
+	serverDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/generate") {
+			close(generationStarted)
+			select {
+			case <-r.Context().Done():
+			case <-serverDone:
+			}
+			return
+		}
+		w.Write([]byte(`{"allowed":true}`))
+	}))
+	defer server.Close()
+	defer close(serverDone)
+
+	directory := t.TempDir()
+	source, err := makeDOCX("原始内容")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(directory, "输入.docx"), source, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	deviceCtx, disconnectDevice := context.WithCancel(context.Background())
+	defer disconnectDevice()
+	session := docxSession{
+		Base:     server.URL,
+		DeviceID: "dev1",
+		UserID:   1,
+		Token:    "token",
+		Secret:   "secret",
+		Context:  deviceCtx,
+	}
+	grant, err := worker.grant(session, directory, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var task docxTask
+	var runErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		task, runErr = worker.run(session, docxRequest{
+			Action:      "run",
+			SourceGrant: grant.ID,
+			Source:      "输入.docx",
+			OutputGrant: grant.ID,
+			Output:      "断线产物.docx",
+			Instruction: "整理",
+		}, func() error { return nil })
+	}()
+
+	select {
+	case <-generationStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for generate to be called")
+	}
+
+	disconnectDevice()
+	wg.Wait()
+
+	if runErr == nil || task.Status != "failed" {
+		t.Fatalf("expected disconnected task to fail, got status=%q err=%v", task.Status, runErr)
 	}
 }
 
