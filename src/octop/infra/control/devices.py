@@ -154,7 +154,7 @@ class DeviceManager:
         elif action == "download":
             required.add("local_files_create")
         elif action == "overwrite":
-            required.add("local_files_overwrite")
+            required.update({"local_files_create", "local_files_overwrite"})
         self._require_native_grants(
             user, device_id, session_token, required, operation="local browser operation"
         )

@@ -663,7 +663,9 @@ describe("本人设备的本机浏览器任务", () => {
 
     await reply({ file: "invoice.pdf" });
     expect(
-      await panel.findByText("附件已成功上传：invoice.pdf"),
+      await panel.findByText(
+        "已为网页选择附件：invoice.pdf。请在网页上核对提交结果。",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -687,9 +689,13 @@ describe("本人设备的本机浏览器任务", () => {
     const urlInput = panel.getByLabelText("下载链接（可选）");
     await user.click(urlInput);
     await user.paste("https://intranet.example/report.xlsx");
-    const selectorInput = panel.getByLabelText("下载触发选择器（可选）");
+    const selectorInput = panel.getByLabelText("下载链接选择器（可选）");
     await user.click(selectorInput);
-    await user.paste("#download-button");
+    await user.paste("#download-link");
+    expect(
+      panel.getByRole("button", { name: "下载产物到授权目录" }),
+    ).toBeDisabled();
+    await user.clear(selectorInput);
 
     await click("下载产物到授权目录");
     const dlReq = lastRequest(invoke);
@@ -700,7 +706,6 @@ describe("本人设备的本机浏览器任务", () => {
       grant_id: "grant-rw",
       file: "report.xlsx",
       download_url: "https://intranet.example/report.xlsx",
-      selector: "#download-button",
     });
 
     await reply({ file: "report.xlsx", size: 2048 });
@@ -710,7 +715,7 @@ describe("本人设备的本机浏览器任务", () => {
   });
 
   it("上传或下载遇到异常或取消覆盖时展示清晰错误提示", async () => {
-    const { invoke, user, panel, click, reply } = await startBrowserPanel();
+    const { user, panel, click, reply } = await startBrowserPanel();
     await emit("colink:docx-status", {
       device_id: "desktop-ada",
       grants: [{ id: "grant-rw", path: "/data/rw", mode: "rw" }],
@@ -726,7 +731,7 @@ describe("本人设备的本机浏览器任务", () => {
     await user.click(panel.getByLabelText("上传文件名"));
     await user.paste("missing.pdf");
     await click("上传附件到页面");
-    await reply({ error: "授权文件不存在或无法读取" });
+    await reply({ error: "BROWSER_FILE_NOT_FOUND" });
     expect(
       await panel.findByText("授权文件不存在或无法读取。"),
     ).toBeInTheDocument();
@@ -738,10 +743,11 @@ describe("本人设备的本机浏览器任务", () => {
     );
     await user.click(panel.getByLabelText("保存文件名"));
     await user.paste("existing.pdf");
+    const link = panel.getByLabelText("下载链接（可选）");
+    await user.click(link);
+    await user.paste("https://intranet.example/report.xlsx");
     await click("下载产物到授权目录");
     await reply({ error: "file operation cancelled" });
-    expect(
-      await panel.findByText("用户取消了文件覆盖操作。"),
-    ).toBeInTheDocument();
+    expect(await panel.findByText("已取消本次操作。")).toBeInTheDocument();
   });
 });

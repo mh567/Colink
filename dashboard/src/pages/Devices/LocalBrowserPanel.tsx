@@ -422,8 +422,16 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       ...(uploadSelector.trim() ? { selector: uploadSelector.trim() } : {}),
     });
   };
+  const hasDownloadSource =
+    Boolean(downloadUrl.trim()) !== Boolean(downloadSelector.trim());
   const downloadArtifact = () => {
-    if (!selectedTab || !downloadGrant || !downloadFile.trim()) return;
+    if (
+      !selectedTab ||
+      !downloadGrant ||
+      !downloadFile.trim() ||
+      !hasDownloadSource
+    )
+      return;
     send("download", {
       tab_id: selectedTab.id,
       url: selectedTab.url,
@@ -461,17 +469,13 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     ),
     "file operation cancelled": t(
       "localBrowser.errors.OPERATION_CANCELLED",
-      "用户取消了文件覆盖操作。",
+      "已取消本次操作。",
     ),
-    FILE_OPERATION_CANCELLED: t(
-      "localBrowser.errors.OPERATION_CANCELLED",
-      "用户取消了文件覆盖操作。",
-    ),
-    授权文件不存在或无法读取: t(
+    BROWSER_FILE_NOT_FOUND: t(
       "localBrowser.errors.FILE_NOT_FOUND",
       "授权文件不存在或无法读取。",
     ),
-    无法保存下载文件: t(
+    BROWSER_FILE_SAVE_FAILED: t(
       "localBrowser.errors.FILE_SAVE_FAILED",
       "无法保存下载文件。",
     ),
@@ -763,7 +767,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   <Typography.Text type="secondary">
                     {t(
                       "localBrowser.downloadHint",
-                      "将网页产物保存至读写授权目录。覆盖已有文件将提示确认。",
+                      "请填写同站下载链接或链接选择器（二选一）。网页动作和文件覆盖分别确认。",
                     )}
                   </Typography.Text>
                   <label htmlFor={`${id}-download-grant`}>
@@ -836,16 +840,16 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   <label htmlFor={`${id}-download-selector`}>
                     {t(
                       "localBrowser.downloadSelector",
-                      "下载触发选择器（可选）",
+                      "下载链接选择器（可选）",
                     )}
                   </label>
                   <Input
                     id={`${id}-download-selector`}
                     aria-label={t(
                       "localBrowser.downloadSelector",
-                      "下载触发选择器（可选）",
+                      "下载链接选择器（可选）",
                     )}
-                    placeholder="#export-btn"
+                    placeholder="#export-link"
                     value={downloadSelector}
                     disabled={blocked}
                     onChange={(e) => setDownloadSelector(e.target.value)}
@@ -857,6 +861,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                         !canRead ||
                         !downloadGrant ||
                         !downloadFile.trim() ||
+                        !hasDownloadSource ||
                         blocked
                       }
                       onClick={downloadArtifact}
@@ -893,7 +898,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                 fileResult.action === "upload"
                   ? t(
                       "localBrowser.uploadSuccess",
-                      "附件已成功上传：{{file}}",
+                      "已为网页选择附件：{{file}}。请在网页上核对提交结果。",
                       {
                         file: fileResult.file,
                       },

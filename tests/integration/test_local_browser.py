@@ -125,6 +125,16 @@ async def test_browser_authorizes_upload_and_download_with_file_permissions(env)
         assert allowed.status_code == 200
         assert allowed.json() == {"allowed": True}
 
+        # Overwriting a browser artifact still requires permission to save the download.
+        await client.patch(
+            f"/api/users/{alice_id}",
+            headers=admin,
+            json={"permissions": ["local_browser", "local_files_overwrite"]},
+        )
+        assert (
+            await client.post(path, headers=native, json={"action": "overwrite"})
+        ).status_code == 403
+
         # Revoke local_browser: all fail even if file permissions are kept
         await client.patch(
             f"/api/users/{alice_id}",

@@ -198,13 +198,25 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 		return false, errors.New(desktopText(locale, copyFileConfirmationUnavailable))
 	}
 	var action, scope string
+	title, message := copyFileConfirmTitle, copyFileConfirmMessage
 	switch operation {
 	case "delete":
 		action, scope = copyFileDelete, copyFileDeleteScope
 	case "overwrite":
 		action, scope = copyFileOverwrite, copyFileOverwriteScope
+	case "browser_overwrite":
+		action, scope = copyFileOverwrite, copyBrowserOverwriteScope
+	case "browser_upload":
+		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		action, scope = copyBrowserUpload, copyBrowserUploadScope
+	case "browser_download":
+		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		action, scope = copyBrowserDownload, copyBrowserDownloadScope
 	default:
 		return false, fileopsCopyError(copyFileInvalidIntent)
+	}
+	if !safeDestructivePath(path) {
+		return false, fileopsCopyError(copyFileInvalidPath)
 	}
 	const width, maxLines = 28, 10
 	runes := []rune(path)
@@ -218,8 +230,8 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 	}
 	lines = append(lines, string(runes))
 	dialog := a.app.Dialog.Question().
-		SetTitle(desktopText(locale, copyFileConfirmTitle)).
-		SetMessage(desktopText(locale, copyFileConfirmMessage, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
+		SetTitle(desktopText(locale, title)).
+		SetMessage(desktopText(locale, message, desktopText(locale, action), strings.Join(lines, "\n"), desktopText(locale, scope))).
 		AttachToWindow(a.window)
 	approved := false
 	dialog.AddButton("Yes").OnClick(func() { approved = true })
