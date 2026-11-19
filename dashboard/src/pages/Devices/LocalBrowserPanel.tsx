@@ -10,12 +10,20 @@ type BrowserAction =
   | "close_tab"
   | "query"
   | "capture"
+  | "upload"
+  | "download"
   | "close";
 
 interface BrowserTab {
   id: string;
   title: string;
   url: string;
+}
+
+interface DirectoryGrant {
+  id: string;
+  path: string;
+  mode: "ro" | "rw";
 }
 
 interface BrowserReply {
@@ -27,6 +35,8 @@ interface BrowserReply {
   title?: string;
   url?: string;
   image?: string;
+  file?: string;
+  size?: number;
   incomplete?: boolean;
   error?: string;
 }
@@ -111,6 +121,19 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const [result, setResult] = useState<BrowserReply | null>(null);
   const [capture, setCapture] = useState<BrowserReply | null>(null);
   const [error, setError] = useState("");
+  const [grants, setGrants] = useState<DirectoryGrant[]>([]);
+  const [uploadGrant, setUploadGrant] = useState("");
+  const [uploadFile, setUploadFile] = useState("");
+  const [uploadSelector, setUploadSelector] = useState("");
+  const [downloadGrant, setDownloadGrant] = useState("");
+  const [downloadFile, setDownloadFile] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
+  const [downloadSelector, setDownloadSelector] = useState("");
+  const [fileResult, setFileResult] = useState<{
+    action: "upload" | "download";
+    file: string;
+    size?: number;
+  } | null>(null);
 
   const connect = useCallback(() => {
     if (hello.current) return;
@@ -149,10 +172,32 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       bridgeProof.current = detail;
       setBridge("ready");
     };
+    const receiveDocx = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          device_id: string;
+          grants?: DirectoryGrant[];
+        }>
+      ).detail;
+      if (detail?.device_id === deviceId && detail.grants) {
+        setGrants(detail.grants);
+      }
+    };
     window.addEventListener(READY_EVENT, receive);
+    window.addEventListener("colink:docx-status", receiveDocx);
+    try {
+      invokeDesktop(
+        `wails:event:emit:desktop:docx:${encodeURIComponent(
+          JSON.stringify({ action: "list" }),
+        )}`,
+      );
+    } catch {
+      // Desktop bridge may not be loaded yet or during tests
+    }
     connect();
     return () => {
       window.removeEventListener(READY_EVENT, receive);
+      window.removeEventListener("colink:docx-status", receiveDocx);
       if (hello.current) window.clearTimeout(hello.current.timeout);
       hello.current = null;
       bridgeProof.current = null;
@@ -193,6 +238,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       if (action === "list" || action === "select_tab") setFocusedTab("");
       if (action === "query") setResult(null);
       if (action === "capture") setCapture(null);
+      if (action === "upload" || action === "download") setFileResult(null);
       try {
         invokeDesktop(
           `colink:browser:${encodeURIComponent(
@@ -242,6 +288,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
         setFocusedTab("");
         setResult(null);
         setCapture(null);
+        setFileResult(null);
       };
       if (detail.error) {
         setError(detail.error);
@@ -297,6 +344,15 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       if (pending.action === "capture") {
         if (detail.image?.startsWith("iVBORw0KGgo")) setCapture(detail);
         else setError("BROWSER_TASK_FAILED");
+      }
+      if (pending.action === "upload" || pending.action === "download") {
+        if (detail.file) {
+          setFileResult({
+            action: pending.action,
+            file: detail.file,
+            size: detail.size,
+          });
+        }
       }
     };
     window.addEventListener(STATUS_EVENT, receive);
@@ -356,6 +412,35 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
       ...(action === "query" ? { instruction: text } : {}),
     });
   };
+  const uploadAttachment = () => {
+    if (!selectedTab || !uploadGrant || !uploadFile.trim()) return;
+    send("upload", {
+      tab_id: selectedTab.id,
+      url: selectedTab.url,
+      grant_id: uploadGrant,
+      file: uploadFile.trim(),
+      ...(uploadSelector.trim() ? { selector: uploadSelector.trim() } : {}),
+    });
+  };
+  const hasDownloadSource =
+    Boolean(downloadUrl.trim()) !== Boolean(downloadSelector.trim());
+  const downloadArtifact = () => {
+    if (
+      !selectedTab ||
+      !downloadGrant ||
+      !downloadFile.trim() ||
+      !hasDownloadSource
+    )
+      return;
+    send("download", {
+      tab_id: selectedTab.id,
+      url: selectedTab.url,
+      grant_id: downloadGrant,
+      file: downloadFile.trim(),
+      ...(downloadUrl.trim() ? { download_url: downloadUrl.trim() } : {}),
+      ...(downloadSelector.trim() ? { selector: downloadSelector.trim() } : {}),
+    });
+  };
   const title = t("localBrowser.title", "本机浏览器");
   const errors: Record<string, string> = {
     BROWSER_INVALID_URL: t(
@@ -381,6 +466,18 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     BROWSER_SERVICE_UNAVAILABLE: t(
       "localBrowser.errors.BROWSER_SERVICE_UNAVAILABLE",
       "浏览器服务暂不可用，请稍后重试。",
+    ),
+    "file operation cancelled": t(
+      "localBrowser.errors.OPERATION_CANCELLED",
+      "已取消本次操作。",
+    ),
+    BROWSER_FILE_NOT_FOUND: t(
+      "localBrowser.errors.FILE_NOT_FOUND",
+      "授权文件不存在或无法读取。",
+    ),
+    BROWSER_FILE_SAVE_FAILED: t(
+      "localBrowser.errors.FILE_SAVE_FAILED",
+      "无法保存下载文件。",
     ),
   };
   const resultTitle = displayTitle(result?.title);
@@ -570,6 +667,210 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   {t("localBrowser.query", "查询当前页")}
                 </Button>
               </div>
+
+              <Card
+                size="small"
+                title={t("localBrowser.uploadTitle", "上传网页附件")}
+              >
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Typography.Text type="secondary">
+                    {t(
+                      "localBrowser.uploadHint",
+                      "从授权目录选择文件上传到当前网页。",
+                    )}
+                  </Typography.Text>
+                  <label htmlFor={`${id}-upload-grant`}>
+                    {t("localBrowser.uploadGrant", "选择上传目录授权")}
+                  </label>
+                  <select
+                    id={`${id}-upload-grant`}
+                    aria-label={t(
+                      "localBrowser.uploadGrant",
+                      "选择上传目录授权",
+                    )}
+                    value={uploadGrant}
+                    disabled={!grants.length || blocked}
+                    onChange={(e) => setUploadGrant(e.target.value)}
+                    style={{
+                      width: "100%",
+                      border: `1px solid ${token.colorBorder}`,
+                      borderRadius: token.borderRadius,
+                      background: token.colorBgContainer,
+                      color: token.colorText,
+                      font: "inherit",
+                      padding: "7px 11px",
+                    }}
+                  >
+                    {!uploadGrant && (
+                      <option value="" disabled>
+                        {grants.length
+                          ? t("localBrowser.selectGrant", "选择目录授权")
+                          : t(
+                              "localBrowser.noGrants",
+                              "暂无可用目录授权，请在“本地文件”中授权目录",
+                            )}
+                      </option>
+                    )}
+                    {grants.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.path} ({g.mode === "rw" ? "读写" : "只读"})
+                      </option>
+                    ))}
+                  </select>
+                  <label htmlFor={`${id}-upload-file`}>
+                    {t("localBrowser.uploadFile", "上传文件名")}
+                  </label>
+                  <Input
+                    id={`${id}-upload-file`}
+                    aria-label={t("localBrowser.uploadFile", "上传文件名")}
+                    placeholder="document.pdf"
+                    value={uploadFile}
+                    disabled={blocked}
+                    onChange={(e) => setUploadFile(e.target.value)}
+                  />
+                  <label htmlFor={`${id}-upload-selector`}>
+                    {t("localBrowser.uploadSelector", "文件输入选择器（可选）")}
+                  </label>
+                  <Input
+                    id={`${id}-upload-selector`}
+                    aria-label={t(
+                      "localBrowser.uploadSelector",
+                      "文件输入选择器（可选）",
+                    )}
+                    placeholder='input[type="file"]'
+                    value={uploadSelector}
+                    disabled={blocked}
+                    onChange={(e) => setUploadSelector(e.target.value)}
+                  />
+                  <div>
+                    <Button
+                      loading={busy === "upload"}
+                      disabled={
+                        !canRead ||
+                        !uploadGrant ||
+                        !uploadFile.trim() ||
+                        blocked
+                      }
+                      onClick={uploadAttachment}
+                    >
+                      {t("localBrowser.uploadBtn", "上传附件到页面")}
+                    </Button>
+                  </div>
+                </Space>
+              </Card>
+
+              <Card
+                size="small"
+                title={t("localBrowser.downloadTitle", "下载网页产物")}
+              >
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Typography.Text type="secondary">
+                    {t(
+                      "localBrowser.downloadHint",
+                      "请填写同站下载链接或链接选择器（二选一）。网页动作和文件覆盖分别确认。",
+                    )}
+                  </Typography.Text>
+                  <label htmlFor={`${id}-download-grant`}>
+                    {t("localBrowser.downloadGrant", "选择下载目录授权")}
+                  </label>
+                  <select
+                    id={`${id}-download-grant`}
+                    aria-label={t(
+                      "localBrowser.downloadGrant",
+                      "选择下载目录授权",
+                    )}
+                    value={downloadGrant}
+                    disabled={
+                      !grants.filter((g) => g.mode === "rw").length || blocked
+                    }
+                    onChange={(e) => setDownloadGrant(e.target.value)}
+                    style={{
+                      width: "100%",
+                      border: `1px solid ${token.colorBorder}`,
+                      borderRadius: token.borderRadius,
+                      background: token.colorBgContainer,
+                      color: token.colorText,
+                      font: "inherit",
+                      padding: "7px 11px",
+                    }}
+                  >
+                    {!downloadGrant && (
+                      <option value="" disabled>
+                        {grants.filter((g) => g.mode === "rw").length
+                          ? t("localBrowser.selectGrant", "选择目录授权")
+                          : t(
+                              "localBrowser.noRwGrants",
+                              "暂无可写目录授权，请在“本地文件”中授权读写目录",
+                            )}
+                      </option>
+                    )}
+                    {grants
+                      .filter((g) => g.mode === "rw")
+                      .map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.path}
+                        </option>
+                      ))}
+                  </select>
+                  <label htmlFor={`${id}-download-file`}>
+                    {t("localBrowser.downloadFile", "保存文件名")}
+                  </label>
+                  <Input
+                    id={`${id}-download-file`}
+                    aria-label={t("localBrowser.downloadFile", "保存文件名")}
+                    placeholder="report.xlsx"
+                    value={downloadFile}
+                    disabled={blocked}
+                    onChange={(e) => setDownloadFile(e.target.value)}
+                  />
+                  <label htmlFor={`${id}-download-url`}>
+                    {t("localBrowser.downloadUrl", "下载链接（可选）")}
+                  </label>
+                  <Input
+                    id={`${id}-download-url`}
+                    aria-label={t(
+                      "localBrowser.downloadUrl",
+                      "下载链接（可选）",
+                    )}
+                    placeholder="https://intranet.example/download/report.xlsx"
+                    value={downloadUrl}
+                    disabled={blocked}
+                    onChange={(e) => setDownloadUrl(e.target.value)}
+                  />
+                  <label htmlFor={`${id}-download-selector`}>
+                    {t(
+                      "localBrowser.downloadSelector",
+                      "下载链接选择器（可选）",
+                    )}
+                  </label>
+                  <Input
+                    id={`${id}-download-selector`}
+                    aria-label={t(
+                      "localBrowser.downloadSelector",
+                      "下载链接选择器（可选）",
+                    )}
+                    placeholder="#export-link"
+                    value={downloadSelector}
+                    disabled={blocked}
+                    onChange={(e) => setDownloadSelector(e.target.value)}
+                  />
+                  <div>
+                    <Button
+                      loading={busy === "download"}
+                      disabled={
+                        !canRead ||
+                        !downloadGrant ||
+                        !downloadFile.trim() ||
+                        !hasDownloadSource ||
+                        blocked
+                      }
+                      onClick={downloadArtifact}
+                    >
+                      {t("localBrowser.downloadBtn", "下载产物到授权目录")}
+                    </Button>
+                  </div>
+                </Space>
+              </Card>
             </>
           )}
           {error && (
@@ -580,11 +881,36 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                 errors[error] ??
                 t(
                   `localBrowser.errors.${error}`,
-                  t(
-                    "localBrowser.errors.BROWSER_TASK_FAILED",
-                    "无法完成浏览器操作，请重试。",
-                  ),
+                  error ||
+                    t(
+                      "localBrowser.errors.BROWSER_TASK_FAILED",
+                      "无法完成浏览器操作，请重试。",
+                    ),
                 )
+              }
+            />
+          )}
+          {fileResult && (
+            <Alert
+              showIcon
+              type="success"
+              message={
+                fileResult.action === "upload"
+                  ? t(
+                      "localBrowser.uploadSuccess",
+                      "已为网页选择附件：{{file}}。请在网页上核对提交结果。",
+                      {
+                        file: fileResult.file,
+                      },
+                    )
+                  : t(
+                      "localBrowser.downloadSuccess",
+                      "产物已成功保存：{{file}}（{{size}} 字节）",
+                      {
+                        file: fileResult.file,
+                        size: fileResult.size ?? 0,
+                      },
+                    )
               }
             />
           )}

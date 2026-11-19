@@ -379,6 +379,8 @@ func main() {
 	api.device = &deviceClient{emit: api.emitDeviceStatus, retryAudit: api.docx.retryFileAudit}
 	api.docx.confirmDestructive = api.confirmLocalFile
 	api.browser = newLocalBrowser(octopHome())
+	api.browser.docx = api.docx
+	api.browser.confirmDestructive = api.confirmLocalFile
 	rand.Read(api.browserBridgeKey[:])
 
 	app := application.New(api.withBrowserMessages(application.Options{

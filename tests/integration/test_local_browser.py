@@ -61,6 +61,99 @@ async def test_browser_authorizes_only_the_approved_device_with_an_explicit_gran
         assert (await client.post(path, headers=admin_native, json=body)).status_code == 403
 
 
+async def test_browser_authorizes_upload_and_download_with_file_permissions(env):
+    client, _server, admin = env
+    alice = await create_user(client, admin, username="alice", permissions=["local_browser"])
+    alice_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
+    async with approved_device(client, admin, alice) as (device_id, native):
+        path = f"/api/devices/{device_id}/browser/authorize"
+
+        # Only local_browser: upload and download are forbidden
+        assert (
+            await client.post(path, headers=native, json={"action": "upload"})
+        ).status_code == 403
+        assert (
+            await client.post(path, headers=native, json={"action": "download"})
+        ).status_code == 403
+        assert (
+            await client.post(path, headers=native, json={"action": "overwrite"})
+        ).status_code == 403
+
+        # Add local_files_read: upload is allowed, download and overwrite forbidden
+        await client.patch(
+            f"/api/users/{alice_id}",
+            headers=admin,
+            json={"permissions": ["local_browser", "local_files_read"]},
+        )
+        allowed = await client.post(path, headers=native, json={"action": "upload"})
+        assert allowed.status_code == 200
+        assert allowed.json() == {"allowed": True}
+        assert (
+            await client.post(path, headers=native, json={"action": "download"})
+        ).status_code == 403
+        assert (
+            await client.post(path, headers=native, json={"action": "overwrite"})
+        ).status_code == 403
+
+        # Add local_files_create: download is allowed
+        await client.patch(
+            f"/api/users/{alice_id}",
+            headers=admin,
+            json={"permissions": ["local_browser", "local_files_read", "local_files_create"]},
+        )
+        allowed = await client.post(path, headers=native, json={"action": "download"})
+        assert allowed.status_code == 200
+        assert allowed.json() == {"allowed": True}
+        assert (
+            await client.post(path, headers=native, json={"action": "overwrite"})
+        ).status_code == 403
+
+        # Add local_files_overwrite: overwrite is allowed
+        await client.patch(
+            f"/api/users/{alice_id}",
+            headers=admin,
+            json={
+                "permissions": [
+                    "local_browser",
+                    "local_files_read",
+                    "local_files_create",
+                    "local_files_overwrite",
+                ]
+            },
+        )
+        allowed = await client.post(path, headers=native, json={"action": "overwrite"})
+        assert allowed.status_code == 200
+        assert allowed.json() == {"allowed": True}
+
+        # Overwriting a browser artifact still requires permission to save the download.
+        await client.patch(
+            f"/api/users/{alice_id}",
+            headers=admin,
+            json={"permissions": ["local_browser", "local_files_overwrite"]},
+        )
+        assert (
+            await client.post(path, headers=native, json={"action": "overwrite"})
+        ).status_code == 403
+
+        # Revoke local_browser: all fail even if file permissions are kept
+        await client.patch(
+            f"/api/users/{alice_id}",
+            headers=admin,
+            json={
+                "permissions": ["local_files_read", "local_files_create", "local_files_overwrite"]
+            },
+        )
+        assert (
+            await client.post(path, headers=native, json={"action": "upload"})
+        ).status_code == 403
+        assert (
+            await client.post(path, headers=native, json={"action": "download"})
+        ).status_code == 403
+        assert (
+            await client.post(path, headers=native, json={"action": "overwrite"})
+        ).status_code == 403
+
+
 async def test_browser_query_discards_result_when_device_is_revoked_during_model_call(
     env, monkeypatch
 ):

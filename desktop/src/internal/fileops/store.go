@@ -116,6 +116,8 @@ func managedName(name, format string, destructive bool) bool {
 	}
 	ext := filepath.Ext(name)
 	switch format {
+	case "browser":
+		return true
 	case "docx", "xlsx":
 		return strings.EqualFold(ext, "."+format)
 	case "pptx", "pdf":
@@ -190,7 +192,8 @@ func (s *store) snapshot(root *os.Root, uid uint32, name string) (*os.File, [sha
 }
 
 func (s *store) prepare(ctx context.Context, sender string, uid uint32, root *os.Root, name, operation string, proof Credentials) (string, error) {
-	if !managedName(name, proof.Format, true) || !destructiveOperation(operation) {
+	if !managedName(name, proof.Format, true) || !destructiveOperation(operation) ||
+		(proof.Format == "browser" && operation != "overwrite") {
 		return "", errInvalid
 	}
 	if err := s.checkPermission(ctx, proof, operation); err != nil {
@@ -425,8 +428,8 @@ func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name stri
 	if !SameDirectory(root, root.Name()) {
 		return errChanged
 	}
-	if proof.Format == "pptx" || proof.Format == "pdf" {
-		return s.publishPPTX(ctx, root, uid, name, data, proof, request)
+	if proof.Format == "pptx" || proof.Format == "pdf" || proof.Format == "browser" {
+		return s.publishNew(ctx, root, uid, name, data, proof, request)
 	}
 	if err := s.write(root, uid, name, data, nil); err != nil {
 		return err
@@ -434,7 +437,7 @@ func (s *store) create(ctx context.Context, root *os.Root, uid uint32, name stri
 	return s.syncDir(root)
 }
 
-func (s *store) publishPPTX(ctx context.Context, root *os.Root, uid uint32, name string, data []byte, proof Credentials, request authorizationRequest) error {
+func (s *store) publishNew(ctx context.Context, root *os.Root, uid uint32, name string, data []byte, proof Credentials, request authorizationRequest) error {
 	stage := ".colink-" + rand.Text()
 	// Recheck permission before the staging file gets its readable ACL.
 	if err := s.write(root, uid, stage, data, func() error {

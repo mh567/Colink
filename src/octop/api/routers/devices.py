@@ -116,7 +116,17 @@ class OcrAuthorizeBody(BaseModel):
 class BrowserAuthorizeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
-        "open", "list", "new_tab", "select_tab", "close_tab", "query", "capture", "close"
+        "open",
+        "list",
+        "new_tab",
+        "select_tab",
+        "close_tab",
+        "query",
+        "capture",
+        "close",
+        "upload",
+        "download",
+        "overwrite",
     ]
 
 
@@ -432,7 +442,9 @@ async def authorize_browser(
     user: User = Depends(current_user),
     server: OctopServer = Depends(get_server),
 ) -> BrowserAuthorization:
-    server.device_manager.authorize_browser(user, device_id, x_colink_device_session)
+    server.device_manager.authorize_browser(
+        user, device_id, x_colink_device_session, action=body.action
+    )
     return BrowserAuthorization()
 
 

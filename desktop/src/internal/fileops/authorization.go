@@ -139,6 +139,9 @@ func newServerAuthorizer(raw string, trusted *http.Client) (ServerAuthorizer, er
 			return errServerAuthorization
 		}
 		endpoint := base + "/api/devices/" + creds.DeviceID + "/" + creds.Format + "/authorize"
+		if creds.Format == "browser" && authorization.Action == "create" {
+			authorization.Action = "download"
+		}
 		body, _ := json.Marshal(authorization)
 		request, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if requestErr != nil {
@@ -167,6 +170,10 @@ func newServerAuthorizer(raw string, trusted *http.Client) (ServerAuthorizer, er
 func validAuthorizationRequest(creds Credentials, action string) bool {
 	switch creds.Format {
 	case "docx", "xlsx":
+	case "browser":
+		if action != "create" && action != "overwrite" {
+			return false
+		}
 	case "ocr", "pptx", "pdf":
 		if action != "read" && action != "create" {
 			return false
