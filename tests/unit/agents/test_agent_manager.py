@@ -8,6 +8,7 @@ import json
 import os
 import threading
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -837,6 +838,25 @@ def test_build_harness_config_accepts_memory_extract_settings(manager: AgentMana
         assert cfg.memory_extract_interval_seconds == 600.0
     else:
         assert cfg.memory_extract_idle_seconds == 600.0
+
+
+def test_build_harness_config_defaults_personal_memory_capture_off(manager: AgentManager) -> None:
+    row = _row(config_json="{}")
+    cfg = manager._build_harness_config(row)
+    if hasattr(cfg, "memory_capture_enabled"):
+        assert cfg.memory_capture_enabled is False
+    if hasattr(cfg, "memory_extract_on_session_end"):
+        assert cfg.memory_extract_on_session_end is False
+
+
+def test_build_harness_config_shared_expert_disables_memory(manager: AgentManager) -> None:
+    row = replace(_row(config_json=json.dumps({"memory": {"memory_enabled": True}})), is_shared=1)
+    cfg = manager._build_harness_config(row)
+    assert cfg.memory_enabled is False
+    if hasattr(cfg, "memory_capture_enabled"):
+        assert cfg.memory_capture_enabled is False
+    if hasattr(cfg, "memory_recall_inject_enabled"):
+        assert cfg.memory_recall_inject_enabled is False
 
 
 def test_format_agent_start_error_unwraps_exception_group() -> None:

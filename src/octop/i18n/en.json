@@ -315,12 +315,23 @@
         "description": "End the CLI session"
       },
       "memory": {
-        "label": "Memory maintenance",
-        "description": "Slim memory databases, reclaim freed disk with VACUUM FULL, or check maintenance progress."
+        "label": "Personal memory & maintenance",
+        "description": "Save or search personal preferences, permanently forget memories, slim databases, or view scope explanation."
       }
     },
     "memory": {
-      "usage": "Usage: /memory slim (explain the purpose and impact), /memory slim --all (list your eligible running agents), /memory compact (explain VACUUM FULL), /memory status (progress). Viewing the explanation does not pause chat.",
+      "usage": "Usage: /memory save [topic] <content> (save preference/convention), /memory search <query> (search memories), /memory list (list memories), /memory forget <id or keyword> (physically delete facts and indexes), /memory explain (scope distinction), /memory slim, /memory compact, /memory status.",
+      "saved": "Saved personal memory [{atom_id}]: {assertion}",
+      "save_usage": "Usage: /memory save [topic] <content>. Example: /memory save Python Prefer Python 3.12 type annotations",
+      "search_usage": "Usage: /memory search <query>",
+      "forget_usage": "Usage: /memory forget <id or keyword>. Example: /memory forget atom_01xxxx",
+      "forgotten": "Permanently forgotten memory [{atom_id}]: {assertion} (physical deletion of facts and indexes complete; 90-day security audit logs preserved)",
+      "not_found": "No matching memory atom found.",
+      "explain": "[Personal Memory & Log Scope]\n1. Session History: Current dialogue context; clearing a session does not delete saved long-term memories;\n2. Task Checkpoints: Execution breakpoint state for pausing and resuming tasks;\n3. Long-term Memory: Explicitly saved personal preferences and project conventions, supporting query and physical forgetting;\n4. Security Audit Logs: Mandatory 90-day read-only security audit log, unaffected by memory forgetting.",
+      "multiple_found": "Multiple matching memories found, please specify the exact atom ID to forget:\n{items}",
+      "list_header": "Active personal memories ({count} items):",
+      "list_empty": "No active personal memories saved.",
+      "forbidden": "Only the owner of this agent may access or modify personal memory.",
       "accepted": "Confirmed maintenance for {count} agents. The host will back up, deduplicate, and reclaim space sequentially while preserving history and memories. All chats for the agent currently being maintained pause sending and resume automatically afterward. The page shows phases and elapsed time; you can use another agent that is not under maintenance. Closing the page does not stop the batch. Use /memory status for results after sending resumes.",
       "idle": "No maintenance record for this agent. Use /memory slim to start.",
       "summary": "Latest maintenance: {completed}/{total} agents completed.",

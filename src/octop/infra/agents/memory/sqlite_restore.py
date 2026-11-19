@@ -112,6 +112,16 @@ def restore_sqlite(
             try:
                 src.backup(dest)
                 _validate(dest, namespace, locale)
+                # Ensure previously forgotten memories do not re-emerge after backup restore
+                from octop.infra.agents.memory.forget import prune_restored_forgotten_memories
+
+                ws_dir = path.parent.parent if path.parent.name == ".octop" else path.parent
+                prune_restored_forgotten_memories(
+                    workspace_dir=ws_dir,
+                    namespace=namespace,
+                    backend="sqlite",
+                    backend_config={"db_path": str(path)},
+                )
             except BaseException:
                 # The host has stopped all writers; restoring this snapshot cannot
                 # discard writes made after it. Always retain it for manual recovery.

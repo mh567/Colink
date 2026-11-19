@@ -57,7 +57,8 @@ router = APIRouter(dependencies=[Depends(require_permission("memory"))])
 # back when constructing the agent.
 _EXTRACT_DEFAULTS: dict[str, Any] = {
     "memory_enabled": True,
-    "extract_on_session_end": True,
+    "capture_enabled": False,
+    "extract_on_session_end": False,
     "extract_trigger_mode": "idle",
     "extract_idle_seconds": 300.0,
     "extract_interval_seconds": 21600.0,
@@ -193,6 +194,7 @@ class _ExtractConfigBody(BaseModel):
     """
 
     memory_enabled: bool | None = None
+    capture_enabled: bool | None = None
     extract_on_session_end: bool | None = None
     extract_trigger_mode: str | None = Field(default=None, description="idle / interval")
     extract_idle_seconds: float | None = Field(
@@ -759,6 +761,37 @@ async def replace_atom(
     )
 
 
+@router.post(
+    "/agents/{agent_id}/memory/atoms/{atom_id}:forget",
+    summary="Permanently forget a personal memory",
+    description=(
+        "Physically deletes the memory atom and associated candidate, raw events, "
+        "memory nodes, and journal records. Soft-deactivation or deprecation is not used. "
+        "Tombstones are recorded to prevent recurrence after restoring old backups."
+    ),
+)
+@router.delete(
+    "/agents/{agent_id}/memory/atoms/{atom_id}",
+    summary="Permanently forget a personal memory (DELETE alias)",
+    description="Physical deletion of the personal memory atom and its associated records.",
+)
+async def forget_atom(
+    agent_id: str,
+    atom_id: str,
+    as_user: int | None = None,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    from octop.infra.agents.memory.forget import forget_memory_atom_for_agent
+
+    return await forget_memory_atom_for_agent(
+        server,
+        agent_id=agent_id,
+        atom_id=atom_id,
+        user=user,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Terminal aggregator endpoints
 # ---------------------------------------------------------------------------
@@ -924,6 +957,8 @@ async def put_extract_config(
 
     if "memory_enabled" in patch:
         merged["memory_enabled"] = bool(patch["memory_enabled"])
+    if "capture_enabled" in patch:
+        merged["capture_enabled"] = bool(patch["capture_enabled"])
     if "extract_on_session_end" in patch:
         merged["extract_on_session_end"] = bool(patch["extract_on_session_end"])
     if "extract_trigger_mode" in patch:

@@ -282,3 +282,81 @@ def test_restore_status_does_not_expect_maintenance_file_statistics(locale):
     )
     assert "memory.before-restore.bak" in text
     assert "memory_slim." not in text
+
+
+@pytest.mark.asyncio
+async def test_memory_explain_shows_scopes(ctx):
+    handled, lines, _ = await try_handle_slash(
+        "/memory explain", dispatcher=build_default_dispatcher(), ctx=ctx
+    )
+    text = "\n".join(lines)
+    assert handled
+    assert "会话记录" in text
+    assert "任务检查点" in text
+    assert "长期记忆" in text
+    assert "安全审计日志" in text
+
+
+@pytest.mark.asyncio
+async def test_memory_save_and_search_slash(ctx, monkeypatch):
+    monkeypatch.setattr(
+        "octop.api.common.memory_client.call_memory_rpc",
+        lambda agent_id, method, params, user, as_user, server: {
+            "create_atom": {"id": "atom_123", "assertion": params.get("assertion")},
+            "list_atoms": {
+                "items": [{"id": "atom_123", "assertion": "缩进使用4空格", "entity_name": "Python"}]
+            },
+        }[method],
+    )
+
+    # Test save
+    handled, lines, _ = await try_handle_slash(
+        "/memory save Python 缩进使用4空格", dispatcher=build_default_dispatcher(), ctx=ctx
+    )
+    assert handled
+    text = "\n".join(lines)
+    assert "已保存个人记忆 [atom_123]: 缩进使用4空格" in text
+
+    # Test search
+    handled, lines, _ = await try_handle_slash(
+        "/memory search Python", dispatcher=build_default_dispatcher(), ctx=ctx
+    )
+    assert handled
+    search_text = "\n".join(lines)
+    assert "[atom_123] 缩进使用4空格" in search_text
+    assert "Python" in search_text
+
+
+@pytest.mark.asyncio
+async def test_memory_list_slash(ctx, monkeypatch):
+    monkeypatch.setattr(
+        "octop.api.common.memory_client.call_memory_rpc",
+        lambda agent_id, method, params, user, as_user, server: {
+            "items": [{"id": "atom_456", "assertion": "偏好深色模式", "entity_name": "UI"}]
+        },
+    )
+    handled, lines, _ = await try_handle_slash(
+        "/memory list", dispatcher=build_default_dispatcher(), ctx=ctx
+    )
+    assert handled
+    text = "\n".join(lines)
+    assert "当前个人记忆（共 1 条）：" in text
+    assert "[atom_456] 偏好深色模式" in text
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_slash(ctx, monkeypatch):
+    async def _mock_forget(server, agent_id, atom_id, *, user):
+        return {"forgotten": True, "assertion": "缩进使用4空格"}
+
+    monkeypatch.setattr(
+        "octop.infra.agents.memory.forget.forget_memory_atom_for_agent",
+        _mock_forget,
+    )
+    handled, lines, _ = await try_handle_slash(
+        "/memory forget atom_123", dispatcher=build_default_dispatcher(), ctx=ctx
+    )
+    assert handled
+    text = "\n".join(lines)
+    assert "已彻底遗忘记忆 [atom_123]: 缩进使用4空格" in text
+    assert "90天安全审计日志不受影响" in text

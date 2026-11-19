@@ -670,6 +670,12 @@ export const memoryDashboardApi = {
       { method: "POST", body: JSON.stringify(body ?? {}) },
     ),
 
+  forgetAtom: (aid: string, atomId: string) =>
+    request<{ forgotten: boolean; found: boolean; atom_id: string }>(
+      `${base(aid)}/atoms/${encodeURIComponent(atomId)}:forget`,
+      { method: "POST" },
+    ),
+
   createAtom: (
     aid: string,
     body: {

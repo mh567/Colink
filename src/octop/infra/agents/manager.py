@@ -254,6 +254,10 @@ def _memory_extract_settings(
     out: dict[str, Any] = _memory_aux_model_settings(mem, supported_fields, is_ref_usable)
     if "memory_enabled" in supported_fields and isinstance(mem.get("memory_enabled"), bool):
         out["memory_enabled"] = mem["memory_enabled"]
+    if "memory_capture_enabled" in supported_fields and isinstance(
+        mem.get("capture_enabled"), bool
+    ):
+        out["memory_capture_enabled"] = mem["capture_enabled"]
     if "memory_extract_on_session_end" in supported_fields and isinstance(
         mem.get("extract_on_session_end"), bool
     ):
@@ -4333,6 +4337,28 @@ class AgentManager:
         if "decision" in _HARNESS_AGENT_CONFIG_FIELDS:
             harness_fields["decision"] = self._decision.harness_config()
 
+        memory_settings = _memory_extract_settings(
+            cfg,
+            is_ref_usable=self._providers.is_model_ref_usable,
+        )
+        if (
+            "memory_capture_enabled" in _HARNESS_AGENT_CONFIG_FIELDS
+            and "memory_capture_enabled" not in memory_settings
+        ):
+            memory_settings["memory_capture_enabled"] = False
+        if (
+            "memory_extract_on_session_end" in _HARNESS_AGENT_CONFIG_FIELDS
+            and "memory_extract_on_session_end" not in memory_settings
+        ):
+            memory_settings["memory_extract_on_session_end"] = False
+
+        if int(getattr(row, "is_shared", 0) or 0) == 1:
+            memory_settings["memory_enabled"] = False
+            if "memory_capture_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
+                memory_settings["memory_capture_enabled"] = False
+            if "memory_recall_inject_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
+                memory_settings["memory_recall_inject_enabled"] = False
+
         harness_cfg = HarnessAgentConfig(
             name=_memory_namespace(row.agent_id),
             workspace_dir=harness_workspace,
@@ -4366,7 +4392,7 @@ class AgentManager:
             default_timezone=self._config.default_timezone,
             media_generation=self._media_generation.harness_config(),
             **harness_fields,
-            **_memory_extract_settings(cfg, is_ref_usable=self._providers.is_model_ref_usable),
+            **memory_settings,
             **_resolve_memory_backend_kwargs(cfg, workspace_dir=workspace_dir, config=self._config),
         )
         if "tools_disabled" in _HARNESS_AGENT_CONFIG_FIELDS:

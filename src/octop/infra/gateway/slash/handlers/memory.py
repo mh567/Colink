@@ -94,6 +94,23 @@ def _compact_result(stats: Any, locale: Locale) -> str:
     return line
 
 
+class _MemoryServerAdapter:
+    def __init__(self, agent_manager: Any) -> None:
+        self.app_runtime = type("AppRuntime", (), {"agent_registry": agent_manager})()
+        repos = getattr(agent_manager, "_repos", None)
+        config = getattr(agent_manager, "_config", None)
+        agent_repo = getattr(repos, "agent_repo", None) if repos is not None else None
+        self.services = type(
+            "Services",
+            (),
+            {
+                "agent_repo": agent_repo,
+                "config": config,
+                "repos": repos,
+            },
+        )()
+
+
 async def cmd_memory(d: SlashDispatcher, cmd: SlashCommand, ctx: SlashCtx, sink: SlashSink) -> None:
     lang = lang_of(ctx)
     # External IM user_id is the agent owner's persistence identity, NOT proof
@@ -105,10 +122,218 @@ async def cmd_memory(d: SlashDispatcher, cmd: SlashCommand, ctx: SlashCtx, sink:
     if user is None or user.disabled or ctx.user_id <= 0:
         await sink.text(full_tr("memory_slim.forbidden", lang))
         return
-    args = cmd.args.lower().split()
-    is_slim = bool(args) and args[0] == "slim"
-    is_compact = bool(args) and args[0] == "compact"
-    flags = args[1:]
+
+    class _UserProxy:
+        def __init__(self, u: Any, uid: int) -> None:
+            self._u = u
+            self.id = getattr(u, "id", None) or uid
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._u, name)
+
+    user_proxy = _UserProxy(user, ctx.user_id)
+
+    args = cmd.args.split()
+    if not args:
+        await sink.text(tr("memory.usage", lang))
+        return
+
+    subcmd = args[0].lower()
+    if subcmd == "explain":
+        await sink.text(tr("memory.explain", lang))
+        return
+
+    if subcmd in {"save", "search", "query", "list", "forget"}:
+        adapter = _MemoryServerAdapter(ctx.agent_manager)
+        if subcmd == "save":
+            raw_content = cmd.args.strip()[4:].strip()
+            if not raw_content:
+                await sink.text(tr("memory.save_usage", lang))
+                return
+            topic: str | None = None
+            assertion = raw_content
+            if raw_content.startswith("[") and "]" in raw_content:
+                idx = raw_content.index("]")
+                topic = raw_content[1:idx].strip()
+                assertion = raw_content[idx + 1 :].strip()
+            else:
+                parts = raw_content.split(None, 1)
+                if (
+                    len(parts) == 2
+                    and len(parts[0]) <= 20
+                    and not any(p in parts[0] for p in "，。！？,.!?")
+                ):
+                    topic = parts[0]
+                    assertion = parts[1]
+            if not assertion:
+                await sink.text(tr("memory.save_usage", lang))
+                return
+            from octop.api.common.memory_client import call_memory_rpc
+            from octop.infra.errors import ErrorCode, OctopError
+
+            try:
+                res = call_memory_rpc(
+                    agent_id=ctx.agent_id,
+                    method="create_atom",
+                    params={
+                        "assertion": assertion,
+                        "entity_name": topic,
+                        "kind": "Preference",
+                    },
+                    user=user_proxy,
+                    as_user=None,
+                    server=adapter,
+                )
+                atom_id = res.get("id") or res.get("atom_id") or "saved"
+                await sink.text(tr("memory.saved", lang, atom_id=atom_id, assertion=assertion))
+            except OctopError as exc:
+                if exc.code == ErrorCode.FORBIDDEN:
+                    await sink.text(tr("memory.forbidden", lang))
+                else:
+                    await sink.text(exc.message)
+            return
+
+        if subcmd in {"search", "query"}:
+            query = cmd.args.strip()[len(subcmd) :].strip()
+            if not query:
+                await sink.text(tr("memory.search_usage", lang))
+                return
+            from octop.api.common.memory_client import call_memory_rpc
+            from octop.infra.errors import ErrorCode, OctopError
+
+            try:
+                res = call_memory_rpc(
+                    agent_id=ctx.agent_id,
+                    method="list_atoms",
+                    params={
+                        "query": query,
+                        "status": "active",
+                        "limit": 10,
+                    },
+                    user=user_proxy,
+                    as_user=None,
+                    server=adapter,
+                )
+                items = res.get("items") or []
+                if not items:
+                    await sink.text(tr("memory.not_found", lang))
+                else:
+                    lines = []
+                    for item in items:
+                        name_suffix = (
+                            f" (主题: {item['entity_name']})" if item.get("entity_name") else ""
+                        )
+                        lines.append(
+                            f"- [{item.get('id', '')}] {item.get('assertion', '')}{name_suffix}"
+                        )
+                    await sink.text("\n".join(lines))
+            except OctopError as exc:
+                if exc.code == ErrorCode.FORBIDDEN:
+                    await sink.text(tr("memory.forbidden", lang))
+                else:
+                    await sink.text(exc.message)
+            return
+
+        if subcmd == "list":
+            from octop.api.common.memory_client import call_memory_rpc
+            from octop.infra.errors import ErrorCode, OctopError
+
+            try:
+                res = call_memory_rpc(
+                    agent_id=ctx.agent_id,
+                    method="list_atoms",
+                    params={
+                        "status": "active",
+                        "limit": 20,
+                    },
+                    user=user_proxy,
+                    as_user=None,
+                    server=adapter,
+                )
+                items = res.get("items") or []
+                if not items:
+                    await sink.text(tr("memory.list_empty", lang))
+                else:
+                    lines = []
+                    for item in items:
+                        name_suffix = (
+                            f" (主题: {item['entity_name']})" if item.get("entity_name") else ""
+                        )
+                        lines.append(
+                            f"- [{item.get('id', '')}] {item.get('assertion', '')}{name_suffix}"
+                        )
+                    await sink.text(
+                        tr("memory.list_header", lang, count=len(items)) + "\n" + "\n".join(lines)
+                    )
+            except OctopError as exc:
+                if exc.code == ErrorCode.FORBIDDEN:
+                    await sink.text(tr("memory.forbidden", lang))
+                else:
+                    await sink.text(exc.message)
+            return
+
+        if subcmd == "forget":
+            forget_target = cmd.args.strip()[6:].strip()
+            if not forget_target:
+                await sink.text(tr("memory.forget_usage", lang))
+                return
+            from octop.api.common.memory_client import call_memory_rpc
+            from octop.infra.agents.memory.forget import forget_memory_atom_for_agent
+            from octop.infra.errors import ErrorCode, OctopError
+
+            try:
+                try:
+                    res = await forget_memory_atom_for_agent(
+                        adapter, ctx.agent_id, forget_target, user=user_proxy
+                    )
+                    assertion = res.get("assertion") or ""
+                    await sink.text(
+                        tr("memory.forgotten", lang, atom_id=forget_target, assertion=assertion)
+                    )
+                    return
+                except OctopError as exc:
+                    if exc.code != ErrorCode.NOT_FOUND:
+                        raise
+
+                search_res = call_memory_rpc(
+                    agent_id=ctx.agent_id,
+                    method="list_atoms",
+                    params={
+                        "query": forget_target,
+                        "status": "active",
+                        "limit": 5,
+                    },
+                    user=user_proxy,
+                    as_user=None,
+                    server=adapter,
+                )
+                items = search_res.get("items") or []
+                if not items:
+                    await sink.text(tr("memory.not_found", lang))
+                elif len(items) == 1:
+                    atom_id = items[0]["id"]
+                    res = await forget_memory_atom_for_agent(
+                        adapter, ctx.agent_id, atom_id, user=user_proxy
+                    )
+                    assertion = res.get("assertion") or items[0].get("assertion", "")
+                    await sink.text(
+                        tr("memory.forgotten", lang, atom_id=atom_id, assertion=assertion)
+                    )
+                else:
+                    lines = [
+                        f"- [{item.get('id', '')}] {item.get('assertion', '')}" for item in items
+                    ]
+                    await sink.text(tr("memory.multiple_found", lang, items="\n".join(lines)))
+            except OctopError as exc:
+                if exc.code == ErrorCode.FORBIDDEN:
+                    await sink.text(tr("memory.forbidden", lang))
+                else:
+                    await sink.text(exc.message)
+            return
+
+    is_slim = subcmd == "slim"
+    is_compact = subcmd == "compact"
+    flags = [x.lower() for x in args[1:]]
     valid_slim = (
         is_slim
         and len(flags) == len(set(flags))
