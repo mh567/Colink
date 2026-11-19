@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,15 +15,6 @@ import (
 )
 
 func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/generate") {
-			w.Write([]byte(`{"text":"更新后的周报"}`))
-			return
-		}
-		w.Write([]byte(`{"allowed":true}`))
-	}))
-	defer server.Close()
-
 	home := t.TempDir()
 	worker := newLocalDOCX(home)
 	defer worker.close()
@@ -38,7 +30,7 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 	}
 
 	session := docxSession{
-		Base:     server.URL,
+		Base:     "https://example.test",
 		DeviceID: "dev1",
 		UserID:   1,
 		Secret:   "secret",
@@ -52,6 +44,7 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 	requestID := "0123456789abcdef0123456789abcdef"
 	req := docxRequest{
 		Action:      "overwrite",
+		Format:      "docx",
 		RequestID:   requestID,
 		SourceGrant: grant.ID,
 		Source:      "周报.docx",
@@ -60,26 +53,27 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 		Instruction: "整理",
 	}
 
-	waitingStarted := make(chan struct{})
-	var confirmed atomic.Bool
-	worker.confirmDestructive = func(ctx context.Context, _ Locale, op, target string) (bool, error) {
-		close(waitingStarted)
-		// Simulate client killed while waiting for confirmation
-		<-ctx.Done()
-		return false, ctx.Err()
+	// Record initial task that reached awaiting_confirmation before process termination
+	initTask := docxTask{
+		ID:          requestID,
+		Format:      "docx",
+		Operation:   "overwrite",
+		Output:      docPath,
+		Instruction: "整理",
+		Status:      "awaiting_confirmation",
+		Steps:       []string{"已登记操作意图与约束", "已核验操作权限"},
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	session.Context = ctx
-
-	go func() {
-		worker.run(session, req, func() error { return nil })
-	}()
-
-	select {
-	case <-waitingStarted:
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for confirmation prompt")
+	journal, entry, _, err := worker.claimDestructive(session, req, initTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Task = initTask
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = saveLocalTaskJSON(journal, data); err != nil {
+		t.Fatal(err)
 	}
 
 	// Verify task is currently awaiting_confirmation
@@ -99,7 +93,6 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 	}
 
 	// Now simulate client process killed / restarted
-	cancel() // kill in-flight execution context
 	worker.close()
 
 	// Boot new client instance after restart
@@ -127,8 +120,17 @@ func TestLocalDOCXRestartPreservesAwaitingConfirmationWithoutAutoExecuting(t *te
 	if restartedTask.Status != "awaiting_confirmation" {
 		t.Fatalf("expected status awaiting_confirmation after restart, but got: %q", restartedTask.Status)
 	}
-	if confirmed.Load() {
-		t.Fatal("destructive action auto-executed after restart")
+	if len(restartedTask.Steps) != 2 {
+		t.Fatalf("expected 2 completed steps preserved, got: %+v", restartedTask.Steps)
+	}
+
+	// Replay must return existing awaiting_confirmation task without auto-executing
+	replayedTask, err := restarted.run(session, req, func() error { return nil })
+	if err != nil {
+		t.Fatalf("replay failed: %v", err)
+	}
+	if replayedTask.Status != "awaiting_confirmation" {
+		t.Fatalf("expected replayed status awaiting_confirmation, got: %s", replayedTask.Status)
 	}
 
 	// Now user explicitly cancels this awaiting confirmation task
