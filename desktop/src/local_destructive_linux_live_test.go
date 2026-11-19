@@ -4,23 +4,108 @@ package main
 
 import (
 	"bytes"
-	"context"
+	"crypto/ed25519"
 	"encoding/json"
-	"io"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"octop.desktop/internal/fileops"
 )
 
-// This test needs an installed file service and an approved test device.
+func liveManagedLogin(server string, body []byte, transport http.RoundTripper) (string, error) {
+	server, err := fileops.NormalizeServerURL(server)
+	if err != nil {
+		return "", err
+	}
+	client := http.Client{
+		Transport:     transport,
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	response, err := client.Post(server+"/api/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("test login failed: status %d", response.StatusCode)
+	}
+	var login struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&login); err != nil || login.AccessToken == "" {
+		return "", errors.New("test login did not return a token")
+	}
+	return login.AccessToken, nil
+}
+
+func useLiveManagedDeviceKey(t *testing.T, keyPath string) error {
+	t.Helper()
+	if !filepath.IsAbs(keyPath) {
+		return errors.New("provide an absolute path to a separately approved test device key")
+	}
+	keyInfo, err := os.Lstat(keyPath)
+	if err != nil {
+		return err
+	}
+	if !keyInfo.Mode().IsRegular() || keyInfo.Mode().Perm() != 0600 || keyInfo.Size() != ed25519.PrivateKeySize {
+		return errors.New("test device key must be a regular 0600 Ed25519 key file")
+	}
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		return err
+	}
+	if len(key) != ed25519.PrivateKeySize || !bytes.Equal(key, ed25519.NewKeyFromSeed(key[:ed25519.SeedSize])) {
+		return errors.New("invalid test device key")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	for _, dir := range []string{octopHome(), filepath.Join(home, ".octop")} {
+		desktopKey, err := os.ReadFile(filepath.Join(dir, "device-key"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(key, desktopKey) {
+			return errors.New("the test device key must not be the current desktop key")
+		}
+	}
+	isolatedHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(isolatedHome, "device-key"), key, 0600); err != nil {
+		return err
+	}
+	t.Setenv("OCTOP_HOME", isolatedHome)
+	return nil
+}
+
+// Run only in a dedicated Linux test session with an installed file service.
 func TestLiveManagedDirectoryReturnsAbsolutePath(t *testing.T) {
 	server := os.Getenv("COLINK_FILEOPS_TEST_SERVER")
 	if server == "" {
 		t.Skip("set COLINK_FILEOPS_TEST_SERVER to run the managed service integration test")
+	}
+	server, err := fileops.NormalizeServerURL(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := url.Parse(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := useLiveManagedDeviceKey(t, os.Getenv("COLINK_FILEOPS_TEST_DEVICE_KEY_FILE")); err != nil {
+		t.Fatal(err)
 	}
 	password, err := os.ReadFile(os.Getenv("COLINK_FILEOPS_TEST_PASSWORD_FILE"))
 	if err != nil {
@@ -33,27 +118,21 @@ func TestLiveManagedDirectoryReturnsAbsolutePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := http.Post(server+"/api/auth/login", "application/json", bytes.NewReader(body))
+	token, err := liveManagedLogin(server, body, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(response.Body)
-	if err != nil || response.StatusCode != http.StatusOK {
-		t.Fatalf("test login failed: status %d, error %v", response.StatusCode, err)
-	}
-	var login struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(data, &login); err != nil || login.AccessToken == "" {
-		t.Fatal("test login did not return a token")
-	}
-	events := make(chan deviceMessage, 8)
-	client := &deviceClient{emit: func(message deviceMessage) { events <- message }}
+	events := make(chan deviceMessage, 1)
+	client := &deviceClient{emit: func(message deviceMessage) {
+		select {
+		case events <- message:
+		default:
+		}
+	}}
 	if err := client.setBase(server); err != nil {
 		t.Fatal(err)
 	}
-	client.connect(login.AccessToken, "/api/devices/connect")
+	client.connect(token, endpoint.Path+"/api/devices/connect")
 	defer client.disconnect()
 	select {
 	case message := <-events:
@@ -80,38 +159,7 @@ func TestLiveManagedDirectoryReturnsAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	name := "colink-acceptance-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".docx"
-	if configured := os.Getenv("COLINK_FILEOPS_TEST_NAME"); configured != "" {
-		name = configured
-	}
-	content := []byte("Colink isolated acceptance fixture")
-	if fixture := os.Getenv("COLINK_FILEOPS_TEST_FIXTURE"); fixture != "" {
-		content, err = os.ReadFile(fixture)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	handled, err := createLocalOutput(session, root, name, content)
-	if err != nil || !handled {
-		t.Fatalf("create managed file: handled=%t, error=%v", handled, err)
-	}
-	got, err := os.ReadFile(filepath.Join(path, name))
-	if err != nil || !bytes.Equal(got, content) {
-		t.Fatalf("read managed file: error=%v", err)
-	}
-	t.Logf("created isolated test file %s", filepath.Join(path, name))
-	if targetName := os.Getenv("COLINK_FILEOPS_TEST_PREPARE"); targetName != "" {
-		target, err := prepareDestructiveTarget(session, root, targetName, "delete")
-		if err != nil {
-			t.Fatalf("prepare managed delete: %v", err)
-		}
-		defer target.close()
-		if os.Getenv("COLINK_FILEOPS_TEST_CONFIRM") != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := target.confirm(ctx, nil, nil); err != nil {
-				t.Fatalf("confirm managed delete: %v", err)
-			}
-		}
+	if err := managedRootIdentity(root); err != nil {
+		t.Fatal(err)
 	}
 }

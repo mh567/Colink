@@ -3,7 +3,6 @@ package fileops
 import (
 	"bufio"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +12,9 @@ import (
 )
 
 type testPolkit struct {
-	fail bool
+	challenge bool
+	dismissed bool
+	fail      bool
 }
 
 func (p testPolkit) CheckAuthorization(_ struct {
@@ -31,11 +32,16 @@ func (p testPolkit) CheckAuthorization(_ struct {
 		result.Challenge = true
 	} else if p.fail {
 		return result, dbus.NewError("org.freedesktop.PolicyKit1.Error.Failed", nil)
+	} else {
+		result.Challenge = p.challenge
+		if p.dismissed {
+			result.Details["polkit.dismissed"] = "true"
+		}
 	}
 	return result, nil
 }
 
-func TestInteractiveDenialLeavesManagedFileUnchanged(t *testing.T) {
+func TestUnconfirmedOperationsLeaveManagedFileUnchanged(t *testing.T) {
 	daemon, err := exec.LookPath("dbus-daemon")
 	if err != nil {
 		t.Skip("dbus-daemon is unavailable")
@@ -68,30 +74,38 @@ func TestInteractiveDenialLeavesManagedFileUnchanged(t *testing.T) {
 	}
 	defer client.Close()
 	svc := &service{conn: client}
-	for _, fail := range []bool{false, true} {
-		if err := authority.Export(testPolkit{fail: fail}, "/org/freedesktop/PolicyKit1/Authority", "org.freedesktop.PolicyKit1.Authority"); err != nil {
-			t.Fatal(err)
-		}
-		dir := t.TempDir()
-		path := filepath.Join(dir, "report.docx")
-		if err := os.WriteFile(path, []byte("before"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		store := testStore()
-		token := testPrepare(t, store, dir, "report.docx", "delete")
-		err := store.confirm(context.Background(), ":1.42", token, "delete", testCredentials, nil, func(ctx context.Context, op, path string) (bool, error) {
-			return svc.authorize(ctx, ":1.42", op, path)
+	for _, tc := range []struct {
+		name  string
+		reply testPolkit
+		want  string
+	}{
+		{"explicit dismissal", testPolkit{dismissed: true}, CancelError},
+		{"authentication agent unavailable", testPolkit{challenge: true}, BusName + ".Failed"},
+		{"unmarked refusal", testPolkit{}, BusName + ".NotConfirmed"},
+		{"service error", testPolkit{fail: true}, BusName + ".Failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := authority.Export(tc.reply, "/org/freedesktop/PolicyKit1/Authority", "org.freedesktop.PolicyKit1.Authority"); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			path := filepath.Join(dir, "report.docx")
+			if err := os.WriteFile(path, []byte("before"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			store := testStore()
+			token := testPrepare(t, store, dir, "report.docx", "delete")
+			err := store.confirm(context.Background(), ":1.42", token, "delete", testCredentials, nil, func(ctx context.Context, op, path string) (bool, error) {
+				return svc.authorize(ctx, ":1.42", op, path)
+			})
+			if got := fileError(err); got == nil || got.Name != tc.want {
+				t.Errorf("confirm returned %v, want %s", got, tc.want)
+			}
+			if err := store.commit(context.Background(), ":1.42", token, "delete", testCredentials, nil); err == nil {
+				t.Fatal("denied operation succeeded")
+			}
+			assertFile(t, path, "before")
 		})
-		if fail && (err == nil || errors.Is(err, ErrCancelled)) {
-			t.Fatalf("service failure reported as cancellation: %v", err)
-		}
-		if !fail && !errors.Is(err, ErrCancelled) {
-			t.Fatalf("interactive denial did not cancel: %v", err)
-		}
-		if err := store.commit(context.Background(), ":1.42", token, "delete", testCredentials, nil); err == nil {
-			t.Fatal("denied operation succeeded")
-		}
-		assertFile(t, path, "before")
 	}
 }
 
