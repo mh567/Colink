@@ -545,6 +545,16 @@ Bundled experts live in `src/octop/infra/agents/experts/library/`
 | `GET`    | `/agents/{aid}/memory/daily/{filename}` | owner | read one daily memory |
 | `DELETE` | `/agents/{aid}/memory/daily/{filename}` | owner | delete one daily memory |
 | `GET`/`POST` | `/memory/...` | user | memory API (dashboard memory tab) |
+| `POST` | `/agents/{aid}/memory/atoms/{atom_id}:forget` | private owner with `memory` grant | permanently delete the entry; returns `{ "atom_id": "…", "forgotten": true }` (`DELETE /agents/{aid}/memory/atoms/{atom_id}` is equivalent) |
+
+Forgetting removes long-term memory and its linked records, not the conversation,
+task checkpoint, or audit log. A separate local store of deletion IDs prevents a
+backup restored on the same installation from bringing back forgotten entries.
+When migrating to a different installation, backups alone do not carry those IDs.
+If a system restore stops before memory cleanup finishes, memory endpoints and new
+expert turns remain unavailable until a system restore completes successfully.
+Automatic conversation capture and memory distillation are off by default and can
+be enabled separately in memory settings.
 
 ### Manual document reconciliation
 

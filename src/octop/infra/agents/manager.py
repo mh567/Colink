@@ -1173,7 +1173,20 @@ class AgentManager:
 
         if shared and is_team_agent(existing):
             raise OctopError(ErrorCode.TEAM_NOT_SHAREABLE, "teams cannot be shared")
-        self._repos.agent_repo.set_shared(agent_id, shared)
+        if bool(existing.is_shared) == shared:
+            return existing
+        if not self.try_begin_history_backfill(agent_id):
+            raise OctopError.localized(ErrorCode.AGENT_BUSY)
+        try:
+            async with self._lifecycle_lock_for(agent_id):
+                live = self._octop_harness_or_none(agent_id)
+                if shared and live is not None:
+                    live.set_memory_access(False)
+                self._repos.agent_repo.set_shared(agent_id, shared)
+                if not shared and live is not None:
+                    live.set_memory_access(True)
+        finally:
+            self.end_history_backfill(agent_id)
         row = self._repos.agent_repo.get(agent_id)
         if row is None:
             raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
@@ -1966,9 +1979,17 @@ class AgentManager:
             event.set()
 
     async def _begin_invocation(self, agent_id: str) -> None:
+        from octop.infra.agents.memory.personal import memory_restore_pending
+        from octop.infra.backup.auto import get_backup_operation
+
         self._invocation_waiters[agent_id] = self._invocation_waiters.get(agent_id, 0) + 1
         try:
             while True:
+                if (
+                    await asyncio.to_thread(memory_restore_pending, self._paths.root)
+                    or get_backup_operation() == "restore"
+                ):
+                    raise OctopError.localized(ErrorCode.AGENT_BUSY)
                 event = self._history_backfills.get(agent_id) or self._reclaim_holds.get(agent_id)
                 if event is None:
                     break
@@ -4352,12 +4373,8 @@ class AgentManager:
         ):
             memory_settings["memory_extract_on_session_end"] = False
 
-        if int(getattr(row, "is_shared", 0) or 0) == 1:
-            memory_settings["memory_enabled"] = False
-            if "memory_capture_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
-                memory_settings["memory_capture_enabled"] = False
-            if "memory_recall_inject_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
-                memory_settings["memory_recall_inject_enabled"] = False
+        if row.is_shared:
+            memory_settings["memory_access_enabled"] = False
 
         harness_cfg = HarnessAgentConfig(
             name=_memory_namespace(row.agent_id),

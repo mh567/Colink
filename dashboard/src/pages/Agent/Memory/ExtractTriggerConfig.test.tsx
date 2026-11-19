@@ -56,7 +56,7 @@ describe("<MemorySettings />", () => {
     render(<MemorySettings agentId="ZYWZTD" />);
     await screen.findByText("存储记忆");
 
-    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("switch", { name: "存储记忆" }));
     expect(screen.getByText("关闭后 Agent 将不再使用记忆")).toBeInTheDocument();
     expect(
       screen.getByText(/已有记忆和对话记录不会被删除/),
@@ -74,6 +74,7 @@ describe("<MemorySettings />", () => {
     await waitFor(() => {
       expect(api.putExtractConfig).toHaveBeenCalledWith("ZYWZTD", {
         memory_enabled: true,
+        capture_enabled: false,
         extract_on_session_end: true,
         extract_trigger_mode: "idle",
         extract_idle_seconds: 300,
@@ -88,6 +89,43 @@ describe("<MemorySettings />", () => {
         extract_extra_body: {},
       });
     });
+  });
+
+  it("does not enable capture or distillation unless explicitly selected", async () => {
+    const manualConfig = { ...idleConfig, extract_on_session_end: false };
+    api.getExtractConfig.mockResolvedValue(manualConfig);
+    api.putExtractConfig
+      .mockResolvedValueOnce(manualConfig)
+      .mockResolvedValueOnce({
+        ...idleConfig,
+        capture_enabled: true,
+      });
+    const user = userEvent.setup();
+    render(<MemorySettings agentId="ZYWZTD" />);
+
+    const capture = await screen.findByRole("switch", { name: "自动采集对话" });
+    const distill = screen.getByRole("switch", { name: "自动提炼记忆" });
+    expect(capture).not.toBeChecked();
+    expect(distill).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    expect(api.putExtractConfig).toHaveBeenLastCalledWith(
+      "ZYWZTD",
+      expect.objectContaining({
+        capture_enabled: false,
+        extract_on_session_end: false,
+      }),
+    );
+
+    await user.click(capture);
+    await user.click(distill);
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    expect(api.putExtractConfig).toHaveBeenLastCalledWith(
+      "ZYWZTD",
+      expect.objectContaining({
+        capture_enabled: true,
+        extract_on_session_end: true,
+      }),
+    );
   });
 
   it("saves a pinned extraction model", async () => {

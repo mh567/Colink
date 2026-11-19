@@ -45,6 +45,7 @@ from octop.api.common.agent import assert_agent_owner, require_agent_owner_row
 from octop.api.common.memory_client import call_memory_rpc
 from octop.api.deps import current_user, get_server, require_permission
 from octop.infra.agents.manager import memory_extract_supported_options
+from octop.infra.agents.memory.personal import forget_memory_atom_for_agent
 from octop.infra.errors import ErrorCode, OctopError
 
 logger = logging.getLogger(__name__)
@@ -309,7 +310,7 @@ def _strip_none(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/agents/{agent_id}/memory/atoms/list")
-async def list_atoms(
+def list_atoms(
     agent_id: str,
     body: _ListAtomsBody = Body(default_factory=_ListAtomsBody),
     as_user: int | None = None,
@@ -330,7 +331,7 @@ async def list_atoms(
 
 
 @router.post("/agents/{agent_id}/memory/raw_events/list")
-async def list_raw_events(
+def list_raw_events(
     agent_id: str,
     body: _ListRawEventsBody = Body(default_factory=_ListRawEventsBody),
     as_user: int | None = None,
@@ -351,7 +352,7 @@ async def list_raw_events(
 
 
 @router.post("/agents/{agent_id}/memory/entities/list")
-async def list_entities(
+def list_entities(
     agent_id: str,
     body: _ListEntitiesBody = Body(default_factory=_ListEntitiesBody),
     as_user: int | None = None,
@@ -372,7 +373,7 @@ async def list_entities(
 
 
 @router.post("/agents/{agent_id}/memory/episodes/list")
-async def list_episodes(
+def list_episodes(
     agent_id: str,
     body: _ListEpisodesBody = Body(default_factory=_ListEpisodesBody),
     as_user: int | None = None,
@@ -393,7 +394,7 @@ async def list_episodes(
 
 
 @router.post("/agents/{agent_id}/memory/journal/list")
-async def list_journal(
+def list_journal(
     agent_id: str,
     body: _ListJournalBody = Body(default_factory=_ListJournalBody),
     as_user: int | None = None,
@@ -414,7 +415,7 @@ async def list_journal(
 
 
 @router.post("/agents/{agent_id}/memory/candidates/list")
-async def list_candidates(
+def list_candidates(
     agent_id: str,
     body: _ListCandidatesBody = Body(default_factory=_ListCandidatesBody),
     as_user: int | None = None,
@@ -440,7 +441,7 @@ async def list_candidates(
 
 
 @router.get("/agents/{agent_id}/memory/raw_events/{event_id}")
-async def get_raw_event(
+def get_raw_event(
     agent_id: str,
     event_id: str,
     as_user: int | None = None,
@@ -461,7 +462,7 @@ async def get_raw_event(
 
 
 @router.get("/agents/{agent_id}/memory/candidates/{candidate_id}")
-async def get_candidate(
+def get_candidate(
     agent_id: str,
     candidate_id: str,
     as_user: int | None = None,
@@ -482,7 +483,7 @@ async def get_candidate(
 
 
 @router.get("/agents/{agent_id}/memory/atoms/{atom_id}")
-async def get_atom(
+def get_atom(
     agent_id: str,
     atom_id: str,
     as_user: int | None = None,
@@ -503,7 +504,7 @@ async def get_atom(
 
 
 @router.get("/agents/{agent_id}/memory/entities/{entity_id}")
-async def get_entity(
+def get_entity(
     agent_id: str,
     entity_id: str,
     as_user: int | None = None,
@@ -524,7 +525,7 @@ async def get_entity(
 
 
 @router.get("/agents/{agent_id}/memory/episodes/{episode_id}")
-async def get_episode(
+def get_episode(
     agent_id: str,
     episode_id: str,
     as_user: int | None = None,
@@ -550,7 +551,7 @@ async def get_episode(
 
 
 @router.get("/agents/{agent_id}/memory/stats/counts")
-async def stats_counts(
+def stats_counts(
     agent_id: str,
     as_user: int | None = None,
     user: Any = Depends(current_user),
@@ -570,7 +571,7 @@ async def stats_counts(
 
 
 @router.get("/agents/{agent_id}/memory/stats/growth")
-async def stats_growth(
+def stats_growth(
     agent_id: str,
     days: int = Query(default=7, ge=1, le=90),
     as_user: int | None = None,
@@ -591,7 +592,7 @@ async def stats_growth(
 
 
 @router.get("/agents/{agent_id}/memory/stats/atom_kinds")
-async def stats_atom_kinds(
+def stats_atom_kinds(
     agent_id: str,
     as_user: int | None = None,
     user: Any = Depends(current_user),
@@ -611,7 +612,7 @@ async def stats_atom_kinds(
 
 
 @router.get("/agents/{agent_id}/memory/journal/recent")
-async def recent_journal(
+def recent_journal(
     agent_id: str,
     limit: int = Query(default=5, ge=1, le=100),
     as_user: int | None = None,
@@ -637,7 +638,7 @@ async def recent_journal(
 
 
 @router.post("/agents/{agent_id}/memory/candidates/{candidate_id}:promote")
-async def promote_candidate(
+def promote_candidate(
     agent_id: str,
     candidate_id: str,
     as_user: int | None = None,
@@ -658,7 +659,7 @@ async def promote_candidate(
 
 
 @router.post("/agents/{agent_id}/memory/candidates/{candidate_id}:reject")
-async def reject_candidate(
+def reject_candidate(
     agent_id: str,
     candidate_id: str,
     body: _RejectCandidateBody = Body(default_factory=_RejectCandidateBody),
@@ -681,7 +682,7 @@ async def reject_candidate(
 
 
 @router.post("/agents/{agent_id}/memory/atoms/{atom_id}:deprecate")
-async def deprecate_atom(
+def deprecate_atom(
     agent_id: str,
     atom_id: str,
     body: _DeprecateAtomBody = Body(default_factory=_DeprecateAtomBody),
@@ -711,7 +712,7 @@ async def deprecate_atom(
         "cannot override the audit actor."
     ),
 )
-async def create_atom(
+def create_atom(
     agent_id: str,
     body: _CreateAtomBody,
     as_user: int | None = None,
@@ -739,7 +740,7 @@ async def create_atom(
         "candidate. The request is recorded as actor=user; clients cannot override the audit actor."
     ),
 )
-async def replace_atom(
+def replace_atom(
     agent_id: str,
     atom_id: str,
     body: _ReplaceAtomBody,
@@ -761,35 +762,41 @@ async def replace_atom(
     )
 
 
+class _ForgetAtomResult(BaseModel):
+    atom_id: str
+    forgotten: Literal[True] = True
+
+
 @router.post(
     "/agents/{agent_id}/memory/atoms/{atom_id}:forget",
+    response_model=_ForgetAtomResult,
     summary="Permanently forget a personal memory",
     description=(
         "Physically deletes the memory atom and associated candidate, raw events, "
         "memory nodes, and journal records. Soft-deactivation or deprecation is not used. "
-        "Tombstones are recorded to prevent recurrence after restoring old backups."
+        "Only removal IDs are retained for restore on the same installation. "
+        "Conversation history, checkpoints, and audit logs are not deleted."
     ),
 )
 @router.delete(
     "/agents/{agent_id}/memory/atoms/{atom_id}",
+    response_model=_ForgetAtomResult,
     summary="Permanently forget a personal memory (DELETE alias)",
     description="Physical deletion of the personal memory atom and its associated records.",
 )
 async def forget_atom(
     agent_id: str,
     atom_id: str,
-    as_user: int | None = None,
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
-) -> dict[str, Any]:
-    from octop.infra.agents.memory.forget import forget_memory_atom_for_agent
-
-    return await forget_memory_atom_for_agent(
-        server,
+) -> _ForgetAtomResult:
+    await forget_memory_atom_for_agent(
+        server.app_runtime.agent_registry,
         agent_id=agent_id,
         atom_id=atom_id,
         user=user,
     )
+    return _ForgetAtomResult(atom_id=atom_id)
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +811,7 @@ def _terminal_endpoint(method_name: str) -> Any:
     router compact without introducing a second router-mounting layer.
     """
 
-    async def _handler(
+    def _handler(
         agent_id: str,
         limit: int = Query(default=5, ge=1, le=20),
         as_user: int | None = None,

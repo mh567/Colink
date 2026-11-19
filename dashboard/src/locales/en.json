@@ -4606,6 +4606,7 @@
     "extractConfig": {
       "title": "Memory distillation timing",
       "subtitle": "Control when conversation material becomes memory",
+      "captureLabel": "Automatically capture conversations",
       "enableLabel": "Auto-distill memory",
       "modeIdle": "Distill after conversation goes idle",
       "modeIdleHint": "Waits for a quiet conversation — best memory quality (recommended)",
@@ -4624,7 +4625,7 @@
       "title": "Memory settings",
       "description": "Control whether this agent uses memory and when conversations become long-term memory.",
       "storageTitle": "Store memory",
-      "storageDescription": "Allow the agent to read existing memories and keep learning from new conversations.",
+      "storageDescription": "Allow the agent to read and manually save memories.",
       "enabled": "On",
       "disabled": "Off",
       "disabledTitle": "The agent will stop using memory",

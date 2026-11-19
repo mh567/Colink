@@ -26,7 +26,17 @@ def ctx():
         channel_type="dashboard",
         session_key="key",
         thread_registry=MagicMock(),
-        user_repo=SimpleNamespace(get=lambda uid: SimpleNamespace(disabled=0)),
+        user_repo=SimpleNamespace(
+            get=lambda uid: SimpleNamespace(
+                disabled=0,
+                id=uid,
+                username="employee",
+                role="user",
+                display_name=None,
+                locale="zh",
+                permissions=["memory"],
+            )
+        ),
         agent_manager=SimpleNamespace(memory_slim=coordinator),
     )
 
@@ -300,9 +310,9 @@ async def test_memory_explain_shows_scopes(ctx):
 @pytest.mark.asyncio
 async def test_memory_save_and_search_slash(ctx, monkeypatch):
     monkeypatch.setattr(
-        "octop.api.common.memory_client.call_memory_rpc",
-        lambda agent_id, method, params, user, as_user, server: {
-            "create_atom": {"id": "atom_123", "assertion": params.get("assertion")},
+        "octop.infra.gateway.slash.handlers.memory.call_memory_rpc",
+        lambda registry, agent_id, method, params, user: {
+            "create_atom": {"atom": {"id": "atom_123", "assertion": params.get("assertion")}},
             "list_atoms": {
                 "items": [{"id": "atom_123", "assertion": "缩进使用4空格", "entity_name": "Python"}]
             },
@@ -311,7 +321,7 @@ async def test_memory_save_and_search_slash(ctx, monkeypatch):
 
     # Test save
     handled, lines, _ = await try_handle_slash(
-        "/memory save Python 缩进使用4空格", dispatcher=build_default_dispatcher(), ctx=ctx
+        "/memory save [Python] 缩进使用4空格", dispatcher=build_default_dispatcher(), ctx=ctx
     )
     assert handled
     text = "\n".join(lines)
@@ -330,8 +340,8 @@ async def test_memory_save_and_search_slash(ctx, monkeypatch):
 @pytest.mark.asyncio
 async def test_memory_list_slash(ctx, monkeypatch):
     monkeypatch.setattr(
-        "octop.api.common.memory_client.call_memory_rpc",
-        lambda agent_id, method, params, user, as_user, server: {
+        "octop.infra.gateway.slash.handlers.memory.call_memory_rpc",
+        lambda registry, agent_id, method, params, user: {
             "items": [{"id": "atom_456", "assertion": "偏好深色模式", "entity_name": "UI"}]
         },
     )
@@ -346,11 +356,11 @@ async def test_memory_list_slash(ctx, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_forget_slash(ctx, monkeypatch):
-    async def _mock_forget(server, agent_id, atom_id, *, user):
-        return {"forgotten": True, "assertion": "缩进使用4空格"}
+    async def _mock_forget(registry, agent_id, atom_id, *, user):
+        return None
 
     monkeypatch.setattr(
-        "octop.infra.agents.memory.forget.forget_memory_atom_for_agent",
+        "octop.infra.gateway.slash.handlers.memory.forget_memory_atom_for_agent",
         _mock_forget,
     )
     handled, lines, _ = await try_handle_slash(
@@ -358,5 +368,5 @@ async def test_memory_forget_slash(ctx, monkeypatch):
     )
     assert handled
     text = "\n".join(lines)
-    assert "已彻底遗忘记忆 [atom_123]: 缩进使用4空格" in text
-    assert "90天安全审计日志不受影响" in text
+    assert "已彻底遗忘记忆 [atom_123]" in text
+    assert "安全审计日志不受影响" in text

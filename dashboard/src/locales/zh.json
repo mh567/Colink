@@ -4529,6 +4529,7 @@
     "extractConfig": {
       "title": "记忆提炼时机",
       "subtitle": "控制何时把对话记忆提炼成长期记忆",
+      "captureLabel": "自动采集对话",
       "enableLabel": "自动提炼记忆",
       "modeIdle": "对话空闲后提炼",
       "modeIdleHint": "等对话安静一段时间再提炼，记忆质量最好（推荐）",
@@ -4547,7 +4548,7 @@
       "title": "记忆设置",
       "description": "控制这个专家是否使用记忆，以及对话内容何时被整理成长期记忆。",
       "storageTitle": "存储记忆",
-      "storageDescription": "允许专家读取已有记忆，并从新对话中持续积累记忆。",
+      "storageDescription": "允许专家读取和手动保存记忆。",
       "enabled": "已开启",
       "disabled": "已关闭",
       "disabledTitle": "关闭后专家将不再使用记忆",

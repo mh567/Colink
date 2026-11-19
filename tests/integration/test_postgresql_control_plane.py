@@ -170,14 +170,17 @@ def test_pg_probe_ok() -> None:
 
 @requires_postgresql
 @pytest.mark.postgresql
-def test_pg_backup_roundtrip(tmp_path: Path) -> None:
+def test_pg_backup_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     if not shutil.which("pg_dump") or not shutil.which("pg_restore"):
         pytest.skip("pg_dump/pg_restore not on PATH")
 
     from octop.config import DatabaseConfig
+    from octop.infra.agents.memory.personal import memory_restore_pending, record_forgotten_ids
+    from octop.infra.backup import system_archive
     from octop.infra.backup.system_archive import create_system_backup, restore_system_backup
     from octop.infra.db.migrate import run_migrations
     from octop.infra.db.pool import PostgresPool
+    from octop.infra.db.repos.agents import AgentRepo
     from octop.infra.db.repos.users import UserRepo
     from octop.infra.utils.paths import PathLayout
 
@@ -199,26 +202,50 @@ def test_pg_backup_roundtrip(tmp_path: Path) -> None:
         repo = UserRepo(pool)
         username = f"pg_bak_{uuid.uuid4().hex[:8]}"
         repo.create(username=username, password_hash="x", role="user")
+        owner = repo.get_by_username(username)
+        assert owner is not None
 
         layout = PathLayout(tmp_path / ".octop")
         layout.root.mkdir(parents=True, exist_ok=True)
         layout.config.write_text('{"port": 8088}', encoding="utf-8")
 
-        class Row:
-            agent_id = "agent01"
-            name = "Test"
+        from octop_memory.core import Memory
+
+        aid = "Archive_" + uuid.uuid4().hex[:8].upper()
+        agents = AgentRepo(pool)
+        agents.create(agent_id=aid, user_id=owner.id, name="Test")
+        row = agents.get(aid)
+        assert row is not None
+        memory = Memory(f"agent_{aid}", backend="postgres", backend_config={"dsn": conninfo})
+        forgotten, *_ = memory.create_atom("Temporary test preference", entity_name="User")
+        retained, *_ = memory.create_atom("Retained test preference", entity_name="User")
 
         archive = tmp_path / "pg-backup.tar.gz"
         create_system_backup(
             paths=layout,
-            agent_rows=[Row()],
+            agent_rows=[row],
             pool=pool,
             db_config=db_config,
             dest=archive,
         )
+        record_forgotten_ids(layout.root, aid, memory.atom_forget_ids(forgotten.id))
+        assert memory.forget_atom(forgotten.id)
+        memory.backend.close()
 
         _reset_public_schema(pool)
         run_migrations(pool)
+        with monkeypatch.context() as patch:
+
+            def fail_prune(*args: object) -> None:
+                raise RuntimeError("simulated restore cleanup failure")
+
+            patch.setattr(system_archive, "prune_restored_memories", fail_prune)
+            with pytest.raises(RuntimeError, match="simulated restore cleanup failure"):
+                restore_system_backup(
+                    archive, paths=layout, pool=pool, db_config=db_config, restore_config=False
+                )
+        assert memory_restore_pending(layout.root)
+
         result = restore_system_backup(
             archive,
             paths=layout,
@@ -227,8 +254,13 @@ def test_pg_backup_roundtrip(tmp_path: Path) -> None:
             restore_config=False,
         )
         assert result["database_driver"] == "postgresql"
+        assert not memory_restore_pending(layout.root)
         found = repo.get_by_username(username)
         assert found is not None
+        memory = Memory(f"agent_{aid}", backend="postgres", backend_config={"dsn": conninfo})
+        assert memory.get_atom(forgotten.id) is None
+        assert memory.get_atom(retained.id) is not None
+        memory.backend.close()
     finally:
         pool.close()
 

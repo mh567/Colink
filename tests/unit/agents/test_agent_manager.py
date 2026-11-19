@@ -849,14 +849,13 @@ def test_build_harness_config_defaults_personal_memory_capture_off(manager: Agen
         assert cfg.memory_extract_on_session_end is False
 
 
-def test_build_harness_config_shared_expert_disables_memory(manager: AgentManager) -> None:
+def test_build_harness_config_shared_expert_preserves_checkpoint_backend(
+    manager: AgentManager,
+) -> None:
     row = replace(_row(config_json=json.dumps({"memory": {"memory_enabled": True}})), is_shared=1)
     cfg = manager._build_harness_config(row)
-    assert cfg.memory_enabled is False
-    if hasattr(cfg, "memory_capture_enabled"):
-        assert cfg.memory_capture_enabled is False
-    if hasattr(cfg, "memory_recall_inject_enabled"):
-        assert cfg.memory_recall_inject_enabled is False
+    assert cfg.memory_enabled is True
+    assert cfg.memory_access_enabled is False
 
 
 def test_format_agent_start_error_unwraps_exception_group() -> None:

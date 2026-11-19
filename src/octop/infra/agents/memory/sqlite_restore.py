@@ -7,12 +7,13 @@ import re
 import sqlite3
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 from octop.i18n import tr
+from octop.infra.agents.memory.personal import prune_restored_memories
 
 
 def backup_path(path: Path, backup_id: str, locale: str) -> Path:
@@ -77,6 +78,7 @@ def restore_sqlite(
     *,
     locale: str,
     progress: Callable[[dict[str, Any]], None],
+    forgotten_atom_ids: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Validate, snapshot current data durably, then use SQLite's backup API.
 
@@ -112,15 +114,8 @@ def restore_sqlite(
             try:
                 src.backup(dest)
                 _validate(dest, namespace, locale)
-                # Ensure previously forgotten memories do not re-emerge after backup restore
-                from octop.infra.agents.memory.forget import prune_restored_forgotten_memories
-
-                ws_dir = path.parent.parent if path.parent.name == ".octop" else path.parent
-                prune_restored_forgotten_memories(
-                    workspace_dir=ws_dir,
-                    namespace=namespace,
-                    backend="sqlite",
-                    backend_config={"db_path": str(path)},
+                prune_restored_memories(
+                    namespace, "sqlite", {"db_path": str(path)}, forgotten_atom_ids
                 )
             except BaseException:
                 # The host has stopped all writers; restoring this snapshot cannot

@@ -106,6 +106,7 @@ export type ExtractTriggerMode = "idle" | "interval";
 export interface ExtractConfig {
   /** Missing on older Octop API processes; absence keeps the historical enabled default. */
   memory_enabled?: boolean;
+  capture_enabled?: boolean;
   extract_on_session_end: boolean;
   extract_trigger_mode: ExtractTriggerMode;
   extract_idle_seconds: number;
@@ -671,7 +672,7 @@ export const memoryDashboardApi = {
     ),
 
   forgetAtom: (aid: string, atomId: string) =>
-    request<{ forgotten: boolean; found: boolean; atom_id: string }>(
+    request<{ forgotten: true; atom_id: string }>(
       `${base(aid)}/atoms/${encodeURIComponent(atomId)}:forget`,
       { method: "POST" },
     ),
