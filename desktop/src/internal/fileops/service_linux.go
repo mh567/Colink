@@ -149,7 +149,7 @@ func (s *service) Directory(sender dbus.Sender, server string, proof Credentials
 		return "", fileError(err)
 	}
 	defer root.Close()
-	return root.Name(), nil
+	return DirectoryForUID(uid), nil
 }
 
 func (s *service) Prepare(sender dbus.Sender, server, operation, name string, proof Credentials) (string, *dbus.Error) {
@@ -267,10 +267,7 @@ func (s *service) authorize(ctx context.Context, sender dbus.Sender, operation, 
 	if err != nil || result.Details["polkit.temporary_authorization_id"] != "" || result.Details["polkit.retains_authorization_after_challenge"] != "" {
 		return false, errInactive
 	}
-	if result.Authorized || result.Details["polkit.dismissed"] != "" {
-		return result.Authorized, nil
-	}
-	return false, errInactive
+	return result.Authorized, nil
 }
 
 func openBase() (*os.Root, error) {
@@ -333,7 +330,22 @@ func (s *service) openManaged(uid uint32, provision bool) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	return base.OpenRoot(name)
+	anchored, err := base.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	defer anchored.Close()
+	root, err := os.OpenRoot(DirectoryForUID(uid))
+	if err != nil {
+		return nil, err
+	}
+	expected, expectedErr := anchored.Stat(".")
+	actual, actualErr := root.Stat(".")
+	if expectedErr != nil || actualErr != nil || !os.SameFile(expected, actual) {
+		root.Close()
+		return nil, errChanged
+	}
+	return root, nil
 }
 
 func verifyDirectory(f *os.File, mode uint32) error {
