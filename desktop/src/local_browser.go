@@ -369,8 +369,7 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 			return browserResult{}, err
 		}
 		if result.URL != action.URL || result.FormID != action.FormID || result.SubmitID != action.SubmitID ||
-			!validBrowserFormID(result.SnapshotID) || !browserHTTPURL(result.ActionURL) ||
-			strings.ContainsAny(result.ActionURL, "?#") || len(result.Fields) == 0 {
+			!validBrowserFormID(result.SnapshotID) || !validBrowserFormActionURL(result.ActionURL) || len(result.Fields) == 0 {
 			return browserResult{}, errBrowserFormStale
 		}
 		values, err := suggestLocalBrowserForm(operation, request.Instruction, result.Fields)
@@ -499,6 +498,15 @@ func (b *localBrowser) run(s docxSession, request browserRequest, current func()
 	}
 	if err := checkPermission(action.Action); err != nil {
 		return browserResult{}, err
+	}
+	if action.Action == "forms" && result.Forms != nil {
+		for _, form := range *result.Forms {
+			for _, submitter := range form.Submitters {
+				if !validBrowserFormActionURL(submitter.ActionURL) {
+					return browserResult{}, errBrowserFormStale
+				}
+			}
+		}
 	}
 
 	if action.Action == "query" {

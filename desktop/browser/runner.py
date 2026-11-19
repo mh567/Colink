@@ -321,7 +321,11 @@ FORM_PAGE = r"""
         if ((url.protocol !== "http:" && url.protocol !== "https:") ||
             url.username || url.password) return null;
         const action = url.href;
-        url.search = url.hash = "";
+        url.search = new URLSearchParams(Array.from(url.searchParams, ([key, value]) => [
+            key, /(?:token|secret|password|passwd|api[_-]?key|authorization|auth|session|cookie|csrf|xsrf|signature|^code$)/i.test(key)
+                ? "[redacted]" : value,
+        ])).toString();
+        url.hash = "";
 
         const method = (attribute(node, "formmethod") ?? attribute(form, "method"))?.toLowerCase();
         const target = attribute(node, "formtarget") ?? attribute(form, "target") ?? baseTarget;

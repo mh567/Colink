@@ -171,6 +171,7 @@ func (f *browserBusinessFixture) assertPosts(t *testing.T, count int) {
 
 type browserFormTestProcess struct {
 	pageURL    string
+	actionURL  string
 	client     *http.Client
 	stale      bool
 	dropAck    bool
@@ -184,7 +185,7 @@ func (p *browserFormTestProcess) perform(ctx context.Context, action browserActi
 	case "open":
 		return browserResult{}, nil
 	case "forms":
-		payload := `{"forms":[{"id":"c9","label":"Other form","fields":[],"submitters":[{"id":"c10","label":"Discard","action_url":"https://example.test/discard","method":"post","target":"_self"}]},{"id":"c1","label":"Order","fields":[],"submitters":[{"id":"c2","label":"Apply","action_url":"` + p.pageURL + `/update","method":"post","target":"_blank"}]}]}`
+		payload := `{"forms":[{"id":"c9","label":"Other form","fields":[],"submitters":[{"id":"c10","label":"Discard","action_url":"https://example.test/discard","method":"post","target":"_self"}]},{"id":"c1","label":"Order","fields":[],"submitters":[{"id":"c2","label":"Apply","action_url":"` + p.actionURL + `","method":"post","target":"_blank"}]}]}`
 		var result browserResult
 		err := json.Unmarshal([]byte(payload), &result)
 		return result, err
@@ -192,7 +193,7 @@ func (p *browserFormTestProcess) perform(ctx context.Context, action browserActi
 		if action.FormID != "c1" || action.SubmitID != "c2" || action.URL != p.pageURL || action.TabID != sampleBrowserTab {
 			return browserResult{}, errors.New("wrong form snapshot target")
 		}
-		payload := `{"form_id":"c1","submit_id":"c2","snapshot_id":"snapshot_1","form_label":"Order","submit_label":"Apply","title":"Order page","url":"` + p.pageURL + `","action_url":"` + p.pageURL + `/update","method":"post","target":"_blank","fields":[{"id":"c3","label":"Quantity","type":"text","value":"1","options":[]},{"id":"c4","label":"Notify","type":"checkbox","value":false,"options":[]}]}`
+		payload := `{"form_id":"c1","submit_id":"c2","snapshot_id":"snapshot_1","form_label":"Order","submit_label":"Apply","title":"Order page","url":"` + p.pageURL + `","action_url":"` + p.actionURL + `","method":"post","target":"_blank","fields":[{"id":"c3","label":"Quantity","type":"text","value":"1","options":[]},{"id":"c4","label":"Notify","type":"checkbox","value":false,"options":[]}]}`
 		var result browserResult
 		err := json.Unmarshal([]byte(payload), &result)
 		return result, err
@@ -237,7 +238,11 @@ func prepareBrowserForm(t *testing.T) (*localBrowser, *browserFormTestProcess, *
 	t.Helper()
 	fixture := newBrowserBusinessFixture(t)
 	session := docxSession{Context: context.Background(), Base: fixture.server.URL, UserID: 1, DeviceID: "laptop", Locale: LocaleEN}
-	worker := &browserFormTestProcess{pageURL: fixture.server.URL + "/orders", client: fixture.server.Client()}
+	pageURL := fixture.server.URL + "/orders"
+	worker := &browserFormTestProcess{
+		pageURL: pageURL, actionURL: pageURL + "/update",
+		client: fixture.server.Client(),
+	}
 	service := newLocalBrowser(t.TempDir())
 	service.start = func(context.Context, docxSession, string) (browserProcess, error) { return worker, nil }
 	if _, err := service.run(session, browserRequest{browserAction: browserAction{Action: "open"}}, browserCurrent); err != nil {
@@ -250,12 +255,33 @@ func prepareBrowserForm(t *testing.T) (*localBrowser, *browserFormTestProcess, *
 	}
 	request.Action, request.FormID, request.SubmitID, request.Instruction = "suggest_form", "c1", "c2", "Update the order"
 	result, err := service.run(session, request, browserCurrent)
-	if err != nil || result.SnapshotID != "snapshot_1" || result.ActionURL != worker.pageURL+"/update" || result.Method != "post" || result.Target != "_blank" || result.Values["c3"] != "42" || result.Values["c4"] != true {
+	if err != nil || result.SnapshotID != "snapshot_1" || result.ActionURL != worker.actionURL || result.Method != "post" || result.Target != "_blank" || result.Values["c3"] != "42" || result.Values["c4"] != true {
 		t.Fatalf("unexpected suggestion: %+v, %v", result, err)
 	}
 	request.Action, request.Instruction, request.ID = "submit_form", "", strings.Repeat("a", 32)
 	request.SnapshotID, request.Values = result.SnapshotID, result.Values
 	return service, worker, fixture, session, request
+}
+
+func TestLocalBrowserAcceptsRedactedFormActionQuery(t *testing.T) {
+	service, worker, _, session, request := prepareBrowserForm(t)
+	defer service.close()
+	worker.actionURL += "?operation=delete&token=%5Bredacted%5D"
+	request.Action, request.Instruction = "suggest_form", "Update the order"
+	result, err := service.run(session, request, browserCurrent)
+	if err != nil || result.ActionURL != worker.actionURL {
+		t.Fatalf("safe action query did not reach confirmation: %+v, %v", result, err)
+	}
+}
+
+func TestLocalBrowserRejectsSensitiveFormActionQueryValues(t *testing.T) {
+	service, worker, _, session, request := prepareBrowserForm(t)
+	defer service.close()
+	worker.actionURL += "?operation=delete&token=private"
+	request.Action, request.FormID, request.SubmitID, request.Instruction = "forms", "", "", ""
+	if _, err := service.run(session, request, browserCurrent); !errors.Is(err, errBrowserFormStale) {
+		t.Fatalf("sensitive action query reached form selection: %v", err)
+	}
 }
 
 func browserCurrent() error { return nil }

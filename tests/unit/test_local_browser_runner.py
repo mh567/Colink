@@ -22,7 +22,7 @@ _RUNNER = Path(__file__).resolve().parents[2] / "desktop" / "browser" / "runner.
 _PNG = b"\x89PNG\r\n\x1a\nexample"
 _ORDERS = "https://intranet.test/orders"
 _SAVE_DESTINATION = {
-    "action_url": "https://intranet.test/save",
+    "action_url": "https://intranet.test/save?token=%5Bredacted%5D",
     "method": "post",
     "target": "_self",
 }
@@ -631,23 +631,25 @@ def test_form_page_exposes_redacted_effective_submit_destination(form_page_js):
 let {button, snapshot} = selectForm();
 const destination = ({action_url, method, target}) => ({action_url, method, target});
 assert.deepEqual(destination(button),
-    {action_url: "https://intranet.test/save", method: "post", target: "_self"});
+    {action_url: "https://intranet.test/save?token=%5Bredacted%5D", method: "post", target: "_self"});
 assert.deepEqual(destination(snapshot), destination(button));
 
 base.attributes.target = "base-frame";
 assert.equal(selectForm().button.target, "base-frame");
 form.attributes.target = "_blank";
 assert.equal(selectForm().button.target, "_blank");
-Object.assign(submitter.attributes, {formaction: "preview?token=private#fragment",
+Object.assign(submitter.attributes, {formaction: "preview?operation=delete&token=private#fragment",
     formmethod: "GET", formtarget: "preview"});
 ({button, snapshot} = selectForm());
 assert.deepEqual(destination(button),
-    {action_url: "https://intranet.test/team/preview", method: "get", target: "preview"});
+    {action_url: "https://intranet.test/team/preview?operation=delete&token=%5Bredacted%5D",
+        method: "get", target: "preview"});
 assert.deepEqual(destination(snapshot), destination(button));
+assert.equal(submitter.attributes.formaction, "preview?operation=delete&token=private#fragment");
 
 Object.assign(submitter.attributes, {formaction: "", formmethod: "DIALOG", formtarget: ""});
 assert.deepEqual(destination(selectForm().button),
-    {action_url: "https://intranet.test/orders", method: "dialog", target: "_self"});
+    {action_url: "https://intranet.test/orders?token=%5Bredacted%5D", method: "dialog", target: "_self"});
 """)
 
 

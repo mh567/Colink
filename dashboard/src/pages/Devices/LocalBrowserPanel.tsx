@@ -1029,9 +1029,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                     {selectedSubmitter && (
                       <Space direction="vertical" size={2}>
                         <Typography.Text style={{ overflowWrap: "anywhere" }}>
-                          {displayFormText(
-                            displayAddress(selectedSubmitter.action_url),
-                          )}
+                          {displayFormText(selectedSubmitter.action_url)}
                         </Typography.Text>
                         <Typography.Text type="secondary">
                           {displayFormText(
@@ -1098,11 +1096,9 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                           </Typography.Text>
                           <Typography.Text style={{ overflowWrap: "anywhere" }}>
                             {displayFormText(
-                              displayAddress(
-                                suggestion.action_url ||
-                                  selectedSubmitter?.action_url ||
-                                  "",
-                              ),
+                              suggestion.action_url ||
+                                selectedSubmitter?.action_url ||
+                                "",
                             )}
                           </Typography.Text>
                           <Typography.Text type="secondary">

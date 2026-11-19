@@ -261,7 +261,8 @@ describe("本人设备的本机浏览器任务", () => {
             {
               id: "submit-1",
               label: "保存订单",
-              action_url: "https://intranet.example/orders/save?token=private",
+              action_url:
+                "https://intranet.example/orders/save?operation=delete&token=%5Bredacted%5D",
               method: "post",
               target: "_blank",
             },
@@ -309,7 +310,9 @@ describe("本人设备的本机浏览器任务", () => {
     await user.paste("将数量改成 42");
     expect(suggest).toBeEnabled();
     expect(
-      panel.getByText("https://intranet.example/orders/save"),
+      panel.getByText(
+        "https://intranet.example/orders/save?operation=delete&token=%5Bredacted%5D",
+      ),
     ).toBeVisible();
     expect(panel.getByText("POST · _blank")).toBeVisible();
     expect(panel.queryByText(/token=private/)).not.toBeInTheDocument();

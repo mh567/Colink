@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -149,6 +150,29 @@ func browserHTTPURL(value string) bool {
 	parsed, err := url.ParseRequestURI(value)
 	return err == nil && parsed.Hostname() != "" && parsed.User == nil &&
 		(parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+var browserSensitiveFormQueryKey = regexp.MustCompile(`(?i)(token|secret|password|passwd|api[_-]?key|authorization|auth|session|cookie|csrf|xsrf|signature|^code$)`)
+
+func validBrowserFormActionURL(value string) bool {
+	if !browserHTTPURL(value) || strings.Contains(value, "#") {
+		return false
+	}
+	parsed, _ := url.ParseRequestURI(value)
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false
+	}
+	for key, values := range query {
+		if browserSensitiveFormQueryKey.MatchString(key) {
+			for _, value := range values {
+				if value != "" && value != "[redacted]" {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func validBrowserFormID(id string) bool {
