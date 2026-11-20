@@ -19,11 +19,14 @@ def strip_restricted_skills(site_packages: Path) -> None:
         raise ValueError(f"SITE_PACKAGES is not a directory: {site_packages}")
     if not (site_packages / "octop_harness").is_dir():
         raise ValueError(f"octop_harness installation is missing: {site_packages}")
-    metadata = [path for path in site_packages.glob("octop_harness-*.dist-info") if path.is_dir()]
+    metadata = [
+        path
+        for prefix in ("colink_harness", "octop_harness")
+        for path in site_packages.glob(f"{prefix}-*.dist-info")
+        if path.is_dir()
+    ]
     if len(metadata) != 1:
-        raise ValueError(
-            f"Expected one octop-harness dist-info, found {len(metadata)}: {site_packages}"
-        )
+        raise ValueError(f"Expected one Harness dist-info, found {len(metadata)}: {site_packages}")
     record = metadata[0] / "RECORD"
     with record.open(encoding="utf-8", newline="") as stream:
         lines = stream.readlines()

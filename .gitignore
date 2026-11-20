@@ -30,8 +30,6 @@ __pycache__/
 .eggs/
 wheels/
 *.whl
-!vendor/octop_harness-*+colink.*-py3-none-any.whl
-!vendor/octop_memory-*+colink.*-py3-none-any.whl
 pip-wheel-metadata/
 
 # Virtual environments

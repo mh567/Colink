@@ -77,7 +77,8 @@ goto :install_from_git
 :install_from_local
 for %%I in ("%ARG_SOURCE_DIR%") do set "ARG_SOURCE_DIR=%%~fI"
 echo [octop] Installing from local source: %ARG_SOURCE_DIR%
-call :install_checkout "%ARG_SOURCE_DIR%"
+call :prepare_console "%ARG_SOURCE_DIR%"
+uv pip install "%ARG_SOURCE_DIR%%EXTRAS_SUFFIX%" --python "%VENV_PYTHON%"
 if errorlevel 1 (echo [octop] ERROR: install failed & exit /b 1)
 goto :install_verify
 
@@ -87,7 +88,8 @@ if errorlevel 1 (echo [octop] ERROR: git required & exit /b 1)
 set "CLONE_DIR=%TEMP%\octop-install-%RANDOM%"
 git clone --depth 1 %OCTOP_REPO% "%CLONE_DIR%"
 if errorlevel 1 exit /b 1
-call :install_checkout "%CLONE_DIR%"
+call :prepare_console "%CLONE_DIR%"
+uv pip install "%CLONE_DIR%%EXTRAS_SUFFIX%" --python "%VENV_PYTHON%"
 set "_E=%errorlevel%"
 if exist "%CLONE_DIR%" rd /s /q "%CLONE_DIR%"
 if %_E% neq 0 exit /b 1
@@ -233,16 +235,6 @@ powershell -NoProfile -Command "Expand-Archive -Force '!_Z!' '!_D!'"
 del "!_Z!" >nul 2>&1
 set "PATH=!_D!;!PATH!"
 exit /b 0
-
-:install_checkout
-call :prepare_console "%~1"
-if exist "%~1\vendor\" goto :install_checkout_vendored
-uv pip install "%~1%EXTRAS_SUFFIX%" --python "%VENV_PYTHON%"
-exit /b %errorlevel%
-
-:install_checkout_vendored
-uv pip install "%~1%EXTRAS_SUFFIX%" --python "%VENV_PYTHON%" --find-links "%~1\vendor"
-exit /b %errorlevel%
 
 :prepare_console
 set "_RD=%~1"

@@ -206,14 +206,14 @@ assemble_one() {
   # bash 3.2 + set -u: empty array expansion is unbound — branch explicitly.
   set +e
   if [[ ${#offline_args[@]} -gt 0 ]]; then
-    (cd "$REPO_ROOT" && uv pip install "${common_args[@]}" "${offline_args[@]}" -r "$req_file")
+    uv pip install "${common_args[@]}" "${offline_args[@]}" -r "$req_file"
     status=$?
     if [[ $status -eq 0 ]]; then
       uv pip install "${common_args[@]}" "${offline_args[@]}" --no-deps "$octop_whl"
       status=$?
     fi
   else
-    (cd "$REPO_ROOT" && uv pip install "${common_args[@]}" -r "$req_file")
+    uv pip install "${common_args[@]}" -r "$req_file"
     status=$?
     if [[ $status -eq 0 ]]; then
       uv pip install "${common_args[@]}" --no-deps "$octop_whl"

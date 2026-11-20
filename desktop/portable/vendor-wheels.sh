@@ -42,18 +42,18 @@ vendor_one() {
   # Apply replacements before pip constraints: constraints cannot override an
   # incompatible frozen pin or exclude Windows ARM packages by false markers.
   pins_file="${GREEN_CACHE}/wheel-pins-${plat}.txt"
-  (cd "$REPO_ROOT" && uv pip compile "$req_file" --no-deps --python 3.12 \
-    "${extra[@]+"${extra[@]}"}" --output-file "$pins_file" >/dev/null)
+  uv pip compile "$req_file" --no-deps --python 3.12 \
+    "${extra[@]+"${extra[@]}"}" --output-file "$pins_file" >/dev/null
 
   echo "[wheels] ${plat}: building → ${wheel_dir}" >&2
   # pip is an isolated build tool, not a product dependency. Source-only packages
   # such as antlr4-python3-runtime need wheels before the disconnected install.
-  (cd "$REPO_ROOT" && uv tool run --python 3.12 --from pip==25.3 pip wheel \
+  uv tool run --python 3.12 --from pip==25.3 pip wheel \
     --wheel-dir "$wheel_dir" \
     --no-deps \
     --only-binary cryptography \
     --constraint "$pins_file" \
-    -r "$pins_file")
+    -r "$pins_file"
 
   echo "[wheels] ${plat}: done ($(find "$wheel_dir" -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ') wheels)"
 }

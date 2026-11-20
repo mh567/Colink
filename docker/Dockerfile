@@ -124,7 +124,6 @@ WORKDIR /app
 # full：桌面、本地向量、OCR。lite：只留运行所需的 browser extra。
 ARG OCTOP_IMAGE_VARIANT=full
 COPY pyproject.toml uv.lock README.md LICENSE ./
-COPY vendor/*.whl ./vendor/
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=scripts/strip_restricted_skills.py,target=/strip_restricted_skills.py \
     if [ -n "$PIP_INDEX_URL" ]; then \

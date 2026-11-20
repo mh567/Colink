@@ -214,21 +214,12 @@ function Prepare-Console {
 
 $VenvOctop = Join-Path $OctopVenv "Scripts\octop.exe"
 
-function Install-Source([string]$Checkout) {
-    $installArgs = @("--python", $VenvPython)
-    $vendorDir = Join-Path $Checkout "vendor"
-    if (Test-Path -LiteralPath $vendorDir -PathType Container) {
-        $installArgs += @("--find-links", $vendorDir)
-    }
-    Prepare-Console $Checkout
-    uv pip install "${Checkout}${ExtrasSuffix}" @installArgs
-}
-
 if ($FromSource) {
     if ($SourceDir) {
         $SourceDir = (Resolve-Path $SourceDir).Path
         Write-Info "Installing from local source: $SourceDir"
-        Install-Source $SourceDir
+        Prepare-Console $SourceDir
+        uv pip install "${SourceDir}${ExtrasSuffix}" --python $VenvPython
     } else {
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
             Stop-WithError "git required for -FromSource. Install from https://git-scm.com/"
@@ -236,7 +227,8 @@ if ($FromSource) {
         $cloneDir = Join-Path $env:TEMP "octop-install-$(Get-Random)"
         try {
             git clone --depth 1 $OctopRepo $cloneDir
-            Install-Source $cloneDir
+            Prepare-Console $cloneDir
+            uv pip install "${cloneDir}${ExtrasSuffix}" --python $VenvPython
         } finally {
             if (Test-Path $cloneDir) { Remove-Item $cloneDir -Recurse -Force -ErrorAction SilentlyContinue }
         }

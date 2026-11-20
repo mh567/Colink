@@ -157,6 +157,14 @@ func (a *App) handleDOCX(raw string) {
 		a.docx.busy = false
 		a.docx.mu.Unlock()
 		a.docx.statusMu.Unlock()
+		if latest, sessionErr := a.device.docxSession(); sessionErr == nil && latest.scope() == session.scope() && latest.Generation != session.Generation {
+			latest.Locale = session.Locale
+			if importID != "" {
+				err = nil
+			}
+			a.emitDOCX(latest, err)
+			return
+		}
 		a.emitDOCXResult(session, err, importID)
 	}()
 	a.emitDOCX(session, nil)

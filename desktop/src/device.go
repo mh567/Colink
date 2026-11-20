@@ -197,6 +197,7 @@ func (c *deviceClient) connect(token, apiPath string) {
 			}
 		}
 		if err != nil && ctx.Err() == nil {
+			cancel()
 			var remote deviceServerError
 			if errors.As(err, &remote) {
 				c.publish(generation, remote.message)

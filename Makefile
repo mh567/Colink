@@ -303,7 +303,7 @@ install install-dev:
 ifdef UV
 	uv sync
 else
-	$(PIP) install --find-links vendor -e ".[dev]"
+	$(PIP) install -e ".[dev]"
 endif
 
 .PHONY: install-tools
