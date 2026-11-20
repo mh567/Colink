@@ -28,6 +28,8 @@ def test_catalog_has_no_empty_keys_and_no_deferred_dead_keys() -> None:
         assert key == PERMISSIONS[key].key
         assert PERMISSIONS[key].label_zh and PERMISSIONS[key].label_en
     assert "acp" not in PERMISSIONS
+    assert PERMISSIONS["local_browser"].label_zh == "本机浏览器操作"
+    assert PERMISSIONS["local_browser"].label_en == "Local browser actions"
 
 
 def test_user_has_permission_admin_bypass() -> None:

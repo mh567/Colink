@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OctopUser } from "../../api/modules/auth";
@@ -91,12 +98,29 @@ function helloRequest(invoke: ReturnType<typeof startPage>["invoke"]) {
 function approveBrowserBridge(
   invoke: ReturnType<typeof startPage>["invoke"],
   operationDeadline?: boolean,
+  operations: {
+    id: string;
+    status: string;
+    created_at: string;
+    url: string;
+  }[] = [],
+  formSubmission = operationDeadline,
 ) {
   return emit("colink:browser-ready", {
     request_id: helloRequest(invoke),
     device_id: "desktop-ada",
     capability,
     operation_deadline: operationDeadline,
+    form_submission: formSubmission,
+  }).then(async () => {
+    if (!formSubmission) return;
+    const operationRequest = lastRequest(invoke);
+    expect(operationRequest.action).toBe("operations");
+    await emit("colink:browser-status", {
+      request_id: operationRequest.request_id,
+      device_id: "desktop-ada",
+      operations,
+    });
   });
 }
 
@@ -113,11 +137,25 @@ function lastRequest(invoke: ReturnType<typeof startPage>["invoke"]) {
   };
 }
 
-async function startBrowserPanel(operationDeadline?: boolean) {
+async function startBrowserPanel(
+  operationDeadline?: boolean,
+  operations: {
+    id: string;
+    status: string;
+    created_at: string;
+    url: string;
+  }[] = [],
+  formSubmission = operationDeadline,
+) {
   const { invoke, user } = startPage();
   await user.click(screen.getByRole("button", { name: "接入当前设备" }));
   await connectDevice("approved", true);
-  await approveBrowserBridge(invoke, operationDeadline);
+  await approveBrowserBridge(
+    invoke,
+    operationDeadline,
+    operations,
+    formSubmission,
+  );
   const panel = within(screen.getByRole("region", { name: "本机浏览器" }));
   const click = (name: string) =>
     user.click(panel.getByRole("button", { name }));
@@ -130,6 +168,72 @@ async function startBrowserPanel(operationDeadline?: boolean) {
   return { invoke, user, panel, click, reply };
 }
 
+async function prepareOrderSuggestion(
+  tabs: { id: string; title: string; url: string }[] = [tab],
+) {
+  const browser = await startBrowserPanel(true);
+  await browser.click("打开专用浏览器");
+  await browser.reply({ tabs, tab_id: tab.id });
+  if (tabs.length > 1) {
+    await browser.user.selectOptions(
+      browser.panel.getByRole("combobox", { name: "标签页" }),
+      tab.id,
+    );
+    await browser.reply({ tabs });
+  }
+  await browser.click("读取表单");
+  await browser.reply({
+    forms: [
+      {
+        id: "form-1",
+        label: "订单更新",
+        fields: [
+          {
+            id: "field-1",
+            label: "数量",
+            type: "text",
+            value: "1",
+            options: [],
+          },
+        ],
+        submitters: [
+          {
+            id: "submit-1",
+            label: "保存订单",
+            action_url: "https://intranet.example/orders/save",
+            method: "post",
+            target: "_self",
+          },
+        ],
+      },
+    ],
+  });
+  await browser.user.selectOptions(
+    browser.panel.getByRole("combobox", { name: "表单" }),
+    "form-1",
+  );
+  await browser.user.selectOptions(
+    browser.panel.getByRole("combobox", { name: "提交动作" }),
+    "submit-1",
+  );
+  await browser.user.click(browser.panel.getByLabelText("填写任务"));
+  await browser.user.paste("将数量改成 42");
+  await browser.click("生成填写建议");
+  await browser.reply({
+    form_id: "form-1",
+    submit_id: "submit-1",
+    snapshot_id: "snapshot-1",
+    action_url: "https://intranet.example/orders/save",
+    method: "post",
+    target: "_self",
+    fields: [
+      { id: "field-1", label: "数量", type: "text", value: "1", options: [] },
+    ],
+    values: { "field-1": "42" },
+  });
+  return browser;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   delete (window as Window & { _wails?: unknown })._wails;
@@ -137,6 +241,333 @@ afterEach(() => {
 });
 
 describe("本人设备的本机浏览器任务", () => {
+  it("旧桌面客户端未声明表单能力时不展示表单入口或查询操作", async () => {
+    const { invoke, panel, click, reply } = await startBrowserPanel(
+      true,
+      [],
+      false,
+    );
+    await click("打开专用浏览器");
+    await reply({ tabs: [tab], tab_id: tab.id });
+
+    expect(
+      panel.queryByRole("region", { name: "表单填写" }),
+    ).not.toBeInTheDocument();
+    const requests = invoke.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.startsWith(prefix))
+      .map((message) =>
+        JSON.parse(decodeURIComponent(message.slice(prefix.length))),
+      );
+    expect(requests.some((request) => request.action === "operations")).toBe(
+      false,
+    );
+  });
+
+  it("在员工选择表单和提交动作后才生成建议并预览目标和值", async () => {
+    const { invoke, panel, user, click, reply } = await startBrowserPanel(true);
+    await click("打开专用浏览器");
+    await reply({ tabs: [tab], tab_id: tab.id });
+    await click("读取表单");
+    expect(lastRequest(invoke)).toMatchObject({
+      action: "forms",
+      tab_id: tab.id,
+      url: tab.url,
+    });
+    await reply({
+      forms: [
+        {
+          id: "form-1",
+          label: "订单更新",
+          fields: [
+            {
+              id: "field-1",
+              label: "数量\u202e",
+              type: "text",
+              value: "1\u202e",
+              options: [],
+            },
+          ],
+          submitters: [
+            {
+              id: "submit-1",
+              label: "保存订单",
+              action_url:
+                "https://intranet.example/orders/save?operation=delete&token=%5Bredacted%5D",
+              method: "post",
+              target: "_blank",
+            },
+            {
+              id: "submit-3",
+              label: "删除订单",
+              action_url: "https://intranet.example/orders/delete",
+              method: "post",
+              target: "_self",
+            },
+          ],
+        },
+        {
+          id: "form-2",
+          label: "备注表单",
+          fields: [],
+          submitters: [
+            {
+              id: "submit-2",
+              label: "发送备注",
+              action_url: "https://intranet.example/comments",
+              method: "post",
+              target: "_self",
+            },
+          ],
+        },
+      ],
+    });
+
+    const form = panel.getByRole("combobox", { name: "表单" });
+    expect(
+      panel.queryByRole("button", { name: "生成填写建议" }),
+    ).not.toBeInTheDocument();
+    await user.selectOptions(form, "form-1");
+    const submitter = panel.getByRole("combobox", { name: "提交动作" });
+    expect(submitter).toHaveValue("");
+    expect(panel.getByRole("option", { name: "删除订单" })).toBeInTheDocument();
+    expect(
+      panel.queryByRole("button", { name: "生成填写建议" }),
+    ).not.toBeInTheDocument();
+    await user.selectOptions(submitter, "submit-1");
+    const suggest = panel.getByRole("button", { name: "生成填写建议" });
+    expect(suggest).toBeDisabled();
+    await user.click(panel.getByLabelText("填写任务"));
+    await user.paste("将数量改成 42");
+    expect(suggest).toBeEnabled();
+    expect(
+      panel.getByText(
+        "https://intranet.example/orders/save?operation=delete&token=%5Bredacted%5D",
+      ),
+    ).toBeVisible();
+    expect(panel.getByText("POST · _blank")).toBeVisible();
+    expect(panel.queryByText(/token=private/)).not.toBeInTheDocument();
+
+    await user.click(suggest);
+    const suggestion = lastRequest(invoke);
+    expect(suggestion).toMatchObject({
+      action: "suggest_form",
+      form_id: "form-1",
+      submit_id: "submit-1",
+      tab_id: tab.id,
+      url: tab.url,
+      instruction: "将数量改成 42",
+    });
+    await reply({
+      form_id: "form-1",
+      submit_id: "submit-1",
+      snapshot_id: "snapshot-1",
+      form_label: "订单更新",
+      submit_label: "保存订单",
+      action_url: "https://intranet.example/orders/save",
+      method: "post",
+      target: "_blank",
+      fields: [
+        {
+          id: "field-1",
+          label: "数量\u202e",
+          type: "text",
+          value: "1\u202e",
+          options: [],
+        },
+      ],
+      values: { "field-1": "42\u202e" },
+    });
+    const preview = within(panel.getByRole("region", { name: "填写建议预览" }));
+    expect(preview.getByText("订单更新")).toBeVisible();
+    expect(preview.getByText("保存订单")).toBeVisible();
+    expect(preview.getByText(/数量\\u202e/)).toBeVisible();
+    expect(preview.getByText(/1\\u202e → 42\\u202e/)).toBeVisible();
+    expect(
+      panel.getByRole("region", { name: "填写建议预览" }).textContent,
+    ).not.toContain("\u202e");
+    const submit = panel.getByRole("button", { name: "提交表单" });
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+    const submission = lastRequest(invoke);
+    expect(submission).toMatchObject({
+      action: "submit_form",
+      form_id: "form-1",
+      submit_id: "submit-1",
+      snapshot_id: "snapshot-1",
+      values: { "field-1": "42\u202e" },
+    });
+    expect(submission.request_id).not.toBe(suggestion.request_id);
+    await reply({
+      operation: {
+        id: submission.request_id,
+        status: "action_sent",
+        created_at: "2026-11-19T00:00:00Z",
+        url: "https://intranet.example",
+      },
+    });
+    expect(panel.getByRole("status")).toHaveTextContent(
+      "操作已发出，请核对业务页面结果。",
+    );
+    expect(
+      panel.queryByRole("button", { name: "提交表单" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("切换标签页后清除旧表单建议", async () => {
+    const otherTab = {
+      ...tab,
+      id: "other-tab",
+      url: "https://intranet.example/other",
+    };
+    const { invoke, panel, user } = await prepareOrderSuggestion([
+      tab,
+      otherTab,
+    ]);
+
+    await user.selectOptions(
+      panel.getByRole("combobox", { name: "标签页" }),
+      otherTab.id,
+    );
+    expect(lastRequest(invoke)).toMatchObject({
+      action: "select_tab",
+      tab_id: otherTab.id,
+    });
+    expect(
+      panel.queryByRole("region", { name: "填写建议预览" }),
+    ).not.toBeInTheDocument();
+    expect(
+      panel.queryByRole("button", { name: "提交表单" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("切换设备后清除旧设备的表单建议", async () => {
+    await prepareOrderSuggestion();
+
+    await connectDevice("approved", true, "another-approved-device");
+    expect(
+      screen.queryByRole("region", { name: "填写建议预览" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("恢复并显示待核对操作，不提供自动重放", async () => {
+    const { panel } = await startBrowserPanel(true, [
+      {
+        id: "operation-sent",
+        status: "action_sent",
+        created_at: "2026-11-19T00:00:00Z",
+        url: "https://intranet.example",
+      },
+      {
+        id: "operation-unknown",
+        status: "outcome_unknown",
+        created_at: "2026-11-19T00:01:00Z",
+        url: "https://intranet.example",
+      },
+      {
+        id: "operation-interrupted",
+        status: "interrupted",
+        created_at: "2026-11-19T00:02:00Z",
+        url: "https://intranet.example",
+      },
+    ]);
+    const status = panel.getByRole("region", { name: "表单操作状态" });
+    const statusContent = within(status);
+    expect(
+      statusContent.getByText(/操作已发出，请核对业务页面结果/),
+    ).toBeVisible();
+    expect(
+      statusContent.getAllByText(/结果待核对，请先检查业务页面/),
+    ).toHaveLength(2);
+    expect(
+      panel.queryByRole("button", { name: /重试|重新提交|再次提交/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("提交回执超时后重连读取状态，期间不重新提交", async () => {
+    const { invoke, panel } = await prepareOrderSuggestion();
+
+    vi.useFakeTimers();
+    fireEvent.click(panel.getByRole("button", { name: "提交表单" }));
+    const submission = lastRequest(invoke);
+    expect(submission.action).toBe("submit_form");
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(panel.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      panel.getByRole("region", { name: "表单操作状态" }),
+    ).toHaveTextContent("未收到提交回执，请先检查业务页面");
+    expect(
+      panel.queryByRole("button", { name: "提交表单" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(panel.getByRole("button", { name: "重试连接桌面客户端" }));
+    await approveBrowserBridge(invoke, true, [
+      {
+        id: submission.request_id,
+        status: "outcome_unknown",
+        created_at: "2026-11-19T00:00:00Z",
+        url: "https://intranet.example",
+      },
+    ]);
+    expect(
+      panel.getByRole("region", { name: "表单操作状态" }),
+    ).toHaveTextContent("结果待核对，请先检查业务页面。");
+    const submissions = invoke.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.startsWith(prefix))
+      .map((message) =>
+        JSON.parse(decodeURIComponent(message.slice(prefix.length))),
+      )
+      .filter((request) => request.action === "submit_form");
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0].request_id).toBe(submission.request_id);
+  });
+
+  it.each(["BROWSER_TIMEOUT", "BROWSER_NO_RESPONSE"])(
+    "桌面返回提交错误 %s 后提示核对并查询状态",
+    async (error) => {
+      const { invoke, panel, click, reply } = await prepareOrderSuggestion();
+      await click("提交表单");
+      expect(lastRequest(invoke).action).toBe("submit_form");
+      await reply({ error });
+
+      expect(panel.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        panel.getByRole("region", { name: "表单操作状态" }),
+      ).toHaveTextContent("未收到提交回执，请先检查业务页面");
+      await waitFor(() =>
+        expect(lastRequest(invoke).action).toBe("operations"),
+      );
+    },
+  );
+
+  it.each(["awaiting_confirmation", "submitting"])(
+    "保留未收到回执提示，直到操作进入可展示状态：%s",
+    async (status) => {
+      const { panel, click, reply, invoke } = await prepareOrderSuggestion();
+      await click("提交表单");
+      const submission = lastRequest(invoke);
+      await reply({ error: "BROWSER_TIMEOUT" });
+      await waitFor(() =>
+        expect(lastRequest(invoke).action).toBe("operations"),
+      );
+      await reply({
+        operations: [
+          {
+            id: submission.request_id,
+            status,
+            created_at: "2026-11-19T00:00:00Z",
+            url: "https://intranet.example",
+          },
+        ],
+      });
+
+      expect(
+        panel.getByRole("region", { name: "表单操作状态" }),
+      ).toHaveTextContent("未收到提交回执，请先检查业务页面");
+    },
+  );
+
   it("打开已批准设备的浏览器并提交选定页面的只读查询", async () => {
     const { invoke, user } = startPage();
     await user.click(screen.getByRole("button", { name: "接入当前设备" }));

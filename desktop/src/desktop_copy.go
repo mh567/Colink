@@ -29,11 +29,18 @@ const (
 	copyTraySettings           = "tray.settings"
 	copyTrayShowMain           = "tray.show_main"
 	copyTrayQuit               = "tray.quit"
+	copyBrowserConfirmTitle    = "browser.confirm_title"
+	copyBrowserConfirmMessage  = "browser.confirm_message"
+	copyBrowserConfirmChange   = "browser.confirm_change"
+	copyBrowserConfirmYes      = "browser.confirm_yes"
+	copyBrowserConfirmNo       = "browser.confirm_no"
+	copyBrowserChecked         = "browser.checked"
+	copyBrowserUnchecked       = "browser.unchecked"
 )
 
 const (
-	copyBrowserConfirmTitle         = "browser.confirmtitle"
-	copyBrowserConfirmMessage       = "browser.confirmmessage"
+	copyBrowserTransferConfirmTitle   = "browser.confirmtitle"
+	copyBrowserTransferConfirmMessage = "browser.confirmmessage"
 	copyBrowserUpload               = "browser.upload"
 	copyBrowserUploadScope          = "browser.uploadscope"
 	copyBrowserDownload             = "browser.download"
@@ -73,6 +80,13 @@ const (
 
 var desktopCopy = map[Locale]map[string]string{
 	LocaleEN: {
+		copyBrowserConfirmTitle:    "Confirm form submission",
+		copyBrowserConfirmMessage:  "Page: %s (%s)\nSubmit to: %s\nMethod: %s\nOpen in: %s\nForm: %s\nSubmit action: %s\n%s",
+		copyBrowserConfirmChange:   "%s: %s → %s",
+		copyBrowserConfirmYes:      "Submit",
+		copyBrowserConfirmNo:       "Cancel",
+		copyBrowserChecked:         "Checked",
+		copyBrowserUnchecked:       "Unchecked",
 		copyStatusConnecting:       "Connecting to Octop…",
 		copyStatusCheckingRuntime:  "Checking the runtime…",
 		copyStatusStartingService:  "Starting the Octop service…",
@@ -100,8 +114,8 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTrayShowMain:           "Show Octop",
 		copyTrayQuit:               "Quit",
 
-		copyBrowserConfirmTitle:         "Confirm browser action",
-		copyBrowserConfirmMessage:       "Action: %s\nPage, target and file (join wrapped lines without spaces):\n%s\nScope: %s",
+		copyBrowserTransferConfirmTitle:   "Confirm browser action",
+		copyBrowserTransferConfirmMessage: "Action: %s\nPage, target and file (join wrapped lines without spaces):\n%s\nScope: %s",
 		copyBrowserUpload:               "Select web attachment",
 		copyBrowserUploadScope:          "Give the file to this page. The website may upload it or modify business data immediately.",
 		copyBrowserDownload:             "Request web download",
@@ -139,6 +153,13 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileUnsupported:             "Use a supported desktop client for this file operation.",
 	},
 	LocaleZH: {
+		copyBrowserConfirmTitle:    "确认提交表单",
+		copyBrowserConfirmMessage:  "页面：%s（%s）\n提交地址：%s\n请求方法：%s\n打开位置：%s\n表单：%s\n提交动作：%s\n%s",
+		copyBrowserConfirmChange:   "%s：%s → %s",
+		copyBrowserConfirmYes:      "提交",
+		copyBrowserConfirmNo:       "取消",
+		copyBrowserChecked:         "已勾选",
+		copyBrowserUnchecked:       "未勾选",
 		copyStatusConnecting:       "正在连接 Octop…",
 		copyStatusCheckingRuntime:  "正在检查运行环境…",
 		copyStatusStartingService:  "正在启动 Octop 服务…",
@@ -166,8 +187,8 @@ var desktopCopy = map[Locale]map[string]string{
 		copyTrayShowMain:           "显示 Octop",
 		copyTrayQuit:               "退出",
 
-		copyBrowserConfirmTitle:         "确认网页操作",
-		copyBrowserConfirmMessage:       "动作：%s\n页面、目标和文件（折行直接拼接）：\n%s\n影响范围：%s",
+		copyBrowserTransferConfirmTitle:   "确认网页操作",
+		copyBrowserTransferConfirmMessage: "动作：%s\n页面、目标和文件（折行直接拼接）：\n%s\n影响范围：%s",
 		copyBrowserUpload:               "选择网页附件",
 		copyBrowserUploadScope:          "将文件交给此网页。网页可能立即上传文件或修改业务数据。",
 		copyBrowserDownload:             "发起网页下载",

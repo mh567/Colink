@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -130,7 +132,7 @@ func (a *App) handleBrowserMessage(window application.Window, message string, in
 		if validDestructiveID(hello) {
 			a.emitBrowserEvent(session, origin, "colink:browser-ready", map[string]any{
 				"request_id": hello, "device_id": session.DeviceID, "capability": a.browserCapability(session),
-				"operation_deadline": true,
+				"operation_deadline": true, "form_submission": true,
 			})
 		}
 		return
@@ -148,6 +150,41 @@ func browserHTTPURL(value string) bool {
 	parsed, err := url.ParseRequestURI(value)
 	return err == nil && parsed.Hostname() != "" && parsed.User == nil &&
 		(parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+var browserSensitiveFormQueryKey = regexp.MustCompile(`(?i)(token|secret|password|passwd|api[_-]?key|authorization|authentication|(^|[_-])auth($|[_-])|session|cookie|csrf|xsrf|signature|(^|[_-])code($|[_-]))`)
+
+func validBrowserFormActionURL(value string) bool {
+	if !browserHTTPURL(value) || strings.Contains(value, "#") {
+		return false
+	}
+	parsed, _ := url.ParseRequestURI(value)
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false
+	}
+	for key, values := range query {
+		if browserSensitiveFormQueryKey.MatchString(key) {
+			for _, value := range values {
+				if value != "" && value != "[redacted]" {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func validBrowserFormID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func parseBrowserRequest(raw string) (browserRequest, error) {
@@ -174,6 +211,13 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 			return request, invalid
 		}
 	}
+	selected := request.FormID != "" || request.SubmitID != ""
+	if (selected && request.Action != "suggest_form" && request.Action != "submit_form") ||
+		((request.SnapshotID != "" || request.Values != nil) && request.Action != "submit_form") {
+		return request, invalid
+	}
+	page := request.TabID != "" && request.URL != ""
+	instruction := strings.TrimSpace(request.Instruction) != "" && utf8.RuneCountInString(request.Instruction) <= 8000
 	if request.FilePath != "" || request.DownloadPath != "" {
 		return request, invalid
 	}
@@ -182,7 +226,7 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 		if request.TabID == "" && request.Instruction == "" {
 			return request, nil
 		}
-	case "list", "close":
+	case "list", "close", "operations":
 		if request.TabID == "" && request.URL == "" && request.Instruction == "" {
 			return request, nil
 		}
@@ -191,14 +235,33 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 			return request, nil
 		}
 	case "query":
-		if request.TabID != "" && request.URL != "" && strings.TrimSpace(request.Instruction) != "" &&
-			utf8.RuneCountInString(request.Instruction) <= 8000 {
+		if page && instruction {
 			return request, nil
 		}
-	case "capture":
-		if request.TabID != "" && request.URL != "" && request.Instruction == "" {
+	case "capture", "forms":
+		if page && request.Instruction == "" {
 			return request, nil
 		}
+	case "suggest_form":
+		if page && instruction && validBrowserFormID(request.FormID) && validBrowserFormID(request.SubmitID) {
+			return request, nil
+		}
+	case "submit_form":
+		if !page || request.Instruction != "" || !validBrowserFormID(request.FormID) ||
+			!validBrowserFormID(request.SubmitID) || !validBrowserFormID(request.SnapshotID) || len(request.Values) == 0 {
+			return request, invalid
+		}
+		for id, value := range request.Values {
+			if !validBrowserFormID(id) {
+				return request, invalid
+			}
+			switch value.(type) {
+			case string, bool:
+			default:
+				return request, invalid
+			}
+		}
+		return request, nil
 	case "upload":
 		if request.DownloadURL == "" && request.TabID != "" && request.URL != "" && request.GrantID != "" && request.File != "" &&
 			request.Instruction == "" && validateBrowserFilename(request.File) == nil {
@@ -220,6 +283,57 @@ func parseBrowserRequest(raw string) (browserRequest, error) {
 		}
 	}
 	return request, invalid
+}
+
+func browserSubmitConfirmation(locale Locale, snapshot browserResult, values map[string]any) string {
+	displayValue := func(value any) string {
+		if text, ok := value.(string); ok {
+			return strconv.Quote(text)
+		}
+		if value == true {
+			return desktopText(locale, copyBrowserChecked)
+		}
+		return desktopText(locale, copyBrowserUnchecked)
+	}
+	changes := make([]string, 0, len(values))
+	for _, field := range snapshot.Fields {
+		if value, ok := values[field.ID]; ok {
+			changes = append(changes, desktopText(locale, copyBrowserConfirmChange,
+				strconv.Quote(field.Label), displayValue(field.Value), displayValue(value)))
+		}
+	}
+	return desktopText(locale, copyBrowserConfirmMessage, strconv.Quote(snapshot.Title), strconv.Quote(snapshot.URL),
+		strconv.Quote(snapshot.ActionURL), strconv.Quote(strings.ToUpper(snapshot.Method)), strconv.Quote(snapshot.Target),
+		strconv.Quote(snapshot.FormLabel), strconv.Quote(snapshot.SubmitLabel), strings.Join(changes, "\n"))
+}
+
+func (a *App) confirmLocalBrowserSubmit(ctx context.Context, locale Locale, message string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if a.app == nil || a.window == nil {
+		return false, errBrowserService
+	}
+	answer := make(chan bool, 1)
+	dialog := a.app.Dialog.Question().
+		SetTitle(desktopText(locale, copyBrowserConfirmTitle)).
+		SetMessage(message).
+		AttachToWindow(a.window)
+	approve, cancel := desktopText(locale, copyBrowserConfirmYes), desktopText(locale, copyBrowserConfirmNo)
+	if runtime.GOOS == "windows" {
+		// Wails maps these labels to the standard Windows MessageBox responses.
+		approve, cancel = "Yes", "No"
+	}
+	dialog.AddButton(approve).OnClick(func() { answer <- true })
+	no := dialog.AddButton(cancel).OnClick(func() { answer <- false })
+	dialog.SetDefaultButton(no).SetCancelButton(no)
+	dialog.Show()
+	select {
+	case approved := <-answer:
+		return approved, ctx.Err()
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
 }
 
 func (a *App) handleLocalBrowser(session docxSession, origin string, request browserRequest, err error) {

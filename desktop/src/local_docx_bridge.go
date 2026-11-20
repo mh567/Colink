@@ -308,10 +308,10 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 	case "browser_overwrite":
 		action, scope = copyFileOverwrite, copyBrowserOverwriteScope
 	case "browser_upload":
-		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		title, message = copyBrowserTransferConfirmTitle, copyBrowserTransferConfirmMessage
 		action, scope = copyBrowserUpload, copyBrowserUploadScope
 	case "browser_download":
-		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		title, message = copyBrowserTransferConfirmTitle, copyBrowserTransferConfirmMessage
 		action, scope = copyBrowserDownload, copyBrowserDownloadScope
 	default:
 		return false, fileopsCopyError(copyFileInvalidIntent)
