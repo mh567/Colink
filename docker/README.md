@@ -12,6 +12,7 @@ This directory contains the Docker build and deployment assets for Octop.
 | `../.dockerignore` | Build context ignore rules (applies to both Podman and BuildKit) |
 | `docker_build.sh` | Build image from source (BuildKit cache enabled by default) |
 | `docker-compose.yml` | One-command local / self-hosted deployment |
+| `docker-compose.offline.yml` | Dual-arch (x86_64 / ARM64) offline container compose with explicit resource limits and persistence |
 | `docker-compose.cn.yml` | Same stack, pulls `ghcr.nju.edu.cn/tencentcloud/octop:latest` (no local build) |
 | `docker-compose.postgres.yml` | PostgreSQL (+ pgvector) for dual-backend dev/tests |
 | `postgres/init-vector.sql` | Instance-level `CREATE EXTENSION vector` (initdb.d; **not** Octop migrations) |
@@ -19,7 +20,16 @@ This directory contains the Docker build and deployment assets for Octop.
 
 ### Quick start
 
-**Option 1: Compose (recommended)**
+**Option 1: Offline container deployment (recommended for air-gapped / production)**
+
+Follow the [offline deployment guide](../docs/T22-双架构服务端离线容器部署.md) to verify and load the archive for your host architecture. Example for ARM64:
+
+```bash
+docker load -i octop-server-1.0.3b3-arm64.tar.gz
+OCTOP_IMAGE=octop:1.0.3b3-lite-arm64 docker compose -f docker/docker-compose.offline.yml up --wait
+```
+
+**Option 2: Compose with local build (development)**
 
 From the repository root:
 
@@ -31,7 +41,7 @@ Open `http://localhost:8088`. A valid `OCTOP_DEFAULT_PASSWORD` (≥8 characters 
 
 Compose sets the open-file limit to 65535 for multi-agent workloads. Server startup also raises the soft limit up to 65535 within the inherited hard limit and logs the effective limits. Recreate existing containers to apply changed Compose limits; a restart alone does not change their hard limit.
 
-**Option 2: Build script**
+**Option 3: Build script**
 
 ```bash
 bash docker/docker_build.sh
