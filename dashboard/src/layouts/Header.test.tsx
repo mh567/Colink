@@ -1,8 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+const { setPreference } = vi.hoisted(() => ({ setPreference: vi.fn() }));
+
 vi.mock("../context/ThemeContext", () => ({
-  useTheme: () => ({ isDark: false }),
+  useTheme: () => ({ isDark: false, preference: "light", setPreference }),
 }));
 
 vi.mock("../components/PwaInstallPrompt", () => ({
@@ -34,8 +36,12 @@ describe("Header", () => {
     expect(header.style.WebkitBackdropFilter).toBe("none");
   });
 
-  it("renders nothing on desktop", () => {
-    const { container } = render(<Header isMobile={false} />);
-    expect(container).toBeEmptyDOMElement();
+  it("exposes the current theme and switches to dark from the desktop header", () => {
+    render(<Header isMobile={false} />);
+    expect(
+      screen.getByRole("button", { name: "header.themeLight" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "header.themeDark" }));
+    expect(setPreference).toHaveBeenCalledWith("dark");
   });
 });

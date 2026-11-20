@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+<title id="title">Colink 应用图标</title>
+<rect width="256" height="256" rx="54" fill="#345F90"/>
+<g fill="#FFFFFF" transform="translate(30.72 30.72) scale(.76)">
+<path d="M192.3 58.7 A98 98 0 1 0 192.3 197.3 L166.84 171.84 A62 62 0 1 1 166.84 84.16 Z"/>
+<path d="M203 79.5 A56 56 0 0 1 203 176.5 L187 148.78 A24 24 0 0 0 187 107.22 Z"/>
+</g>
+</svg>

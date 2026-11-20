@@ -295,6 +295,14 @@ export default function KnowledgeBasesPage() {
     loadDocsViewMode(),
   );
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [libraryScope, setLibraryScope] = useState<
+    "all" | "shared" | "personal"
+  >("all");
+  const listedBases = bases.filter(
+    (base) =>
+      libraryScope === "all" ||
+      (libraryScope === "shared" ? base.shared : !base.shared),
+  );
   const [selected, setSelected] = useState<KnowledgeBase | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selected?.id ?? null;
@@ -407,7 +415,10 @@ export default function KnowledgeBasesPage() {
   const previewableDocs = useMemo(
     () =>
       documents.filter(
-        (document) => !document.is_dir && canPreviewKnowledgeDocument(document),
+        (document) =>
+          !document.is_dir &&
+          document.status !== "withdrawn" &&
+          canPreviewKnowledgeDocument(document),
       ),
     [documents],
   );
@@ -611,6 +622,18 @@ export default function KnowledgeBasesPage() {
     }
     closePreview();
   }, [closePreview, previewMaximized]);
+
+  useEffect(() => {
+    if (
+      previewDocId &&
+      (!selected ||
+        !documents.some(
+          (document) =>
+            document.id === previewDocId && document.status !== "withdrawn",
+        ))
+    )
+      closePreview();
+  }, [previewDocId, documents, selected, closePreview]);
 
   /**
    * Native fullscreen on the document content area (viewer toolbar + PDF /
@@ -1602,7 +1625,7 @@ export default function KnowledgeBasesPage() {
     document: KnowledgeDocument,
     mode: "file" | "chunks" = "file",
   ) => {
-    if (!selected || document.is_dir) return;
+    if (!selected || document.is_dir || document.status === "withdrawn") return;
     const filePreview = canPreviewKnowledgeDocument(document);
     const chunkPreview = (document.chunk_count ?? 0) > 0;
     if (mode === "file" && !filePreview) return;
@@ -1873,6 +1896,29 @@ export default function KnowledgeBasesPage() {
   };
 
   const renderDocumentActions = (document: KnowledgeDocument) => {
+    if (document.status === "withdrawn") {
+      return (
+        <span className={styles.docCardActions}>
+          <Typography.Text type="secondary">
+            {t("knowledgeBases.originalUnavailable")}
+          </Typography.Text>
+          {canWriteSelected && (
+            <Popconfirm
+              title={t("knowledgeBases.deleteDocumentConfirm")}
+              onConfirm={() => void deleteDocument(document.id)}
+            >
+              <Button
+                type="text"
+                danger
+                size="small"
+                icon={<Trash2 size={14} />}
+                aria-label={t("common.delete")}
+              />
+            </Popconfirm>
+          )}
+        </span>
+      );
+    }
     const canPreview = canPreviewKnowledgeDocument(document);
     const previewBtn = (
       <Button
@@ -1995,7 +2041,9 @@ export default function KnowledgeBasesPage() {
           >
             {name}
           </span>
-          {canWriteSelected && !document.is_dir ? (
+          {canWriteSelected &&
+          !document.is_dir &&
+          document.status !== "withdrawn" ? (
             <Tooltip title={t("knowledgeBases.renameFile")}>
               <button
                 type="button"
@@ -2171,6 +2219,38 @@ export default function KnowledgeBasesPage() {
                   />
                 </Tooltip>
               </div>
+              <Segmented<"all" | "shared" | "personal">
+                className={styles.libraryScope}
+                aria-label={t("knowledgeBases.libraryScope")}
+                size="small"
+                value={libraryScope}
+                onChange={(scope) => {
+                  setLibraryScope(scope);
+                  if (
+                    scope !== "all" &&
+                    selected &&
+                    selected.shared !== (scope === "shared")
+                  ) {
+                    const next = bases.find(
+                      (base) => base.shared === (scope === "shared"),
+                    );
+                    if (next) selectBase(next);
+                    else {
+                      setSelected(null);
+                      setDocuments([]);
+                      closePreview();
+                    }
+                  }
+                }}
+                options={[
+                  { value: "all", label: t("knowledgeBases.allLibraries") },
+                  {
+                    value: "personal",
+                    label: t("knowledgeBases.personalLibrary"),
+                  },
+                  { value: "shared", label: t("knowledgeBases.sharedLibrary") },
+                ]}
+              />
               {loading ? (
                 <div className={styles.centered}>
                   <Spin />
@@ -2179,7 +2259,7 @@ export default function KnowledgeBasesPage() {
                 <List
                   className={styles.list}
                   split={false}
-                  dataSource={bases}
+                  dataSource={listedBases}
                   locale={{
                     emptyText: (
                       <Empty
@@ -2191,6 +2271,16 @@ export default function KnowledgeBasesPage() {
                   renderItem={(base) => (
                     <List.Item
                       className={styles.listRow}
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (
+                          event.target !== event.currentTarget ||
+                          (event.key !== "Enter" && event.key !== " ")
+                        )
+                          return;
+                        event.preventDefault();
+                        selectBase(base);
+                      }}
                       onClick={() => selectBase(base)}
                     >
                       <div
@@ -2429,6 +2519,13 @@ export default function KnowledgeBasesPage() {
                           );
                         })}
                       </nav>
+                      <Tag>
+                        {t(
+                          selected.shared
+                            ? "knowledgeBases.sharedLibrary"
+                            : "knowledgeBases.personalLibrary",
+                        )}
+                      </Tag>
                     </div>
                     <div className={skillStyles.gridToolbarRight}>
                       <Segmented
@@ -2814,7 +2911,8 @@ export default function KnowledgeBasesPage() {
                               key: "chunk_count",
                               width: 80,
                               render: (chunkCount: number, document) =>
-                                document.is_dir ? (
+                                document.is_dir ||
+                                document.status === "withdrawn" ? (
                                   "—"
                                 ) : (
                                   <button

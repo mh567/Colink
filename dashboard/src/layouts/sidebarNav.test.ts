@@ -15,6 +15,16 @@ const adminUser = {
 } as OctopUser;
 
 describe("sidebarNav", () => {
+  it("puts the work tools before settings, with their existing workflow destinations", () => {
+    const [work] = buildNavSections(adminUser);
+    expect(work.items.slice(0, 5).map(({ key, path }) => [key, path])).toEqual([
+      ["chat", "/chat"],
+      ["local-tasks", "/devices/tasks"],
+      ["files", "/files"],
+      ["knowledge-bases", "/knowledge-bases"],
+      ["experts", "/experts"],
+    ]);
+  });
   it("keeps devices visible for a signed-in user without module permissions", () => {
     const sections = buildNavSections({
       ...adminUser,

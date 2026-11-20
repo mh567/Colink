@@ -61,6 +61,8 @@ import { octopThreadsApi } from "../../api/modules/octopThreads";
 import type { TokenUsage } from "../../api/types";
 import type { ChatAttachment } from "./hooks/useChat";
 import MessageList from "./components/MessageList";
+import { collectTurnKnowledgeCitations } from "../../utils/collectTurnKnowledgeCitations";
+import { KnowledgeCitationStatusProvider } from "./components/KnowledgeCitationStatusContext";
 import ChatInput, { type ChatInputHandle } from "./components/ChatInput";
 import WelcomeScreen from "./components/WelcomeScreen";
 import AgentNotReadyScreen from "./components/AgentNotReadyScreen";
@@ -432,6 +434,18 @@ function ChatPageInner() {
     closeTab: closeDockTab,
     setActiveTab: setDockActiveTab,
   } = useChatDockPanel(isMobile, resolvedAgentId);
+
+  const filesOpenedAt = useRef<string>();
+  useEffect(() => {
+    if (
+      !resolvedAgentId ||
+      filesOpenedAt.current === location.key ||
+      !(location.state as { openFiles?: boolean } | null)?.openFiles
+    )
+      return;
+    filesOpenedAt.current = location.key;
+    openFileList();
+  }, [location.key, location.state, openFileList, resolvedAgentId]);
 
   const chromeCheckInFlightRef = useRef(false);
   const bridgeConnectionId =
@@ -1363,7 +1377,23 @@ function ChatPageInner() {
     />
   );
 
-  return (
+  const citationRefsKey = useMemo(() => {
+    const citations = [
+      ...collectTurnKnowledgeCitations(messages),
+      ...openTabs.flatMap((tab) =>
+        tab.kind === "knowledge" ? [tab.citation] : [],
+      ),
+    ];
+    const refs = new Map(
+      citations.map(({ kbId, docId }) => [
+        JSON.stringify([kbId, docId]),
+        { kb_id: kbId, doc_id: docId },
+      ]),
+    );
+    return JSON.stringify([...refs.values()]);
+  }, [messages, openTabs]);
+
+  const workspace = (
     <ChatFilePreviewProvider
       openFilePreview={openFileAt}
       openKnowledgeCitation={openKnowledgeCitation}
@@ -1941,5 +1971,10 @@ function ChatPageInner() {
         </div>
       </ChatToolDockProvider>
     </ChatFilePreviewProvider>
+  );
+  return (
+    <KnowledgeCitationStatusProvider refsKey={citationRefsKey}>
+      {workspace}
+    </KnowledgeCitationStatusProvider>
   );
 }

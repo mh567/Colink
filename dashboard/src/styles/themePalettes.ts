@@ -1,6 +1,7 @@
 /** Brand palettes — orthogonal to light/dark mode (`data-theme`). */
 
 export type ThemePalette =
+  | "fog"
   | "rose"
   | "tech"
   | "indigo"
@@ -12,6 +13,7 @@ export type ThemePalette =
   | "custom";
 
 export const VALID_PALETTES: ThemePalette[] = [
+  "fog",
   "rose",
   "tech",
   "indigo",
@@ -25,7 +27,42 @@ export const VALID_PALETTES: ThemePalette[] = [
 /** Curated palettes only — "custom" is handled separately via a hex value. */
 export const CURATED_PALETTES: ThemePalette[] = [...VALID_PALETTES];
 
-export const DEFAULT_PALETTE: ThemePalette = "rose";
+export const DEFAULT_PALETTE: ThemePalette = "fog";
+export const FOG_COLORS = {
+  light: {
+    app: "#FCFDFF",
+    sidebar: "#EDF2F9",
+    top: "#F8FAFF",
+    surface: "#FFFFFF",
+    panel: "#E8EEF6",
+    text: "#243C59",
+    muted: "#526881",
+    primary: "#345F90",
+    onPrimary: "#FFFFFF",
+    selected: "#DFEAFA",
+    onSelected: "#2D5680",
+    success: "#3F725F",
+    successBg: "#E8F3ED",
+    border: "#D9E2EE",
+  },
+  dark: {
+    app: "#1A2B40",
+    sidebar: "#15253A",
+    top: "#1D3048",
+    surface: "#233950",
+    panel: "#14263B",
+    text: "#E3EDFA",
+    muted: "#A5B9D2",
+    primary: "#A6C6EE",
+    onPrimary: "#233E61",
+    selected: "#2A4B6E",
+    onSelected: "#BED8F5",
+    success: "#A8D1BD",
+    successBg: "#2C4948",
+    border: "#3C5470",
+  },
+};
+
 export const DEFAULT_CUSTOM_COLOR = "#4B74FA";
 
 /** True when the value is one of the curated palette keys (not "custom"/hex). */
@@ -44,6 +81,7 @@ export const PALETTE_STORAGE_KEY = LEGACY_PALETTE_STORAGE_KEY;
 
 /** Swatch color shown in the palette picker (light brand). */
 export const PALETTE_SWATCH: Record<ThemePalette, string> = {
+  fog: FOG_COLORS.light.primary,
   rose: "#E85D75",
   tech: "#4B74FA",
   indigo: "#6366F1",
@@ -74,6 +112,24 @@ export const ANTD_BRAND_TOKENS: Record<
   Exclude<ThemePalette, "custom">,
   { light: AntdBrandTokens; dark: AntdBrandTokens }
 > = {
+  fog: {
+    light: {
+      colorPrimary: FOG_COLORS.light.primary,
+      colorPrimaryHover: "#2D5680",
+      colorPrimaryActive: "#233E61",
+      colorLink: FOG_COLORS.light.primary,
+      colorPrimaryBg: FOG_COLORS.light.selected,
+      colorPrimaryText: FOG_COLORS.light.onSelected,
+    },
+    dark: {
+      colorPrimary: FOG_COLORS.dark.primary,
+      colorPrimaryHover: "#BED8F5",
+      colorPrimaryActive: "#94B9E5",
+      colorLink: FOG_COLORS.dark.primary,
+      colorPrimaryBg: FOG_COLORS.dark.selected,
+      colorPrimaryText: FOG_COLORS.dark.onSelected,
+    },
+  },
   rose: {
     light: {
       colorPrimary: "#E85D75",

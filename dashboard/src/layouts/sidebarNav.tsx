@@ -3,6 +3,8 @@ import {
   Monitor,
   MessageSquareText,
   Timer,
+  ListTodo,
+  Folder,
   SlidersHorizontal,
   Waypoints,
   Link2,
@@ -66,6 +68,8 @@ export interface NavSection {
 /** Every nav item key the sidebar can show. Keep in sync with `SIDEBAR_NAV_KEYS` in `octop.infra.users.preferences`. */
 export const SIDEBAR_NAV_KEYS = [
   "chat",
+  "local-tasks",
+  "files",
   "experts",
   "tasks",
   "token-usage",
@@ -128,7 +132,6 @@ export const SIDEBAR_GROUPED_NAV_KEYS = [
   "channels",
   "connectors",
   "skill-packages",
-  "knowledge-bases",
   "bridge",
   "workbench",
   "remote-desktop",
@@ -160,6 +163,30 @@ export function buildNavSections(
       labelKey: "nav.chat",
     },
   ];
+  if (user) {
+    topItems.push(
+      {
+        key: "local-tasks",
+        path: "/devices/tasks",
+        icon: <ListTodo size={iconSize} strokeWidth={iconStroke} />,
+        labelKey: "nav.localTasks",
+      },
+      {
+        key: "files",
+        path: "/files",
+        icon: <Folder size={iconSize} strokeWidth={iconStroke} />,
+        labelKey: "nav.files",
+      },
+    );
+  }
+  if (navAllowed(user, "knowledge-bases")) {
+    topItems.push({
+      key: "knowledge-bases",
+      path: "/knowledge-bases",
+      icon: <Database size={iconSize} strokeWidth={iconStroke} />,
+      labelKey: "nav.knowledgeBases",
+    });
+  }
   if (navAllowed(user, "experts")) {
     topItems.push({
       key: "experts",
@@ -225,14 +252,6 @@ export function buildNavSections(
       path: "/skill-packages",
       icon: <Package size={iconSize} strokeWidth={iconStroke} />,
       labelKey: "nav.skillPackages",
-    });
-  }
-  if (navAllowed(user, "knowledge-bases")) {
-    settingsItems.push({
-      key: "knowledge-bases",
-      path: "/knowledge-bases",
-      icon: <Database size={iconSize} strokeWidth={iconStroke} />,
-      labelKey: "nav.knowledgeBases",
     });
   }
   if (navAllowed(user, "bridge")) {

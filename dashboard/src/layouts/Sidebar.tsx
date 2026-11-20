@@ -5,7 +5,7 @@ import type { TFunction } from "i18next";
 import AvatarDropdown from "../components/AvatarDropdown";
 import AppVersionBadge from "../components/AppVersionBadge";
 import CurrentVersionBadge from "../components/CurrentVersionBadge";
-import { ArrowRightLeft, ChevronDown, X } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, Plus, X } from "lucide-react";
 import cx from "classnames";
 import { useTheme } from "../context/ThemeContext";
 import { useLayoutMode } from "../context/LayoutModeContext";
@@ -174,6 +174,7 @@ function NavItemButton({
       <button
         type="button"
         className={styles.navItemMain}
+        aria-current={active ? "page" : undefined}
         onClick={() => onNavigate(item.path)}
         style={{
           color: active
@@ -443,8 +444,8 @@ export default function Sidebar({
 
   const isRailCollapsed = collapsed && !isMobile;
   const wordmarkSrc = isDark
-    ? publicUrl("logo_horizontal_white.png")
-    : publicUrl("logo_horizontal_dark.png");
+    ? publicUrl("logo_horizontal_white.svg")
+    : publicUrl("logo_horizontal_dark.svg");
 
   const selectMinimalPane = useCallback(
     (pane: MinimalNavPane, opts?: { expand?: boolean }) => {
@@ -472,6 +473,18 @@ export default function Sidebar({
   }, [isMinimal, selectMinimalPane]);
 
   const handleNavigate = (path: string) => {
+    if (path === "/files" && onChatPath) {
+      const { pathname, search, hash, state } = location;
+      navigate(
+        { pathname, search, hash },
+        {
+          replace: true,
+          state: { ...state, openFiles: true },
+        },
+      );
+      if (isMobile) onToggle();
+      return;
+    }
     // When navigating to /chat, preserve the current chatId in the URL so the
     // Chat component is not remounted (key stays the same) and the user stays
     // on their most recent conversation instead of seeing a blank welcome screen.
@@ -512,10 +525,10 @@ export default function Sidebar({
   const brandInner = (
     <>
       <img
-        src={isRailCollapsed ? "/pwa-192.png" : wordmarkSrc}
-        alt="Octop"
+        src={isRailCollapsed ? publicUrl("colink-app-icon.svg") : wordmarkSrc}
+        alt="Colink"
         style={{
-          height: isRailCollapsed ? 32 : isMobile ? 38 : 36,
+          height: isRailCollapsed ? 30 : 28,
           width: isRailCollapsed ? 32 : "auto",
           maxWidth: isRailCollapsed ? 32 : isMobile ? 190 : 160,
           objectFit: "contain",
@@ -710,6 +723,7 @@ export default function Sidebar({
           zIndex: 100,
           display: "flex",
           flexDirection: "column",
+          visibility: collapsed ? "hidden" : "visible",
           transform: collapsed ? "translateX(-100%)" : "translateX(0)",
           transition: "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
           boxShadow: collapsed ? "none" : "4px 0 20px rgba(0,0,0,0.10)",
@@ -771,6 +785,14 @@ export default function Sidebar({
             flexDirection: "column",
           }}
         >
+          <button
+            type="button"
+            className={styles.newTask}
+            onClick={() => handleNavigate("/devices/tasks")}
+          >
+            <Plus size={16} />
+            {t("nav.newTask")}
+          </button>
           {navScrollBody}
         </div>
 
@@ -812,7 +834,8 @@ export default function Sidebar({
           alignItems: "center",
           gap: 6,
           minWidth: 0,
-          padding: isRailCollapsed ? "12px 0" : "14px 14px 10px",
+          minHeight: "var(--fn-header-height)",
+          padding: isRailCollapsed ? "0" : "0 14px",
           justifyContent: isRailCollapsed ? "center" : "flex-start",
           flexShrink: 0,
         }}
@@ -830,6 +853,16 @@ export default function Sidebar({
           flexDirection: "column",
         }}
       >
+        <button
+          type="button"
+          className={styles.newTask}
+          aria-label={t("nav.newTask")}
+          title={t("nav.newTask")}
+          onClick={() => handleNavigate("/devices/tasks")}
+        >
+          <Plus size={16} />
+          {!isRailCollapsed && t("nav.newTask")}
+        </button>
         {navScrollBody}
       </div>
 

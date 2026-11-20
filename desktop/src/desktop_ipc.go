@@ -20,7 +20,11 @@ type desktopIPCMessage struct {
 	Args   []json.RawMessage `json:"args"`
 }
 
-func (a *App) handleRawMessage(window application.Window, message string, _ *application.OriginInfo) {
+func (a *App) handleRawMessage(window application.Window, message string, info *application.OriginInfo) {
+	if raw, ok := strings.CutPrefix(message, artifactPreviewPrefix); ok {
+		a.handleArtifactPreview(window, raw, info)
+		return
+	}
 	if !strings.HasPrefix(message, desktopIPCPrefix) {
 		return
 	}

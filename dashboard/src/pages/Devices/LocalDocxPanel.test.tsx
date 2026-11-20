@@ -923,3 +923,48 @@ it("tells the employee that a revoked device needs administrator approval", asyn
   ).toBeInTheDocument();
   expect(screen.queryByText(/在上方重新接入/)).not.toBeInTheDocument();
 });
+
+it("previews the selected task output locally and closes it when its directory grant is revoked", async () => {
+  const invoke = vi.fn();
+  (window as Window & { _wails?: unknown })._wails = { invoke };
+  render(<LocalDocxPanel deviceId="mine" />);
+  const task = {
+    id: "receipt",
+    format: "ocr",
+    instruction: "Extract text",
+    output: "/samples/result.txt",
+    status: "completed",
+  };
+  const publish = async (
+    grants: { id: string; path: string; mode: string }[],
+  ) =>
+    act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("colink:docx-status", {
+          detail: { device_id: "mine", grants, tasks: [task], busy: false },
+        }),
+      );
+    });
+  await publish([{ id: "samples", path: "/samples", mode: "rw" }]);
+  await userEvent.click(
+    screen.getByRole("button", { name: "localDocx.previewArtifact" }),
+  );
+  const command = invoke.mock.calls.at(-1)?.[0] as string;
+  expect(command).toMatch(/^colink:artifact-preview:receipt:[0-9a-f]{32}$/);
+  const requestId = command.split(":").at(-1);
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:artifact-preview", {
+        detail: {
+          request_id: requestId,
+          device_id: "mine",
+          data: btoa("Local result"),
+        },
+      }),
+    );
+  });
+  expect(screen.getByText("Local result")).toBeVisible();
+  await publish([]);
+  expect(screen.queryByText("Local result")).not.toBeInTheDocument();
+  expect(screen.getByText("/samples/result.txt")).toBeVisible();
+});

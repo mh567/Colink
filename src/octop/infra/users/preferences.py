@@ -22,6 +22,8 @@ PREFERENCES_KEY_SIDEBAR_NAV = "sidebar_nav"
 SIDEBAR_NAV_KEYS = frozenset(
     {
         "chat",
+        "local-tasks",
+        "files",
         "devices",
         "experts",
         "tasks",

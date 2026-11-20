@@ -1,5 +1,7 @@
 import { Layout } from "antd";
 import { Menu as MenuIcon } from "lucide-react";
+import ThemeSwitcher from "../components/ThemeSwitcher";
+import { useTranslation } from "react-i18next";
 import PwaInstallPrompt from "../components/PwaInstallPrompt";
 import AppVersionBadge from "../components/AppVersionBadge";
 import CurrentVersionBadge from "../components/CurrentVersionBadge";
@@ -16,17 +18,35 @@ interface HeaderProps {
   isMobile?: boolean;
 }
 
-/**
- * Mobile-only top chrome: brand + nav toggle + install.
- * Desktop GitHub / theme controls moved into the account popover.
- */
 export default function Header({ onToggle, isMobile }: HeaderProps) {
   const { isDark } = useTheme();
+  const { t } = useTranslation();
   const mobileLogoSrc = isDark
-    ? publicUrl("logo_horizontal_white.png")
-    : publicUrl("logo_horizontal_dark.png");
+    ? publicUrl("logo_horizontal_white.svg")
+    : publicUrl("logo_horizontal_dark.svg");
 
-  if (!isMobile) return null;
+  if (!isMobile) {
+    return (
+      <AntHeader
+        className="octop-desktop-drag"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexShrink: 0,
+          height: "var(--fn-header-height)",
+          lineHeight: "normal",
+          padding: "0 calc(16px + var(--window-controls-inset-end)) 0 20px",
+          background: "var(--fn-header-bg)",
+          borderBottom: "1px solid var(--fn-border-primary)",
+          color: "var(--fn-text-secondary)",
+        }}
+      >
+        <span>{t("app.workspace")}</span>
+        <ThemeSwitcher compact />
+      </AntHeader>
+    );
+  }
 
   // iOS PWA (`apple-mobile-web-app-status-bar-style: black-translucent`) draws
   // under the status bar; pad the chrome so controls stay tappable (#664).
@@ -59,7 +79,7 @@ export default function Header({ onToggle, isMobile }: HeaderProps) {
           <button
             type="button"
             onClick={onToggle}
-            aria-label="Open navigation"
+            aria-label={t("nav.expandSidebar")}
             style={{
               display: "flex",
               alignItems: "center",
@@ -80,9 +100,9 @@ export default function Header({ onToggle, isMobile }: HeaderProps) {
         )}
         <img
           src={mobileLogoSrc}
-          alt="octop"
+          alt="Colink"
           style={{
-            height: 36,
+            height: 28,
             width: "auto",
             maxWidth: 160,
             objectFit: "contain",

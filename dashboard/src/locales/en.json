@@ -1,6 +1,7 @@
 {
   "app": {
-    "pageTitle": "Octop - An intelligent partner that understands you, helps you, and grows with you"
+    "workspace": "Enterprise workspace",
+    "pageTitle": "Colink · Enterprise AI workspace"
   },
   "layout": {
     "collapsePanel": "Collapse panel",
@@ -25,6 +26,7 @@
     "close": "Close"
   },
   "devices": {
+    "startTaskHint": "Connect an approved desktop device to start a local task.",
     "title": "My devices",
     "subtitle": "View approval and connection status for your devices.",
     "desktopRequired": "Use the desktop client to connect this device. The browser can only display device status. First-time connections require administrator approval.",
@@ -319,8 +321,11 @@
     "LOCAL_EXPERT_REVIEW_REQUIRED": "Use the local expert offline package review and publication workflow."
   },
   "nav": {
+    "localTasks": "Tasks",
+    "files": "Files",
+    "newTask": "New task",
     "chat": "Conversation",
-    "devices": "My devices",
+    "devices": "Authorization & devices",
     "common": "Common",
     "control": "Control",
     "experts": "Experts",
@@ -379,7 +384,7 @@
     "remoteAndroid": "Remote Phone",
     "records": "Tasks",
     "paneSettings": "Settings",
-    "paneRecords": "Tasks",
+    "paneRecords": "Recent conversations",
     "customize": "Customize navigation",
     "customizeTitle": "Customize navigation",
     "ungrouped": "Ungrouped",
@@ -476,6 +481,12 @@
     "allowDownloadHint": "When off, other users who can view this package cannot export it as a ZIP. The creator and admins can still download it."
   },
   "knowledgeBases": {
+    "libraryScope": "Library scope",
+    "allLibraries": "All",
+    "personalLibrary": "Private",
+    "sharedLibrary": "Enterprise shared",
+    "originalUnavailable": "Original unavailable",
+
     "title": "Knowledge Bases",
     "subtitle": "Upload and index documents for retrieval in chat, and share them if needed",
     "featureTitle": "Enable Knowledge Bases",
@@ -4250,6 +4261,7 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "palette": {
+      "fog": "Fog Blue",
       "rose": "Rose",
       "tech": "Tech",
       "indigo": "Indigo",
@@ -7539,6 +7551,14 @@
     }
   },
   "localDocx": {
+    "previewArtifact": "Preview output",
+    "previewErrors": {
+      "ARTIFACT_PREVIEW_UNAVAILABLE": "The output is unavailable. Check the directory grant and desktop connection.",
+      "ARTIFACT_PREVIEW_TOO_LARGE": "Preview supports output files up to 8 MB."
+    },
+    "saveLocation": "Authorized save location",
+    "chooseSaveLocation": "Select an authorized writable folder.",
+
     "deviceDisconnected": "Device connection lost. Controlled operations are paused. Reconnect above.",
     "title": "Local document tasks",
     "privacy": "Original files stay on this computer. Text from the selected document is sent through the server to the configured model. Create tasks stop if a file with the same name exists.",

@@ -1,6 +1,7 @@
 {
   "app": {
-    "pageTitle": "Octop - 懂你、帮你、陪你成长的智能伙伴"
+    "workspace": "企业工作空间",
+    "pageTitle": "Colink · 企业 AI 工作空间"
   },
   "layout": {
     "collapsePanel": "收起面板",
@@ -25,6 +26,7 @@
     "close": "关闭"
   },
   "devices": {
+    "startTaskHint": "接入已批准的桌面设备后，即可创建本机任务。",
     "title": "我的设备",
     "subtitle": "查看本人设备的审批和在线状态。",
     "desktopRequired": "请使用桌面客户端接入当前设备。浏览器仅可查看设备状态。首次接入后需管理员批准。",
@@ -319,8 +321,11 @@
     "LOCAL_EXPERT_REVIEW_REQUIRED": "请通过本机专家的离线包审核发布入口操作。"
   },
   "nav": {
+    "localTasks": "任务",
+    "files": "文件",
+    "newTask": "新建任务",
     "chat": "对话",
-    "devices": "我的设备",
+    "devices": "授权与设备",
     "common": "常用",
     "control": "控制",
     "experts": "专家",
@@ -379,7 +384,7 @@
     "remoteAndroid": "远程手机",
     "records": "任务",
     "paneSettings": "设置",
-    "paneRecords": "任务",
+    "paneRecords": "最近对话",
     "customize": "自定义导航",
     "customizeTitle": "自定义导航",
     "ungrouped": "未分组",
@@ -476,6 +481,12 @@
     "allowDownloadHint": "关闭后，其他已能访问此包的用户不能导出 ZIP。创建者和管理员仍可下载。"
   },
   "knowledgeBases": {
+    "libraryScope": "知识库范围",
+    "allLibraries": "全部",
+    "personalLibrary": "个人私有",
+    "sharedLibrary": "企业共享",
+    "originalUnavailable": "原文不可访问",
+
     "title": "知识库",
     "subtitle": "上传文档建立索引，在对话中检索引用，也可共享给同实例用户",
     "featureTitle": "启用知识库",
@@ -4250,6 +4261,7 @@
     "themeLight": "浅色",
     "themeDark": "深色",
     "palette": {
+      "fog": "雾蓝",
       "rose": "玫瑰",
       "tech": "科技",
       "indigo": "靛蓝",
@@ -7539,6 +7551,14 @@
     }
   },
   "localDocx": {
+    "previewArtifact": "预览产物",
+    "previewErrors": {
+      "ARTIFACT_PREVIEW_UNAVAILABLE": "无法预览产物，请核对目录授权和桌面连接。",
+      "ARTIFACT_PREVIEW_TOO_LARGE": "预览仅支持不超过 8 MB 的产物。"
+    },
+    "saveLocation": "授权保存位置",
+    "chooseSaveLocation": "选择可写的授权目录。",
+
     "deviceDisconnected": "设备连接已断开，受控操作已暂停。请在上方重新接入设备。",
     "title": "本机文档任务",
     "privacy": "原始文件保留在本机。所选文档的正文经服务端发送到已配置模型。新建任务遇到同名文件时停止。",

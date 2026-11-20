@@ -49,7 +49,8 @@ func TestSplashHTMLHasFramelessWindowControls(t *testing.T) {
 		`data-action="toggle-maximise"`,
 		`data-action="minimise"`,
 		`data-action="close"`,
-		`id="mascot"`,
+		`src="/tray-icon.png"`,
+		`alt="Colink"`,
 		`id="loading-brand"`,
 	} {
 		if !strings.Contains(body, needle) {

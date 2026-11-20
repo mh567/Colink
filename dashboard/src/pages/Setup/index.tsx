@@ -267,10 +267,10 @@ export default function SetupPage() {
               <img
                 src={
                   isDark
-                    ? publicUrl("logo_horizontal_white.png")
-                    : publicUrl("logo_horizontal_dark.png")
+                    ? publicUrl("logo_horizontal_white.svg")
+                    : publicUrl("logo_horizontal_dark.svg")
                 }
-                alt="Octop"
+                alt="Colink"
                 className={styles.wizardHeaderLogo}
               />
               <div className={styles.wizardHeaderBrandText}>

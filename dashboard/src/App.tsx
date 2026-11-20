@@ -29,7 +29,8 @@ import { VoiceOutputProvider } from "./context/VoiceOutputContext";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { useUnauthorizedRedirect } from "./hooks/useUnauthorizedRedirect";
 import { installDesktopExternalLinks } from "./utils/desktopExternalLinks";
-import { brandTokensFor } from "./styles/themePalettes";
+import { MotionConfig } from "motion/react";
+import { brandTokensFor, FOG_COLORS } from "./styles/themePalettes";
 import "./styles/theme-vars.css";
 import "./styles/layout.css";
 import "./styles/form-override.css";
@@ -47,6 +48,7 @@ function ThemedApp() {
   const { t, i18n } = useTranslation();
   const isMobile = useIsMobile();
   const desktopChrome = useDesktopChrome();
+  const fog = palette === "fog" ? FOG_COLORS[isDark ? "dark" : "light"] : null;
   const brandTokens = brandTokensFor(palette, isDark, customColor);
   // Make antd built-ins (Popconfirm OK/Cancel, Modal default footer, Empty,
   // Pagination, DatePicker, Table… ) follow the current UI language.
@@ -67,7 +69,9 @@ function ThemedApp() {
   const themeConfig = {
     algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
     token: {
-      borderRadius: 10,
+      borderRadius: 8,
+      fontFamily:
+        'system-ui, "Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif',
       ...(isMobile
         ? {
             fontSize: 15,
@@ -105,8 +109,30 @@ function ThemedApp() {
         : {
             ...brandTokens,
           }),
+      ...(fog && {
+        colorBgBase: fog.surface,
+        colorBgContainer: fog.surface,
+        colorBgElevated: fog.surface,
+        colorBgLayout: fog.app,
+        colorTextBase: fog.text,
+        colorText: fog.text,
+        colorTextSecondary: fog.muted,
+        colorTextTertiary: fog.muted,
+        colorTextPlaceholder: fog.muted,
+        colorBorder: fog.border,
+        colorBorderSecondary: fog.border,
+        colorFillSecondary: fog.panel,
+        colorFillTertiary: fog.panel,
+        colorFillQuaternary: fog.top,
+        colorBgTextHover: fog.selected,
+        colorSuccess: fog.success,
+        colorSuccessText: fog.success,
+        colorSuccessBg: fog.successBg,
+      }),
     },
-    components: isDark
+    components: fog
+      ? { Button: { primaryColor: fog.onPrimary } }
+      : isDark
       ? {
           Modal: { headerBg: "#1a1c28", contentBg: "#1a1c28" },
           Input: { colorBgBase: "#0f1117" },
@@ -167,7 +193,9 @@ function App() {
       <GlobalErrorBoundary>
         <GlobalStyle />
         <ThemeProvider>
-          <ThemedApp />
+          <MotionConfig reducedMotion="user">
+            <ThemedApp />
+          </MotionConfig>
         </ThemeProvider>
       </GlobalErrorBoundary>
     </BrowserRouter>
