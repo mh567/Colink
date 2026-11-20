@@ -757,6 +757,60 @@ wheels = [
 ]
 
 [[package]]
+name = "colink-harness"
+version = "1.0.7.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colink-memory" },
+    { name = "deepagents" },
+    { name = "httpx" },
+    { name = "langchain" },
+    { name = "langchain-anthropic" },
+    { name = "langchain-core" },
+    { name = "langchain-mcp-adapters" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
+    { name = "markdownify" },
+    { name = "mcp" },
+    { name = "octop-browser" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/60/9c/08f8023c9e31c697c2e651dab2c91fe2ccd1f796f5039e4f0a73b3b4dc6c/colink_harness-1.0.7.post1.tar.gz", hash = "sha256:3284c543eeff55a29e9c1ba53e43aa28dd4dd646a1bc806777b2af07db9efd46", size = 1007220, upload-time = "2026-11-20T02:09:42.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/53/bec19411e73667826e8b2673e2c2ebbc1ef229a81bcbad8cf55bc963a6cf/colink_harness-1.0.7.post1-py3-none-any.whl", hash = "sha256:359b3837743d1562b30b49f1d965ca2b0c1fbb454043264163c31fbd50387ab6", size = 1205155, upload-time = "2026-11-20T02:09:40.254Z" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "agent-client-protocol" },
+    { name = "cos-python-sdk-v5" },
+    { name = "deepagents-backends" },
+    { name = "docker" },
+    { name = "esdk-obs-python" },
+    { name = "google-api-python-client" },
+    { name = "langchain-aws" },
+    { name = "langchain-community" },
+    { name = "langchain-tavily" },
+    { name = "langfuse" },
+    { name = "mss" },
+    { name = "oss2" },
+    { name = "pillow" },
+    { name = "psutil" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pynput" },
+]
+
+[[package]]
+name = "colink-memory"
+version = "1.0.3.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/bc/e7e0710c20c677e587e40ef657c3f615e2805dfc98f7d1ae074473904bd3/colink_memory-1.0.3.post1.tar.gz", hash = "sha256:4dacfbfd304ad5392036c0e72a42ef1cff71c5a1cf4a337b4e682897b4d045a6", size = 616115, upload-time = "2026-11-20T02:00:05.414Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/fc/6cdd60471944178453f7dc22b5bf212af42694f2cb605c516dbc3545536f/colink_memory-1.0.3.post1-py3-none-any.whl", hash = "sha256:5ab1b95fca54cfe4ada8842ce94e3420f9e91466c581ba43628121cd163de823", size = 394852, upload-time = "2026-11-20T02:00:03.931Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2604,6 +2658,8 @@ dependencies = [
     { name = "argon2-cffi" },
     { name = "boto3" },
     { name = "click" },
+    { name = "colink-harness", extra = ["all"] },
+    { name = "colink-memory" },
     { name = "cryptography" },
     { name = "edge-tts" },
     { name = "fastapi" },
@@ -2616,8 +2672,6 @@ dependencies = [
     { name = "mcp" },
     { name = "octop-browser" },
     { name = "octop-gateway" },
-    { name = "octop-harness", extra = ["all"] },
-    { name = "octop-memory" },
     { name = "openpyxl" },
     { name = "pillow" },
     { name = "playwright" },
@@ -2702,6 +2756,8 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.61" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "click", specifier = ">=8.1" },
+    { name = "colink-harness", extras = ["all"], specifier = "==1.0.7.post1" },
+    { name = "colink-memory", specifier = "==1.0.3.post1" },
     { name = "cryptography", specifier = ">=41" },
     { name = "edge-tts", specifier = ">=6.1" },
     { name = "fastapi", specifier = ">=0.110" },
@@ -2719,8 +2775,6 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "octop-browser", specifier = ">=1.0.0" },
     { name = "octop-gateway", specifier = ">=1.0.3" },
-    { name = "octop-harness", extras = ["all"], specifier = ">=1.0.7" },
-    { name = "octop-memory", specifier = ">=1.0.3" },
     { name = "onnxruntime", marker = "extra == 'knowledge-ocr'", specifier = ">=1.17" },
     { name = "onnxruntime", marker = "extra == 'local-ocr'", specifier = "==1.28.0" },
     { name = "opencv-python", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'local-ocr'", specifier = "==4.11.0.86" },
@@ -2814,60 +2868,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f1/7f/cc6d7f7af425fbcc2d999b3a187288fd99a9220acca4bf33e27026a58769/octop_gateway-1.0.3.tar.gz", hash = "sha256:ff679fe583ad13a66b680eee88708a1a9602054f9ecd461577bf7d521572895a", size = 642266, upload-time = "2026-10-16T09:18:50.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/2a/367c124660188fbd3a230057f28e33bdb09950a6684fc8c3cbd4215d494d/octop_gateway-1.0.3-py3-none-any.whl", hash = "sha256:66d4942cc26b9b1d8653b007540e928e40541185803c560853fc0acdfa444d1e", size = 178059, upload-time = "2026-10-16T09:18:49.638Z" },
-]
-
-[[package]]
-name = "octop-harness"
-version = "1.0.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "deepagents" },
-    { name = "httpx" },
-    { name = "langchain" },
-    { name = "langchain-anthropic" },
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "langgraph-checkpoint-sqlite" },
-    { name = "markdownify" },
-    { name = "mcp" },
-    { name = "octop-browser" },
-    { name = "octop-memory" },
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/f5/ae9e96393557285832f75166d2c387f0c7b94e98cb8992dd043448c91444/octop_harness-1.0.7.tar.gz", hash = "sha256:c74f0e979ed6b1a3272a911c0da2abe4825b632073573bdd211c375d2c4fad1b", size = 1003695, upload-time = "2026-11-04T11:15:29.379Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/ae/34effffa522fead286ae91d93bfd68f07431222773e173ac51ed9cd57637/octop_harness-1.0.7-py3-none-any.whl", hash = "sha256:b10eb908b789b08fabc3e9e2e295cfcd5fbcff5d7c2fb020feeefe2e5f4b3559", size = 1202445, upload-time = "2026-11-04T11:15:27.832Z" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "agent-client-protocol" },
-    { name = "cos-python-sdk-v5" },
-    { name = "deepagents-backends" },
-    { name = "docker" },
-    { name = "esdk-obs-python" },
-    { name = "google-api-python-client" },
-    { name = "langchain-aws" },
-    { name = "langchain-community" },
-    { name = "langchain-tavily" },
-    { name = "langfuse" },
-    { name = "mss" },
-    { name = "oss2" },
-    { name = "pillow" },
-    { name = "psutil" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pynput" },
-]
-
-[[package]]
-name = "octop-memory"
-version = "1.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b8/7d/3247a1e58e88c1524fc112135832b3a26b9c17eec181c1f7f744b0a7b1cc/octop_memory-1.0.3.tar.gz", hash = "sha256:cb7305462c7032aa013a95840c970e14a71b01ff14fe15a45434076eea8eb25c", size = 610115, upload-time = "2026-11-04T07:35:38.696Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/f4/1e615527059725fc4d35c8199db83156bc9020ef78375f5b992bf6c668b1/octop_memory-1.0.3-py3-none-any.whl", hash = "sha256:b85e169fd34fe80a1a93ac1005f3035afa0b40dd8c582fe0c9fa0734b17166a2", size = 389802, upload-time = "2026-11-04T07:35:37.091Z" },
 ]
 
 [[package]]
