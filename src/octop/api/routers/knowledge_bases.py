@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from dataclasses import asdict
@@ -18,7 +19,6 @@ from octop.config import DEFAULT_MAX_UPLOAD_MB, MAX_MAX_UPLOAD_MB, upload_mb_to_
 from octop.i18n import tr
 from octop.infra.agents.providers.model_flags import (
     is_chat_eligible_model,
-    is_embedding_model,
     is_onnx_local_provider,
     is_vision_model,
 )
@@ -41,9 +41,14 @@ from octop.infra.knowledge.files import document_path
 from octop.infra.knowledge.gate import (
     assert_knowledge_usable,
     get_capability,
+    remote_embedding_models,
     set_feature_enabled,
 )
-from octop.infra.knowledge.jobs import enqueue_index_document, reindex_all_documents
+from octop.infra.knowledge.jobs import (
+    INDEX_FAILURE_KEYS,
+    enqueue_index_document,
+    reindex_all_documents,
+)
 from octop.infra.knowledge.ocr import (
     ensure_ocr_deps_async,
     get_ocr_capability,
@@ -51,11 +56,14 @@ from octop.infra.knowledge.ocr import (
     validate_ocr_settings,
 )
 from octop.infra.knowledge.params import set_embedding_limits
+from octop.infra.knowledge.plane import pgvector_available
 from octop.infra.knowledge.service import (
     MAX_BASES_PER_OWNER,
     MAX_DOCS_PER_KB,
     MAX_DOCUMENT_BYTES,
+    KnowledgePathWithdrawnError,
     KnowledgeService,
+    normalize_import_path,
 )
 from octop.infra.server import OctopServer
 from octop.infra.users.groups import RESOURCE_KNOWLEDGE_BASE, GroupAccess
@@ -181,8 +189,8 @@ def _row_payload(
 ) -> dict[str, Any]:
     payload = asdict(row)
     payload["document_id"] = row.id
-    if payload.get("error_message") == "knowledge.indexing_failed":
-        payload["error_message"] = tr("knowledge.indexing_failed", locale)
+    if payload.get("error_message") in INDEX_FAILURE_KEYS:
+        payload["error_message"] = tr(payload["error_message"], locale)
     if has_original is None:
         if getattr(row, "is_dir", False):
             has_original = False
@@ -276,6 +284,8 @@ def _map_knowledge_error(
 ) -> OctopError:
     if isinstance(exc, OctopError):
         return exc
+    if isinstance(exc, KnowledgePathWithdrawnError):
+        return OctopError.localized(ErrorCode.KNOWLEDGE_WITHDRAWAL_IN_PROGRESS, locale)
     if isinstance(exc, (LookupError, FileNotFoundError)):
         return OctopError.localized(ErrorCode.KNOWLEDGE_NOT_FOUND, locale)
     if isinstance(exc, PermissionError):
@@ -320,7 +330,14 @@ def _map_knowledge_error(
         return OctopError.localized(ErrorCode.KNOWLEDGE_PREREQUISITES_FAILED, locale)
     if "unique constraint" in text or "duplicate key" in text or "already exists" in text:
         return OctopError.localized(ErrorCode.KNOWLEDGE_NAME_TAKEN, locale)
-    if "invalid knowledge document name" in text:
+    if any(
+        fragment in text
+        for fragment in (
+            "invalid knowledge document name",
+            "invalid knowledge document path",
+            "invalid knowledge import",
+        )
+    ):
         return OctopError.localized(ErrorCode.KNOWLEDGE_NAME_INVALID, locale)
     if "prerequisite" in text or "embedding model" in text or "embedding_model" in text:
         return OctopError.localized(ErrorCode.KNOWLEDGE_PREREQUISITES_FAILED, locale)
@@ -358,7 +375,7 @@ def _enable_onnx_service(server: OctopServer, model: str) -> None:
     )
 
 
-def _require_usable(server: OctopServer, request: Request) -> None:
+async def _require_usable(server: OctopServer, request: Request) -> None:
     assert server.services is not None
     try:
         assert_knowledge_usable(server.services.settings_repo.get, server.services.provider_repo)
@@ -366,11 +383,23 @@ def _require_usable(server: OctopServer, request: Request) -> None:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
+    await _require_vector(server, request)
 
 
-def _capability_payload(server: OctopServer) -> dict[str, Any]:
+async def _require_vector(server: OctopServer, request: Request) -> None:
+    if not await asyncio.to_thread(pgvector_available, server.services):
+        raise OctopError.localized(
+            ErrorCode.KNOWLEDGE_VECTOR_UNAVAILABLE, resolve_request_locale(request)
+        )
+
+
+async def _capability_payload(server: OctopServer) -> dict[str, Any]:
     assert server.services is not None
     payload = get_capability(server.services.settings_repo.get, server.services.provider_repo)
+    vector_available = await asyncio.to_thread(pgvector_available, server.services)
+    payload["checks"]["vector_available"] = vector_available
+    payload["prerequisites_ok"] = payload["prerequisites_ok"] and vector_available
+    payload["usable"] = payload["usable"] and vector_available
     payload["ocr"] = get_ocr_capability(
         server.services.settings_repo.get, server.services.provider_repo
     )
@@ -387,7 +416,7 @@ async def capability(
     server: OctopServer = Depends(get_server),
     _user: User = Depends(current_user),
 ) -> dict[str, Any]:
-    return _capability_payload(server)
+    return await _capability_payload(server)
 
 
 @router.get("/embedding-options", summary="List knowledge embedding backend options")
@@ -408,13 +437,7 @@ async def embedding_options(
             continue
         models = [
             {"id": str(model["id"]), "name": str(model.get("name") or model["id"])}
-            for model in provider.get_models()
-            if str(model.get("id") or "").strip()
-            and is_embedding_model(
-                model,
-                provider_name=provider.name,
-                provider_api_key=getattr(provider, "api_key", None),
-            )
+            for model in remote_embedding_models(provider)
         ]
         if models:
             remote.append(
@@ -465,6 +488,8 @@ async def put_feature(
     _admin: User = Depends(require_permission("knowledge_settings")),
 ) -> dict[str, Any]:
     assert server.services is not None
+    if body.enabled:
+        await _require_vector(server, request)
     previous = get_capability(server.services.settings_repo.get, server.services.provider_repo)
     previous_ocr = get_ocr_capability(
         server.services.settings_repo.get, server.services.provider_repo
@@ -523,7 +548,7 @@ async def put_feature(
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
-    capability = _capability_payload(server)
+    capability = await _capability_payload(server)
     if body.enabled and selected_backend == "onnx":
         selected_model = str(capability.get("selected_model") or "").strip()
         if selected_model:
@@ -617,7 +642,7 @@ async def create_base(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         access = _group_access(server)
         if body.visibility is not None and access is not None:
             access.validate_visibility(body.visibility, body.group_ids)
@@ -636,6 +661,7 @@ async def create_base(
             icon_name=body.icon_name.strip(),
             icon_url=body.icon_url.strip(),
             max_documents=body.max_documents if body.max_documents is not None else MAX_DOCS_PER_KB,
+            is_admin=_is_admin(user),
         )
         if body.visibility is not None and access is not None:
             access.set_visibility(
@@ -664,6 +690,37 @@ async def default_open_bases(
             if base.default_open and int(base.owner_user_id) == int(user.id)
         ]
     }
+
+
+class KnowledgeCitationRef(BaseModel):
+    kb_id: str = Field(min_length=1, max_length=64)
+    doc_id: str = Field(min_length=1, max_length=64)
+
+
+class KnowledgeCitationStatusRequest(BaseModel):
+    refs: list[KnowledgeCitationRef] = Field(max_length=200)
+
+
+class KnowledgeCitationStatusResponse(BaseModel):
+    withdrawn: list[KnowledgeCitationRef] = Field(
+        description="References whose source was removed or is no longer readable by this user."
+    )
+
+
+@router.post("/citation-status", summary="Check cited knowledge sources in one batch")
+async def citation_status(
+    body: KnowledgeCitationStatusRequest,
+    server: OctopServer = Depends(get_server),
+    user: User = Depends(current_user),
+) -> KnowledgeCitationStatusResponse:
+    withdrawn = await asyncio.to_thread(
+        _knowledge_service(server).withdrawn_citations,
+        [(ref.kb_id, ref.doc_id) for ref in body.refs],
+        actor_user_id=user.id,
+    )
+    return KnowledgeCitationStatusResponse(
+        withdrawn=[KnowledgeCitationRef(kb_id=kb_id, doc_id=doc_id) for kb_id, doc_id in withdrawn]
+    )
 
 
 @router.get("/{kb_id}", summary="Get a visible knowledge base")
@@ -739,12 +796,15 @@ async def delete_base(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> None:
     try:
-        _knowledge_service(server).delete_base(
-            kb_id, actor_user_id=user.id, is_admin=_is_admin(user)
+        await asyncio.to_thread(
+            _knowledge_service(server).delete_base,
+            kb_id,
+            actor_user_id=user.id,
+            is_admin=_is_admin(user),
         )
         from octop.infra.users.profile_avatar import delete_profile_avatar  # noqa: PLC0415
 
-        delete_profile_avatar(_kb_avatars(server), kb_id)
+        await asyncio.to_thread(delete_profile_avatar, _kb_avatars(server), kb_id)
     except Exception as exc:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
@@ -906,7 +966,7 @@ async def create_text_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         document = _knowledge_service(server).create_text_document(
             kb_id,
             actor_user_id=user.id,
@@ -924,7 +984,37 @@ async def create_text_document(
 
 
 @router.post(
-    "/{kb_id}/documents", status_code=status.HTTP_201_CREATED, summary="Upload a knowledge document"
+    "/{kb_id}/documents",
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a knowledge document",
+    description=(
+        "Imports a document into the signed-in user's private knowledge base. Requires an "
+        "authorized, connected native device and a one-time confirmation for the same base "
+        "and destination path. Missing or invalid device credentials or confirmation return 403."
+    ),
+    # Document the headers without replacing the authorization checks with validation errors.
+    openapi_extra={
+        "parameters": [
+            {
+                "name": name,
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "description": description,
+            }
+            for name, description in (
+                (
+                    "X-Colink-Device-Id",
+                    "ID of the connected native device that confirmed the import.",
+                ),
+                ("X-Colink-Device-Session", "Current session token for that native device."),
+                (
+                    "X-Colink-Knowledge-Import",
+                    "Single-use import_ticket returned by POST /api/devices/{device_id}/knowledge/authorize.",
+                ),
+            )
+        ]
+    },
 )
 async def upload_document(
     kb_id: str,
@@ -942,20 +1032,40 @@ async def upload_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        device_id = request.headers.get("X-Colink-Device-Id", "")
+        session_token = request.headers.get("X-Colink-Device-Session", "")
+        filename = upload.filename or ""
+        destination = normalize_import_path(filename, path if isinstance(path, str) else None)
+        service = _knowledge_service(server)
+        server.device_manager.consume_knowledge_import(
+            user,
+            device_id,
+            session_token,
+            kb_id=kb_id,
+            path=destination,
+            filename=filename,
+            token=request.headers.get("X-Colink-Knowledge-Import", ""),
+        )
+        await _require_usable(server, request)
         content = await read_upload_capped(
             upload,
             max_bytes=_max_upload_bytes(server),
             code=ErrorCode.KNOWLEDGE_DOC_TOO_LARGE,
         )
-        document = _knowledge_service(server).upload_document(
+        server.device_manager.authorize_knowledge_import(
+            user,
+            device_id,
+            session_token,
+            filename,
+        )
+        document = service.upload_document(
             kb_id,
             actor_user_id=user.id,
-            filename=upload.filename or "",
+            filename=filename,
             content_type=upload.content_type or "",
             content=content,
-            is_admin=_is_admin(user),
-            path=path or upload.filename or "",
+            path=destination,
+            private_import=True,
         )
         assert server.services is not None
         enqueue_index_document(server.services, kb_id, document.id)
@@ -1073,7 +1183,7 @@ async def update_text_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         document = _knowledge_service(server).update_text_document(
             kb_id,
             doc_id,
@@ -1128,8 +1238,12 @@ async def delete_document(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> None:
     try:
-        _knowledge_service(server).delete_document(
-            kb_id, doc_id, actor_user_id=user.id, is_admin=_is_admin(user)
+        await asyncio.to_thread(
+            _knowledge_service(server).delete_document,
+            kb_id,
+            doc_id,
+            actor_user_id=user.id,
+            is_admin=_is_admin(user),
         )
     except Exception as exc:
         raise _map_knowledge_error(
@@ -1149,7 +1263,7 @@ async def reindex_document(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> dict[str, Any]:
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         document = _knowledge_service(server).reindex_document(
             kb_id, doc_id, actor_user_id=user.id, is_admin=_is_admin(user)
         )
@@ -1170,7 +1284,7 @@ async def reindex_base(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> dict[str, int]:
     try:
-        _require_usable(server, request)
+        await _require_usable(server, request)
         service = _knowledge_service(server)
         service.get_writable_base(kb_id, actor_user_id=user.id, is_admin=_is_admin(user))
         documents = [
@@ -1178,7 +1292,7 @@ async def reindex_base(
             for document in service.list_documents(
                 kb_id, actor_user_id=user.id, is_admin=_is_admin(user)
             )
-            if not document.is_dir
+            if not document.is_dir and document.status != "withdrawn"
         ]
         assert server.services is not None
         for document in documents:

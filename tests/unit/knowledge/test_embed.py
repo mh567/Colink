@@ -9,6 +9,42 @@ from octop.infra.agents.providers import onnx_service
 from octop.infra.knowledge import embed
 
 
+def _remote_provider(*, model_enabled=True, **extra):
+    return SimpleNamespace(
+        base_url="https://example.test/v1/",
+        api_key="secret",
+        name="Remote",
+        enabled=True,
+        get_models=lambda: [{"id": "embed-1", "embedding": True, "enabled": model_enabled}],
+        **extra,
+    )
+
+
+@pytest.mark.parametrize("use_intranet", [False, True])
+async def test_disabled_remote_model_is_rejected_before_network(monkeypatch, use_intranet) -> None:
+    settings = {
+        "knowledge_embedding_backend": "remote",
+        "knowledge_embedding_model": "embed-1",
+        "knowledge_embedding_provider_id": "7",
+    }
+    provider = _remote_provider(model_enabled=False)
+    services = SimpleNamespace(
+        settings_repo=SimpleNamespace(get=settings.get),
+        provider_repo=SimpleNamespace(get=lambda _: provider),
+    )
+
+    def unexpected_network(*args, **kwargs):
+        pytest.fail("disabled model reached the network path")
+
+    monkeypatch.setattr(embed.httpx, "Client", unexpected_network)
+    monkeypatch.setattr(embed.ssrf_guard, "resolve_intranet_endpoint", unexpected_network)
+    with pytest.raises(RuntimeError, match="embedding provider is not ready"):
+        if use_intranet:
+            await embed.embed_intranet_knowledge_query(services, "private")
+        else:
+            embed.embed_knowledge_texts(services, ["public"])
+
+
 async def test_intranet_knowledge_query_uses_configured_local_model(monkeypatch) -> None:
     settings = {"knowledge_embedding_backend": "onnx", "knowledge_embedding_model": "local-model"}
     services = SimpleNamespace(settings_repo=SimpleNamespace(get=settings.get))
@@ -50,7 +86,7 @@ async def test_intranet_knowledge_query_without_snapshot_does_not_download(monke
 
 
 def test_remote_embedding_routes_to_provider_embeddings_endpoint(monkeypatch) -> None:
-    provider = SimpleNamespace(base_url="https://example.test/v1/", api_key="secret")
+    provider = _remote_provider()
     services = SimpleNamespace(
         settings_repo=SimpleNamespace(
             get=lambda key: {
@@ -92,11 +128,7 @@ def test_remote_embedding_routes_to_provider_embeddings_endpoint(monkeypatch) ->
 
 
 def test_remote_embedding_merges_provider_extra_headers(monkeypatch) -> None:
-    provider = SimpleNamespace(
-        base_url="https://example.test/v1/",
-        api_key="secret",
-        extra_json='{"headers": {"X-Custom": "1"}}',
-    )
+    provider = _remote_provider(extra_json='{"headers": {"X-Custom": "1"}}')
     services = SimpleNamespace(
         settings_repo=SimpleNamespace(
             get=lambda key: {
@@ -137,7 +169,7 @@ def test_remote_embedding_merges_provider_extra_headers(monkeypatch) -> None:
 
 
 def test_remote_embedding_batches_large_input(monkeypatch) -> None:
-    provider = SimpleNamespace(base_url="https://example.test/v1/", api_key="secret")
+    provider = _remote_provider()
     services = SimpleNamespace(
         settings_repo=SimpleNamespace(
             get=lambda key: {
@@ -193,7 +225,7 @@ def test_remote_embedding_batches_large_input(monkeypatch) -> None:
 
 
 def test_remote_embedding_restores_order_from_response_indexes(monkeypatch) -> None:
-    provider = SimpleNamespace(base_url="https://example.test/v1/", api_key="secret")
+    provider = _remote_provider()
     services = SimpleNamespace(
         settings_repo=SimpleNamespace(
             get=lambda key: {
@@ -289,9 +321,7 @@ def test_configured_remote_limits_split_requests_and_reject_long_inputs(monkeypa
     }
     services = SimpleNamespace(
         settings_repo=SimpleNamespace(get=settings.get),
-        provider_repo=SimpleNamespace(
-            get=lambda _: SimpleNamespace(base_url="https://example.test/v1", api_key="secret")
-        ),
+        provider_repo=SimpleNamespace(get=lambda _: _remote_provider()),
     )
     batches = []
 

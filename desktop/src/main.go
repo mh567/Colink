@@ -415,11 +415,13 @@ func main() {
 		applyAppIcon(app)
 	})
 
+	// Remote dashboard pages do not load the Wails runtime.
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:                "Octop",
 		Width:                1200,
 		Height:               800,
 		URL:                  "/",
+		JS:                   `if(window._wails && window._wails.invoke) window._wails.invoke("wails:runtime:ready");`,
 		Frameless:            true,
 		AllowSimpleEventEmit: true,
 		EnableFileDrop:       true,

@@ -1931,11 +1931,7 @@ class GlobalProcessor:
         """Expose selected knowledge-base ids for the search_knowledge tool."""
         if self._knowledge_services is None:
             return
-        bases = (
-            self._knowledge_services.knowledge_repo.list_all()
-            if is_admin
-            else self._knowledge_services.knowledge_repo.list_visible(user_id)
-        )
+        bases = self._knowledge_services.knowledge_repo.list_visible(user_id)
         extra_ids = self._agent_manager.default_knowledge_base_ids(agent_id) if agent_id else None
         stamp_turn_knowledge_config(
             request,

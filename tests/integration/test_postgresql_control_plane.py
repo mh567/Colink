@@ -317,6 +317,56 @@ async def test_setup_database_postgresql_bind(tmp_octop_home: Path) -> None:
 
 @requires_postgresql
 @pytest.mark.postgresql
+def test_pg_directory_withdrawal_reserves_paths_across_connections() -> None:
+    from contextlib import closing
+
+    from octop.infra.db.migrate import run_migrations
+    from octop.infra.db.pool import PostgresPool
+    from octop.infra.db.repos.knowledge import (
+        KnowledgeDocumentRow,
+        KnowledgePathWithdrawnError,
+        KnowledgeRepo,
+    )
+    from octop.infra.db.repos.users import UserRepo
+
+    with (
+        closing(PostgresPool(_conninfo())) as owner_pool,
+        closing(PostgresPool(_conninfo())) as writer_pool,
+    ):
+        _reset_public_schema(owner_pool)
+        run_migrations(owner_pool)
+        uid = UserRepo(owner_pool).create(username="owner", password_hash="h", role="admin")
+        owner = KnowledgeRepo(owner_pool)
+        writer = KnowledgeRepo(writer_pool)
+        base = owner.create_base(owner_user_id=uid, name="Directory withdrawal")
+        folder = owner.ensure_folder(base.id, "Reports")
+
+        def create(path: str) -> KnowledgeDocumentRow:
+            return writer.create_document(
+                kb_id=base.id,
+                filename="note.txt",
+                content_type="text/plain",
+                byte_size=4,
+                path=path,
+            )
+
+        original = create("Reports/note.txt")
+        claimed = owner.withdraw_document_tree(base.id, folder.id)
+        assert {doc.id for doc in claimed} == {folder.id, original.id}
+        with pytest.raises(KnowledgePathWithdrawnError):
+            create("Reports/new/note.txt")
+        peer = create("reports/note.txt")
+        owner.finish_withdrawal(base.id, [doc.id for doc in claimed])
+        owner.finish_withdrawal(base.id, [doc.id for doc in claimed])
+        assert owner.get_document(original.id) is None
+        assert owner.get_document(peer.id) is not None
+        updated = owner.get_base(base.id)
+        assert updated is not None and updated.doc_count == 1
+        assert create("Reports/new/note.txt").id != original.id
+
+
+@requires_postgresql
+@pytest.mark.postgresql
 def test_pg_knowledge_base_max_documents_schema_and_crud() -> None:
     """Ensure PostgreSQL fresh migration includes max_documents on knowledge_bases and CRUD works."""
     from octop.infra.db.migrate import run_migrations

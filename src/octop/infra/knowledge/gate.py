@@ -45,21 +45,25 @@ def _provider_for_settings(provider_repo: Any, provider_id: str) -> Any | None:
     return provider_repo.get(int(provider_id))
 
 
-def _remote_ready(provider: Any | None, model: str) -> bool:
-    return bool(
-        provider
-        and provider.enabled
-        and provider.api_key
-        and provider.base_url
-        and any(
-            str(candidate.get("id") or "").strip() == model
-            and is_embedding_model(
-                candidate,
-                provider_name=provider.name,
-                provider_api_key=getattr(provider, "api_key", None),
-            )
-            for candidate in provider.get_models()
+def remote_embedding_models(provider: Any | None) -> list[dict[str, Any]]:
+    if not provider or not provider.enabled or not provider.api_key or not provider.base_url:
+        return []
+    return [
+        candidate
+        for candidate in provider.get_models()
+        if str(candidate.get("id") or "").strip()
+        and candidate.get("enabled", True)
+        and is_embedding_model(
+            candidate,
+            provider_name=provider.name,
+            provider_api_key=provider.api_key,
         )
+    ]
+
+
+def remote_embedding_model_ready(provider: Any | None, model: str) -> bool:
+    return any(
+        str(candidate["id"]).strip() == model for candidate in remote_embedding_models(provider)
     )
 
 
@@ -72,7 +76,7 @@ def get_capability(settings_get: SettingsGet, provider_repo: Any = None) -> dict
     provider = _provider_for_settings(provider_repo, provider_id)
     deps_available = local_embedding_deps_available()
     model_downloaded = bool(selected_model and is_model_downloaded(selected_model))
-    provider_ready = _remote_ready(provider, selected_model)
+    provider_ready = remote_embedding_model_ready(provider, selected_model)
     prerequisites_ok = (
         provider_ready
         if backend == "remote"
@@ -148,7 +152,7 @@ def set_feature_enabled(
         raise ValueError("enabling knowledge bases requires an embedding model")
     if selected_backend == "remote":
         selected_provider_id = (provider_id or "").strip()
-        if not _remote_ready(
+        if not remote_embedding_model_ready(
             _provider_for_settings(provider_repo, selected_provider_id), selected_model
         ):
             raise ValueError("knowledge remote embedding provider is not ready")

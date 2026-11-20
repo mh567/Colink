@@ -28,11 +28,12 @@ const (
 )
 
 var (
-	ErrCancelled  = errors.New("confirmation cancelled")
-	errInactive   = errors.New("confirmation is unavailable")
-	errChanged    = errors.New("target changed")
-	errInvalid    = errors.New("invalid managed file operation")
-	errPermission = errors.New("managed file permission unavailable")
+	ErrCancelled    = errors.New("confirmation cancelled")
+	errNotConfirmed = errors.New("confirmation was not obtained")
+	errInactive     = errors.New("confirmation is unavailable")
+	errChanged      = errors.New("target changed")
+	errInvalid      = errors.New("invalid managed file operation")
+	errPermission   = errors.New("managed file permission unavailable")
 )
 
 func DirectoryForUID(uid uint32) string {

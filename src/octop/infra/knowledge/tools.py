@@ -132,6 +132,7 @@ def build_knowledge_tools(services: Any) -> list[StructuredTool]:
                 knowledge_base_ids=kb_ids,
                 k=k,
                 locale=locale,
+                intranet_only=True,
             )
             if not context:
                 return tr("knowledge.retrieval.no_results", locale)

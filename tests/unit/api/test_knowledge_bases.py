@@ -139,6 +139,9 @@ async def test_enabling_reindexes_documents_when_model_changes(
             "selected_model": get("knowledge_embedding_model"),
             "backend": get("knowledge_embedding_backend") or "onnx",
             "provider_id": get("knowledge_embedding_provider_id") or "",
+            "checks": {},
+            "prerequisites_ok": True,
+            "usable": True,
         },
     )
 
@@ -207,6 +210,7 @@ async def test_create_base_uses_selected_model_when_usable(
         "icon_name": "",
         "icon_url": "",
         "max_documents": 100,
+        "is_admin": False,
     }
 
 
@@ -218,7 +222,13 @@ async def test_upload_enqueues_document_indexing(monkeypatch: pytest.MonkeyPatch
     service = SimpleNamespace(
         upload_document=lambda *_args, **_kwargs: _Document(),
     )
-    server = SimpleNamespace(services=_services())
+    server = SimpleNamespace(
+        services=_services(),
+        device_manager=SimpleNamespace(
+            authorize_knowledge_import=lambda *_args: None,
+            consume_knowledge_import=lambda *_args, **_kwargs: None,
+        ),
+    )
     user = SimpleNamespace(id=1, is_admin=False)
     upload = UploadFile(
         file=__import__("io").BytesIO(b"# hi"),
@@ -362,7 +372,7 @@ def test_row_payload_includes_has_original(tmp_path: Path, monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_embedding_options_excludes_onnx_local_provider() -> None:
+async def test_embedding_options_excludes_onnx_local_provider_and_disabled_models() -> None:
     from octop.api.routers import knowledge_bases
 
     providers = [
@@ -381,9 +391,12 @@ async def test_embedding_options_excludes_onnx_local_provider() -> None:
         SimpleNamespace(
             id=2,
             name="OpenAI",
+            enabled=True,
             api_key="sk-test",
+            base_url="https://example.test/v1",
             get_models=lambda: [
                 {"id": "text-embedding-3-small", "name": "embed", "embedding": True},
+                {"id": "disabled-embed", "embedding": True, "enabled": False},
                 {"id": "gpt-4o", "name": "GPT-4o"},
             ],
         ),
@@ -490,7 +503,7 @@ async def test_reindex_document_enqueues_job(
     server = SimpleNamespace(services=_services())
     user = SimpleNamespace(id=1, is_admin=False)
     monkeypatch.setattr(knowledge_bases, "_knowledge_service", lambda _server: service)
-    monkeypatch.setattr(knowledge_bases, "_require_usable", lambda *_a, **_k: None)
+    monkeypatch.setattr(knowledge_bases, "_require_usable", AsyncMock())
     monkeypatch.setattr(
         knowledge_bases,
         "enqueue_index_document",

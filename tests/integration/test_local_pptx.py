@@ -13,6 +13,7 @@ from tests.support.app import octop_client, write_octop_config
 from tests.support.auth import create_user
 
 env = test_devices.env
+env_with_pgvector = test_devices.env_with_pgvector
 
 GRANTS = ["local_pptx", "local_files_read", "local_files_create"]
 REPORT = '{"slides":[{"title":"项目汇报","bullets":["已完成 12 项"]}]}'
@@ -120,8 +121,8 @@ async def test_pptx_rechecks_docx_source_grant_before_and_after_model(env, monke
         assert response.status_code == 403, response.text
 
 
-async def test_pptx_expert_uses_only_intranet_knowledge_embedding(env, monkeypatch):
-    client, server, admin = env
+async def test_pptx_expert_uses_only_intranet_knowledge_embedding(env_with_pgvector, monkeypatch):
+    client, server, admin = env_with_pgvector
     alice = await create_user(client, admin, username="alice", permissions=[*GRANTS, "experts"])
     user_id = (await client.get("/api/auth/me", headers=alice)).json()["id"]
     await seed_intranet_provider(client, admin)

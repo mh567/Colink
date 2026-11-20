@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	ChangedError     = BusName + ".TargetChanged"
-	ExistsError      = BusName + ".TargetExists"
-	PermissionError  = BusName + ".PermissionDenied"
-	SystemBusAddress = "unix:path=/run/dbus/system_bus_socket"
-	aclAttribute     = "system.posix_acl_access"
+	ChangedError      = BusName + ".TargetChanged"
+	ExistsError       = BusName + ".TargetExists"
+	PermissionError   = BusName + ".PermissionDenied"
+	NotConfirmedError = BusName + ".NotConfirmed"
+	SystemBusAddress  = "unix:path=/run/dbus/system_bus_socket"
+	aclAttribute      = "system.posix_acl_access"
 )
 
 type service struct {
@@ -101,6 +102,8 @@ func fileError(err error) *dbus.Error {
 	switch {
 	case errors.Is(err, ErrCancelled):
 		name = CancelError
+	case errors.Is(err, errNotConfirmed):
+		name = NotConfirmedError
 	case errors.Is(err, errChanged):
 		name = ChangedError
 	case errors.Is(err, os.ErrExist):
@@ -149,7 +152,7 @@ func (s *service) Directory(sender dbus.Sender, server string, proof Credentials
 		return "", fileError(err)
 	}
 	defer root.Close()
-	return root.Name(), nil
+	return DirectoryForUID(uid), nil
 }
 
 func (s *service) Prepare(sender dbus.Sender, server, operation, name string, proof Credentials) (string, *dbus.Error) {
@@ -264,13 +267,17 @@ func (s *service) authorize(ctx context.Context, sender dbus.Sender, operation, 
 		_ = authority.CallWithContext(cancelCtx, "org.freedesktop.PolicyKit1.Authority.CancelCheckAuthorization", 0, id).Err
 		return false, ErrCancelled
 	}
-	if err != nil || result.Details["polkit.temporary_authorization_id"] != "" || result.Details["polkit.retains_authorization_after_challenge"] != "" {
+	if err != nil || result.Challenge || result.Details["polkit.temporary_authorization_id"] != "" || result.Details["polkit.retains_authorization_after_challenge"] != "" {
 		return false, errInactive
 	}
-	if result.Authorized || result.Details["polkit.dismissed"] != "" {
-		return result.Authorized, nil
+	if result.Authorized {
+		return true, nil
 	}
-	return false, errInactive
+	if result.Details["polkit.dismissed"] == "true" {
+		return false, ErrCancelled
+	}
+	// Some agents return the same unmarked refusal for cancellation and failure.
+	return false, errNotConfirmed
 }
 
 func openBase() (*os.Root, error) {
@@ -333,7 +340,22 @@ func (s *service) openManaged(uid uint32, provision bool) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	return base.OpenRoot(name)
+	anchored, err := base.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	defer anchored.Close()
+	root, err := os.OpenRoot(DirectoryForUID(uid))
+	if err != nil {
+		return nil, err
+	}
+	expected, expectedErr := anchored.Stat(".")
+	actual, actualErr := root.Stat(".")
+	if expectedErr != nil || actualErr != nil || !os.SameFile(expected, actual) {
+		root.Close()
+		return nil, errChanged
+	}
+	return root, nil
 }
 
 func verifyDirectory(f *os.File, mode uint32) error {

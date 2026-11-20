@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.knowledge import KnowledgeRepo
@@ -79,3 +81,23 @@ def test_retrieve_context_skips_empty_non_text_turn() -> None:
     )
 
     assert context == ""
+
+
+@pytest.mark.parametrize("intranet_only", [False, True])
+async def test_retrieve_without_vector_support_does_not_embed(monkeypatch, intranet_only) -> None:
+    def unexpected_embedding(*_args, **_kwargs):
+        pytest.fail("embedding called without a usable vector index")
+
+    monkeypatch.setattr(retrieve_module, "pgvector_available", lambda _services: False)
+    monkeypatch.setattr(retrieve_module, "embed_knowledge_texts", unexpected_embedding)
+    monkeypatch.setattr(retrieve_module, "embed_intranet_knowledge_query", unexpected_embedding)
+
+    with pytest.raises(RuntimeError, match="vector index unavailable"):
+        await retrieve_module.retrieve_context(
+            SimpleNamespace(),
+            user_id=1,
+            is_admin=False,
+            query="document",
+            knowledge_base_ids=["kb-1"],
+            intranet_only=intranet_only,
+        )

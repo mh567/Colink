@@ -35,6 +35,19 @@ async def env(request, tmp_octop_home):
         yield client, server, await auth_header(client)
 
 
+@pytest.fixture
+def env_with_pgvector(env):
+    _client, server, _admin = env
+    database = server.services.config.database
+    if database.is_postgresql:
+        import psycopg
+
+        # Recreating public in the device fixture also drops the vector extension.
+        with psycopg.connect(database.postgresql_conninfo()) as conn:
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    return env
+
+
 async def test_device_rejects_noncanonical_public_key(env):
     client, _server, admin = env
     alice = await create_user(client, admin, username="alice")

@@ -146,6 +146,21 @@ export default defineConfig(({ mode }) => {
       MOBILE: false,
     },
     plugins: [
+      {
+        name: "markdown-compatibility",
+        enforce: "pre",
+        transform(code, id) {
+          if (
+            !id
+              .replaceAll("\\", "/")
+              .includes("/mdast-util-gfm-autolink-literal/lib/index.js")
+          ) {
+            return;
+          }
+          // The dependency already checks the preceding character in findEmail.
+          return code.replace("(?<=^|\\s|\\p{P}|\\p{S})", "");
+        },
+      },
       monacoSameOrigin(__dirname),
       suppressViteDisconnectReload(),
       react(),

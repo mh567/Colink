@@ -5,6 +5,11 @@ import {
   requestUpload,
 } from "../request";
 
+export interface KnowledgeCitationRef {
+  kb_id: string;
+  doc_id: string;
+}
+
 export interface KnowledgeLimits {
   max_bases_per_owner: number;
   max_docs_per_kb: number;
@@ -25,6 +30,7 @@ export interface KnowledgeCapability {
     model_downloaded: boolean;
     deps_available: boolean;
     provider_ready: boolean;
+    vector_available?: boolean;
   };
   ocr: {
     enabled: boolean;
@@ -74,7 +80,7 @@ export interface KnowledgeDocument {
   content_type: string;
   byte_size: number;
   content_hash: string;
-  status: "pending" | "processing" | "ready" | "failed";
+  status: "pending" | "processing" | "ready" | "failed" | "withdrawn";
   error_message: string;
   chunk_count: number;
   created_at: number;
@@ -245,6 +251,12 @@ export const knowledgeBasesApi = {
       method: "DELETE",
     }),
 
+  citationStatus: (refs: KnowledgeCitationRef[], signal: AbortSignal) =>
+    request<{ withdrawn: KnowledgeCitationRef[] }>(
+      "/knowledge-bases/citation-status",
+      { method: "POST", body: JSON.stringify({ refs }), signal },
+    ),
+
   listDocuments: (id: string, prefix?: string) =>
     request<KnowledgeDocument[]>(
       prefix
@@ -290,23 +302,6 @@ export const knowledgeBasesApi = {
         body: JSON.stringify({ content }),
       },
     ),
-
-  uploadDocument: (
-    id: string,
-    file: File,
-    relativePath?: string,
-    onProgress?: (percent: number) => void,
-  ) => {
-    const body = new FormData();
-    body.append("upload", file);
-    if (relativePath) body.append("path", relativePath);
-    return requestUpload<KnowledgeDocument>(
-      `/knowledge-bases/${id}/documents`,
-      body,
-      { method: "POST" },
-      onProgress,
-    );
-  },
 
   deleteDocument: (id: string, documentId: string) =>
     request<void>(`/knowledge-bases/${id}/documents/${documentId}`, {

@@ -24,6 +24,9 @@ export function useDesktopChrome(): DesktopChromeStyle | null {
     let cancelled = false;
     const tryApply = () => {
       if (cancelled || !isDesktopShell()) return false;
+      (
+        window as Window & { _wails?: { invoke?: (message: string) => void } }
+      )._wails?.invoke?.("wails:runtime:ready");
       const next = resolveDesktopChromeStyle();
       applyDesktopChrome(next);
       installDesktopWindowDrag();
