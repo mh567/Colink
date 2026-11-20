@@ -27,6 +27,7 @@
   },
   "devices": {
     "startTaskHint": "接入已批准的桌面设备后，即可创建本机任务。",
+    "viewFilesHint": "接入已批准的桌面设备后，即可查看本机任务产物。",
     "title": "我的设备",
     "subtitle": "查看本人设备的审批和在线状态。",
     "desktopRequired": "请使用桌面客户端接入当前设备。浏览器仅可查看设备状态。首次接入后需管理员批准。",
@@ -7551,9 +7552,12 @@
     }
   },
   "localDocx": {
+    "artifacts": "本机任务产物",
+    "noArtifacts": "授权目录中没有已完成任务的产物。",
     "previewArtifact": "预览产物",
     "previewErrors": {
       "ARTIFACT_PREVIEW_UNAVAILABLE": "无法预览产物，请核对目录授权和桌面连接。",
+      "ARTIFACT_PREVIEW_CHANGED": "无法确认这是本次任务的产物，请在本机核对文件。",
       "ARTIFACT_PREVIEW_TOO_LARGE": "预览仅支持不超过 8 MB 的产物。"
     },
     "saveLocation": "授权保存位置",

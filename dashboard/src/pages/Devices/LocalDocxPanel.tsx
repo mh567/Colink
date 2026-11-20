@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -65,10 +65,12 @@ export default function LocalDocxPanel({
   deviceId,
   connected = true,
   disconnectCode,
+  artifactsOnly = false,
 }: {
   deviceId: string;
   connected?: boolean;
   disconnectCode?: string;
+  artifactsOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -103,6 +105,8 @@ export default function LocalDocxPanel({
   const [output, setOutput] = useState("");
   const [instruction, setInstruction] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewRegion = useRef<HTMLElement>(null);
+  const previewTrigger = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setState({ device_id: deviceId, grants: [], tasks: [], busy: false });
@@ -114,14 +118,15 @@ export default function LocalDocxPanel({
     setExperts([]);
     setExpertError(null);
     let active = true;
-    void localExpertsApi
-      .list()
-      .then((items) => {
-        if (active) setExperts(items);
-      })
-      .catch((error: unknown) => {
-        if (active) setExpertError(error);
-      });
+    if (!artifactsOnly)
+      void localExpertsApi
+        .list()
+        .then((items) => {
+          if (active) setExperts(items);
+        })
+        .catch((error: unknown) => {
+          if (active) setExpertError(error);
+        });
     setSourceGrant("");
     setOutputGrant("");
     setSource("");
@@ -141,7 +146,7 @@ export default function LocalDocxPanel({
       active = false;
       window.removeEventListener("colink:docx-status", receive);
     };
-  }, [deviceId]);
+  }, [artifactsOnly, deviceId]);
 
   useEffect(() => {
     if (connected) send({ action: "list" });
@@ -228,6 +233,59 @@ export default function LocalDocxPanel({
         (task) => task.id === previewId && grantForArtifact(task),
       )
     : undefined;
+  const activePreviewId = previewTask?.id;
+  useEffect(() => {
+    if (activePreviewId) previewRegion.current?.focus();
+    else setPreviewId(null);
+  }, [activePreviewId]);
+
+  const previewButton = (task: LocalTask) => (
+    <Button
+      size="small"
+      onClick={(event) => {
+        previewTrigger.current = event.currentTarget;
+        if (activePreviewId === task.id) previewRegion.current?.focus();
+        else setPreviewId(task.id);
+      }}
+    >
+      {t("localDocx.previewArtifact")}
+    </Button>
+  );
+  const preview = previewTask && (
+    <section
+      aria-label={t("localDocx.previewArtifact")}
+      ref={previewRegion}
+      tabIndex={-1}
+    >
+      <Space wrap>
+        <Typography.Title level={5}>
+          {t("localDocx.previewArtifact")}
+        </Typography.Title>
+        <Button
+          size="small"
+          onClick={() => {
+            setPreviewId(null);
+            previewTrigger.current?.focus();
+          }}
+        >
+          {t("common.close")}
+        </Button>
+      </Space>
+      <div>
+        <Typography.Text style={{ overflowWrap: "anywhere" }}>
+          {previewTask.output}
+        </Typography.Text>
+      </div>
+      <div className={styles.artifactPreview}>
+        <LocalArtifactPreview
+          key={previewTask.id}
+          deviceId={deviceId}
+          taskId={previewTask.id}
+          filename={previewTask.output.split(/[/\\]/).at(-1) ?? ""}
+        />
+      </div>
+    </section>
+  );
 
   const hasSource =
     source.trim() && state.grants.some((grant) => grant.id === sourceGrant);
@@ -284,6 +342,36 @@ export default function LocalDocxPanel({
     }
     dispatch({ ...taskCommand, request_id: requestId });
   };
+
+  if (artifactsOnly) {
+    const artifacts = connected ? state.tasks.filter(grantForArtifact) : [];
+    return (
+      <div className={styles.taskLayout}>
+        <Card title={t("localDocx.artifacts")}>
+          {artifacts.length ? (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              {artifacts.map((task) => (
+                <div key={task.id}>
+                  <Typography.Text
+                    copyable
+                    style={{ overflowWrap: "anywhere" }}
+                  >
+                    {task.output}
+                  </Typography.Text>{" "}
+                  {previewButton(task)}
+                </div>
+              ))}
+            </Space>
+          ) : (
+            <Typography.Text type="secondary">
+              {t("localDocx.noArtifacts")}
+            </Typography.Text>
+          )}
+        </Card>
+        {preview && <div className={styles.saveLocation}>{preview}</div>}
+      </div>
+    );
+  }
 
   return (
     <Card
@@ -743,15 +831,9 @@ export default function LocalDocxPanel({
                           >
                             {task.output}
                           </Typography.Text>
-                          {connected && grantForArtifact(task) && (
-                            <Button
-                              size="small"
-                              onClick={() => setPreviewId(task.id)}
-                              aria-pressed={previewTask?.id === task.id}
-                            >
-                              {t("localDocx.previewArtifact")}
-                            </Button>
-                          )}
+                          {connected &&
+                            grantForArtifact(task) &&
+                            previewButton(task)}
                         </div>
                       )}
                       {task.status === "cancelled" && (
@@ -829,41 +911,23 @@ export default function LocalDocxPanel({
               </section>
             )}
           </div>
-          <aside
-            className={styles.saveLocation}
-            aria-label={t("localDocx.saveLocation")}
-          >
-            {previewTask && (
-              <>
-                <Typography.Title level={5}>
-                  {t("localDocx.previewArtifact")}
-                </Typography.Title>
-                <div className={styles.artifactPreview}>
-                  <LocalArtifactPreview
-                    key={previewTask.id}
-                    deviceId={deviceId}
-                    taskId={previewTask.id}
-                    filename={previewTask.output.split(/[/\\]/).at(-1) ?? ""}
-                  />
-                </div>
-              </>
-            )}
-            <Typography.Title level={5}>
-              {t("localDocx.saveLocation")}
-            </Typography.Title>
-            {previewTask || saveDirectory ? (
-              <Typography.Text style={{ overflowWrap: "anywhere" }}>
-                {
-                  (previewTask ? grantForArtifact(previewTask) : saveDirectory)
-                    ?.path
-                }
-              </Typography.Text>
-            ) : (
-              <Typography.Text type="secondary">
-                {t("localDocx.chooseSaveLocation")}
-              </Typography.Text>
-            )}
-          </aside>
+          <div className={styles.saveLocation}>
+            <aside aria-label={t("localDocx.saveLocation")}>
+              <Typography.Title level={5}>
+                {t("localDocx.saveLocation")}
+              </Typography.Title>
+              {saveDirectory ? (
+                <Typography.Text style={{ overflowWrap: "anywhere" }}>
+                  {saveDirectory.path}
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  {t("localDocx.chooseSaveLocation")}
+                </Typography.Text>
+              )}
+            </aside>
+            {preview}
+          </div>
         </div>
       </Space>
     </Card>

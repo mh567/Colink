@@ -52,7 +52,8 @@ export default function LocalArtifactPreview({
       window.removeEventListener(eventName, receive);
       if (reply.error || typeof reply.data !== "string") {
         setError(
-          reply.error === "ARTIFACT_PREVIEW_TOO_LARGE"
+          reply.error === "ARTIFACT_PREVIEW_TOO_LARGE" ||
+            reply.error === "ARTIFACT_PREVIEW_CHANGED"
             ? reply.error
             : "ARTIFACT_PREVIEW_UNAVAILABLE",
         );

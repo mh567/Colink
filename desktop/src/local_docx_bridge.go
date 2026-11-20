@@ -87,6 +87,9 @@ func (a *App) emitDOCXResult(s docxSession, err error, importID string) {
 	if err != nil {
 		event.Error = presentFileopsError(s.Locale, err).Error()
 	}
+	for i := range event.Tasks {
+		event.Tasks[i].OutputHash = ""
+	}
 	// Local identities are only for reopening the exact directory, not UI data.
 	for i := range event.Grants {
 		event.Grants[i].Identity = ""

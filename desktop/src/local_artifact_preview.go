@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -16,6 +18,12 @@ const artifactPreviewLimit = 8 * 1024 * 1024
 
 var errArtifactPreviewUnavailable = errors.New("ARTIFACT_PREVIEW_UNAVAILABLE")
 var errArtifactPreviewTooLarge = errors.New("ARTIFACT_PREVIEW_TOO_LARGE")
+var errArtifactPreviewChanged = errors.New("ARTIFACT_PREVIEW_CHANGED")
+
+func artifactOutputDigest(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
 
 func (w *localDOCX) previewArtifact(s docxSession, taskID string) ([]byte, error) {
 	state, err := w.state(s)
@@ -36,6 +44,9 @@ func (w *localDOCX) previewArtifact(s docxSession, taskID string) ([]byte, error
 			}
 			var data []byte
 			err = w.withGrant(s, grant.ID, false, func(root *os.Root) error {
+				if task.OutputHash == "" {
+					return errArtifactPreviewChanged
+				}
 				file, size, err := openLocalTaskSource(root, filepath.Base(task.Output))
 				if err != nil {
 					return err
@@ -45,12 +56,22 @@ func (w *localDOCX) previewArtifact(s docxSession, taskID string) ([]byte, error
 					return errArtifactPreviewTooLarge
 				}
 				data, err = io.ReadAll(io.LimitReader(file, artifactPreviewLimit+1))
+				if err != nil {
+					return err
+				}
 				if len(data) > artifactPreviewLimit {
 					return errArtifactPreviewTooLarge
 				}
-				return err
+				// File metadata can't identify bytes after an in-place edit or path replacement.
+				if artifactOutputDigest(data) != task.OutputHash {
+					return errArtifactPreviewChanged
+				}
+				return nil
 			})
-			return data, err
+			if err != nil {
+				return nil, err
+			}
+			return data, nil
 		}
 	}
 	return nil, errArtifactPreviewUnavailable
@@ -77,6 +98,8 @@ func (a *App) handleArtifactPreview(window application.Window, raw string, info 
 			event["data"] = data
 		case errors.Is(err, errArtifactPreviewTooLarge):
 			event["error"] = errArtifactPreviewTooLarge.Error()
+		case errors.Is(err, errArtifactPreviewChanged):
+			event["error"] = errArtifactPreviewChanged.Error()
 		default:
 			event["error"] = errArtifactPreviewUnavailable.Error()
 		}

@@ -27,6 +27,7 @@
   },
   "devices": {
     "startTaskHint": "Connect an approved desktop device to start a local task.",
+    "viewFilesHint": "Connect an approved desktop device to view local task outputs.",
     "title": "My devices",
     "subtitle": "View approval and connection status for your devices.",
     "desktopRequired": "Use the desktop client to connect this device. The browser can only display device status. First-time connections require administrator approval.",
@@ -7551,9 +7552,12 @@
     }
   },
   "localDocx": {
+    "artifacts": "Local task outputs",
+    "noArtifacts": "No completed outputs in authorized folders.",
     "previewArtifact": "Preview output",
     "previewErrors": {
       "ARTIFACT_PREVIEW_UNAVAILABLE": "The output is unavailable. Check the directory grant and desktop connection.",
+      "ARTIFACT_PREVIEW_CHANGED": "This task's output could not be verified. Check the file on this computer.",
       "ARTIFACT_PREVIEW_TOO_LARGE": "Preview supports output files up to 8 MB."
     },
     "saveLocation": "Authorized save location",

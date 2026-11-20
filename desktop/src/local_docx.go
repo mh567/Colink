@@ -82,6 +82,7 @@ type docxTask struct {
 	Instruction string   `json:"instruction"`
 	Source      string   `json:"source"`
 	Output      string   `json:"output"`
+	OutputHash  string   `json:"output_hash,omitempty"`
 	Status      string   `json:"status"`
 	Error       string   `json:"error,omitempty"`
 	Operation   string   `json:"operation,omitempty"`
@@ -848,6 +849,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 	defer releaseTask()
 	outputWritten := false
 	audited := false
+	var data []byte
 	defer func() {
 		event := "completed"
 		switch {
@@ -873,6 +875,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 			event = "failed"
 		default:
 			task.Status = "completed"
+			task.OutputHash = artifactOutputDigest(data)
 		}
 		var receipts []fileAuditReceipt
 		if audited {
@@ -897,7 +900,7 @@ func (w *localDOCX) run(s docxSession, request docxRequest, current func() error
 		return task, err
 	}
 	audited = true
-	data, err := w.generateLocalOutput(s, request, source, current, addStep)
+	data, err = w.generateLocalOutput(s, request, source, current, addStep)
 	if err != nil {
 		return task, err
 	}

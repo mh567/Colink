@@ -51,6 +51,7 @@ export const pathToKey: Record<string, string> = {
   "/chat": "chat",
   "/devices": "devices",
   "/devices/tasks": "local-tasks",
+  "/files": "files",
   // Common
   "/experts": "experts",
   "/tasks": "tasks",
@@ -170,11 +171,8 @@ export const routeConfigs: RouteConfig[] = [
   },
   { path: "/token-usage", element: <TokenUsagePage /> },
   { path: "/devices", element: <DevicesPage /> },
-  { path: "/devices/tasks", element: <DevicesPage taskView /> },
-  {
-    path: "/files",
-    element: <Navigate to="/chat" replace state={{ openFiles: true }} />,
-  },
+  { path: "/devices/tasks", element: <DevicesPage view="tasks" /> },
+  { path: "/files", element: <DevicesPage view="files" /> },
 
   // Control (RequirePermission via pathPermissionKeys in MainLayout)
   { path: "/acp", element: <ACPPage /> },

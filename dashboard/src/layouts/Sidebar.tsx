@@ -473,18 +473,6 @@ export default function Sidebar({
   }, [isMinimal, selectMinimalPane]);
 
   const handleNavigate = (path: string) => {
-    if (path === "/files" && onChatPath) {
-      const { pathname, search, hash, state } = location;
-      navigate(
-        { pathname, search, hash },
-        {
-          replace: true,
-          state: { ...state, openFiles: true },
-        },
-      );
-      if (isMobile) onToggle();
-      return;
-    }
     // When navigating to /chat, preserve the current chatId in the URL so the
     // Chat component is not remounted (key stays the same) and the user stays
     // on their most recent conversation instead of seeing a blank welcome screen.

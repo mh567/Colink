@@ -435,18 +435,6 @@ function ChatPageInner() {
     setActiveTab: setDockActiveTab,
   } = useChatDockPanel(isMobile, resolvedAgentId);
 
-  const filesOpenedAt = useRef<string>();
-  useEffect(() => {
-    if (
-      !resolvedAgentId ||
-      filesOpenedAt.current === location.key ||
-      !(location.state as { openFiles?: boolean } | null)?.openFiles
-    )
-      return;
-    filesOpenedAt.current = location.key;
-    openFileList();
-  }, [location.key, location.state, openFileList, resolvedAgentId]);
-
   const chromeCheckInFlightRef = useRef(false);
   const bridgeConnectionId =
     activeAgent?.bridge && activeAgent.bridge_connection_id

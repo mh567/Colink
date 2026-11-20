@@ -229,6 +229,7 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 	addStep("已登记操作意图与约束")
 	awaitingConfirmation := false
 	audited := false
+	var data []byte
 	defer func() {
 		event := "completed"
 		sendAudit := audited
@@ -259,6 +260,9 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 			event = "failed"
 		default:
 			task.Status = "completed"
+			if request.Action == "overwrite" {
+				task.OutputHash = artifactOutputDigest(data)
+			}
 		}
 		var auditErr error
 		if sendAudit {
@@ -291,7 +295,6 @@ func (w *localDOCX) runDestructive(s docxSession, request docxRequest, current f
 		return task, err
 	}
 	defer target.close()
-	var data []byte
 	if request.Action == "overwrite" {
 		source, sourceErr := w.openGrant(s, request.SourceGrant, false)
 		if sourceErr != nil {

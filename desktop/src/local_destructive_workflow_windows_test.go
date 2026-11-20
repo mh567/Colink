@@ -102,10 +102,17 @@ func TestLocalFileOverwritePersistsAndReplaysTheConfirmedDocument(t *testing.T) 
 			if text, docErr := readDOCX(bytes.NewReader(result), int64(len(result))); docErr != nil || text != "更新后的周报\n" {
 				t.Fatalf("updated document: %q, %v", text, docErr)
 			}
+			restarted := newLocalDOCX(worker.home)
+			defer restarted.close()
+			if got, previewErr := restarted.previewArtifact(session, task.ID); previewErr != nil || !bytes.Equal(got, result) {
+				t.Fatalf("overwrite preview did not return committed bytes: %v", previewErr)
+			}
 			if err = os.WriteFile(path, original, 0600); err != nil {
 				t.Fatal(err)
 			}
-			restarted := newLocalDOCX(worker.home)
+			if got, previewErr := restarted.previewArtifact(session, task.ID); len(got) != 0 || previewErr == nil || previewErr.Error() != "ARTIFACT_PREVIEW_CHANGED" {
+				t.Fatalf("overwrite preview returned %d bytes and %v after file changed", len(got), previewErr)
+			}
 			replay, err := restarted.run(session, request, current)
 			if err != nil || !reflect.DeepEqual(replay, task) {
 				t.Fatalf("replayed result: %+v, %v", replay, err)

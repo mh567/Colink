@@ -34,9 +34,9 @@ const STATUS_COLORS: Record<DeviceStatus, string> = {
 };
 
 export default function DevicesPage({
-  taskView = false,
+  view = "devices",
 }: {
-  taskView?: boolean;
+  view?: "devices" | "tasks" | "files";
 }) {
   const { t } = useTranslation();
   const user = useCurrentUser();
@@ -77,15 +77,15 @@ export default function DevicesPage({
     setLoadError(null);
     setManageError(null);
     setActionError(null);
-    if (!taskView) void refresh();
+    if (view === "devices") void refresh();
     return () => {
       requestId.current += 1;
     };
-  }, [refresh, taskView, user?.id]);
+  }, [refresh, view, user?.id]);
 
   useEffect(() => {
-    if (!taskView && native.event) void refresh();
-  }, [native.event, refresh, taskView]);
+    if (view === "devices" && native.event) void refresh();
+  }, [native.event, refresh, view]);
 
   const mutate = async (row: DeviceView, action: "approve" | "revoke") => {
     setWorkingId(row.device_id);
@@ -227,23 +227,32 @@ export default function DevicesPage({
     },
   ];
 
-  if (taskView) {
+  if (view !== "devices") {
+    const files = view === "files";
+    const deviceId = files ? connectedDeviceId : docxDeviceId;
     return (
       <PageShell
-        title={t("nav.localTasks")}
+        title={t(files ? "nav.files" : "nav.localTasks")}
         actions={<Link to="/devices">{t("nav.devices")}</Link>}
       >
-        {native.available && docxDeviceId ? (
+        {native.available && deviceId ? (
           <LocalDocxPanel
-            key={docxDeviceId}
-            deviceId={docxDeviceId}
-            connected={connectedDeviceId === docxDeviceId}
+            key={`${view}:${deviceId}`}
+            deviceId={deviceId}
+            connected={connectedDeviceId === deviceId}
+            artifactsOnly={files}
             disconnectCode={
               native.event?.type === "error" ? native.event.code : undefined
             }
           />
         ) : (
-          <Alert type="info" showIcon message={t("devices.startTaskHint")} />
+          <Alert
+            type="info"
+            showIcon
+            message={t(
+              files ? "devices.viewFilesHint" : "devices.startTaskHint",
+            )}
+          />
         )}
       </PageShell>
     );

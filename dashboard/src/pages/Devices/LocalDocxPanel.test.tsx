@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import LocalDocxPanel from "./LocalDocxPanel";
@@ -967,4 +967,49 @@ it("previews the selected task output locally and closes it when its directory g
   await publish([]);
   expect(screen.queryByText("Local result")).not.toBeInTheDocument();
   expect(screen.getByText("/samples/result.txt")).toBeVisible();
+});
+
+it("shows the selected save folder while previewing a previous output", async () => {
+  (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+  render(<LocalDocxPanel deviceId="mine" />);
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: false,
+          grants: [
+            { id: "previous", path: "/old-output", mode: "rw" },
+            { id: "next", path: "/next-output", mode: "rw" },
+          ],
+          tasks: [
+            {
+              id: "receipt",
+              format: "ocr",
+              output: "/old-output/result.txt",
+              status: "completed",
+            },
+          ],
+        },
+      }),
+    );
+  });
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "localDocx.previewArtifact" }),
+  );
+  await user.selectOptions(screen.getByLabelText("成果目录"), "next");
+  const save = screen.getByRole("complementary", {
+    name: "localDocx.saveLocation",
+  });
+  expect(within(save).getByText("/next-output")).toBeVisible();
+  const preview = screen.getByRole("region", {
+    name: "localDocx.previewArtifact",
+  });
+  expect(within(preview).getByText("/old-output/result.txt")).toBeVisible();
+  await user.click(
+    within(preview).getByRole("button", { name: "common.close" }),
+  );
+  expect(preview).not.toBeInTheDocument();
+  expect(within(save).getByText("/next-output")).toBeVisible();
 });
