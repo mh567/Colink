@@ -49,7 +49,12 @@ function openDialog(
 ): ReturnType<typeof vi.fn> {
   const destroy = vi.fn();
   confirmMock.mockImplementation((config) => {
-    render(<>{config.footer as ReactNode}</>);
+    render(
+      <>
+        {config.content as ReactNode}
+        {config.footer as ReactNode}
+      </>,
+    );
     return { destroy } as ReturnType<typeof modal.confirm>;
   });
   confirmDeleteConversation(t, onConfirm);
@@ -93,5 +98,15 @@ describe("confirmDeleteConversation", () => {
     });
 
     expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("renders warning distinguishing session deletion from memory and audit", () => {
+    openDialog((compact) => deleteConversation("agent-a", "thr_1", compact, t));
+
+    expect(screen.getByText("chat.deleteSessionBody")).toBeInTheDocument();
+    expect(
+      screen.getByText("chat.deleteSessionAndCompactHint"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("chat.deleteSessionOnlyHint")).toBeInTheDocument();
   });
 });

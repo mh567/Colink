@@ -33,7 +33,6 @@ async def test_resolve_thread_id_rejects_another_users_thread() -> None:
             user_id=2,
             thread_registry=registry,
             thread_id="owner-thread",
-            session_key=None,
         )
 
     assert exc_info.value.code == ErrorCode.FORBIDDEN

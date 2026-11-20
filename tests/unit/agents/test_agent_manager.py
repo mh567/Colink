@@ -853,9 +853,16 @@ def test_build_harness_config_shared_expert_preserves_checkpoint_backend(
     manager: AgentManager,
 ) -> None:
     row = replace(_row(config_json=json.dumps({"memory": {"memory_enabled": True}})), is_shared=1)
-    cfg = manager._build_harness_config(row)
-    assert cfg.memory_enabled is True
-    assert cfg.memory_access_enabled is False
+    from octop.infra.agents.manager import _HARNESS_AGENT_CONFIG_FIELDS
+
+    if "memory_access_enabled" not in _HARNESS_AGENT_CONFIG_FIELDS:
+        with pytest.raises(OctopError) as raised:
+            manager._build_harness_config(row)
+        assert raised.value.code is ErrorCode.SHARED_MEMORY_ISOLATION_UNAVAILABLE
+    else:
+        cfg = manager._build_harness_config(row)
+        assert cfg.memory_enabled is True
+        assert cfg.memory_access_enabled is False
 
 
 def test_format_agent_start_error_unwraps_exception_group() -> None:

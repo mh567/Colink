@@ -13,6 +13,7 @@ from octop.api.common.agent import assert_agent_access
 from octop.api.deps import current_user, get_server
 from octop.api.routers.chat.models import HitlResumeBody, PolishBody
 from octop.api.routers.chat.sse import format_sse
+from octop.i18n import error_message
 from octop.i18n.domains.slash import tr as slash_tr
 from octop.i18n.domains.stream import format_stream_error
 from octop.infra.agents.experts.catalog import (
@@ -26,6 +27,7 @@ from octop.infra.agents.experts.catalog import (
 from octop.infra.agents.settings.profile import welcome_from_row
 from octop.infra.agents.teams import is_team_agent
 from octop.infra.agents.teams.welcome import team_host_welcome_payload
+from octop.infra.errors import ErrorCode
 from octop.infra.gateway.hitl.coordinator import (
     HitlChannelCoordinator,
     HitlStreamContext,
@@ -252,22 +254,46 @@ async def resume_hitl(
                 {"type": "error", "message": slash_tr("hitl.expired", normalize_locale(locale))},
             )
             return
-        async for frame in iter_dashboard_hitl_resume_sse(
-            server=server,
-            processor=processor,
-            hitl_coordinator=hitl_coordinator,
-            agent_id=agent_id,
-            thread_id=body.thread_id,
-            user_id=user.id,
-            decisions=body.decisions,
-            pending=pending,
-            session_key=pending.session_key,
-            channel_type=pending.channel_type,
-            locale=locale,
-            is_disconnected=request.is_disconnected,
-            hitl_policy=body.hitl_policy.model_dump() if body.hitl_policy is not None else None,
-        ):
-            yield frame
+        gateway = server.app_runtime.gateway
+        row = gateway.thread_registry.get_thread(body.thread_id)
+        if row is None or row.agent_id != agent_id or row.user_id != user.id:
+            yield format_sse(
+                "chunk",
+                {
+                    "type": "error",
+                    "message": error_message(ErrorCode.THREAD_NOT_FOUND.value, locale),
+                },
+            )
+            return
+        hub = gateway.ws_hub
+        if not hub.try_begin_turn(body.thread_id):
+            yield format_sse(
+                "chunk",
+                {
+                    "type": "error",
+                    "message": error_message(ErrorCode.THREAD_TURN_ACTIVE.value, locale),
+                },
+            )
+            return
+        try:
+            async for frame in iter_dashboard_hitl_resume_sse(
+                server=server,
+                processor=processor,
+                hitl_coordinator=hitl_coordinator,
+                agent_id=agent_id,
+                thread_id=body.thread_id,
+                user_id=user.id,
+                decisions=body.decisions,
+                pending=pending,
+                session_key=pending.session_key,
+                channel_type=pending.channel_type,
+                locale=locale,
+                is_disconnected=request.is_disconnected,
+                hitl_policy=body.hitl_policy.model_dump() if body.hitl_policy is not None else None,
+            ):
+                yield frame
+        finally:
+            hub.mark_turn_idle(body.thread_id)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

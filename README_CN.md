@@ -248,7 +248,7 @@ pip install octop
 从源码用 uv 开发时：
 
 ```bash
-uv sync --extra local-embedding
+uv sync --locked --extra local-embedding
 ```
 
 ### 2. 初始化

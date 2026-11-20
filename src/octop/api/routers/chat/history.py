@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +19,6 @@ from octop.api.routers.chat.serialize import (
     _clamp_history_limit,
     _load_projected_thread_messages,
 )
-from octop.i18n import error_message
 from octop.infra.agents.security.hitl_session import parse_hitl_session_policy
 from octop.infra.agents.threads.artifact import thread_artifacts_payload
 from octop.infra.agents.threads.context_breakdown import SEGMENT_KEYS, compute_context_breakdown
@@ -28,13 +26,15 @@ from octop.infra.agents.threads.fork import fork_dashboard_thread
 from octop.infra.agents.workspace.dir import agent_facing_workspace_dir_from_config
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.gateway.hitl.coordinator import pending_hitl_payload
-from octop.infra.gateway.threads import ThreadRegistry, thread_row_has_messages
+from octop.infra.gateway.threads import (
+    ThreadRegistry,
+    delete_dashboard_thread,
+    thread_row_has_messages,
+)
 from octop.infra.history.service import HistoryArchive
-from octop.infra.history.trajectory.service import TrajectoryService
 from octop.infra.utils.locale import resolve_request_locale
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 def _agent_is_busy(server: Any, agent_id: str) -> bool:
@@ -91,7 +91,7 @@ def _require_thread(
     require_agent_row(agent_id, user=user, as_user=as_user, server=server)
     row = server.app_runtime.gateway.thread_registry.get_thread(thread_id)
     if row is None or row.agent_id != agent_id:
-        raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"thread {thread_id!r} not found")
+        raise OctopError.localized(ErrorCode.THREAD_NOT_FOUND)
     effective_uid = as_user if as_user is not None else user.id
     if row.user_id != effective_uid:
         raise OctopError(ErrorCode.FORBIDDEN, "thread not owned by user")
@@ -628,9 +628,9 @@ async def delete_thread(
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> Response:
-    """Remove a conversation thread, its checkpoint data, and its metadata.
+    """Remove a conversation's checkpoints, history and metadata.
 
-    Checkpoint deletion runs first. ``CHECKPOINT_DELETE_FAILED`` leaves
+    Conversation data is cleaned up first. ``CHECKPOINT_DELETE_FAILED`` leaves
     the thread row in place so the caller can retry, instead of dropping
     the only handle to data that is still on disk.
 
@@ -641,24 +641,9 @@ async def delete_thread(
     enough. Omitting ``compact`` keeps the previous empty 204.
     """
     _require_thread(server, agent_id, thread_id, user, as_user)
-    if server.app_runtime.gateway.ws_hub.is_turn_active(thread_id):
-        raise OctopError(
-            ErrorCode.THREAD_TURN_ACTIVE,
-            error_message(ErrorCode.THREAD_TURN_ACTIVE.value, "en"),
-        )
-    registry = server.app_runtime.agent_registry
-    if compact is False:
-        await registry.delete_thread_checkpoint(agent_id, thread_id, reclaim=False)
-    else:
-        await registry.delete_thread_checkpoint(agent_id, thread_id)
-    server.app_runtime.gateway.thread_registry.delete_thread(thread_id)
-    runtime = getattr(server, "app_runtime", None)
-    trajectory = getattr(runtime, "trajectory_service", None) if runtime is not None else None
-    if isinstance(trajectory, TrajectoryService):
-        try:
-            trajectory.delete_for_thread(thread_id)
-        except Exception:
-            logger.exception("trajectory cascade delete failed thread=%s", thread_id)
+    runtime = server.app_runtime
+    await delete_dashboard_thread(runtime, agent_id, thread_id, compact=compact)
+    registry = runtime.agent_registry
     if compact is None:
         return Response(status_code=204)
     compacted = False
