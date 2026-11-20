@@ -470,10 +470,21 @@ func main() {
 	app.Event.On("desktop:close", func(_ *application.CustomEvent) {
 		api.hideToTray()
 	})
-	installDragOverlay := func(_ *application.WindowEvent) { api.scheduleDragOverlay() }
-	win.OnWindowEvent(events.Mac.WebViewDidFinishNavigation, installDragOverlay)
-	win.OnWindowEvent(events.Windows.WebViewNavigationCompleted, installDragOverlay)
-	win.OnWindowEvent(events.Linux.WindowLoadFinished, installDragOverlay)
+	var bootOnce sync.Once
+	startBoot := func(_ *application.WindowEvent) {
+		bootOnce.Do(func() {
+			go api.boot()
+		})
+	}
+	onWebViewReady := func(ev *application.WindowEvent) {
+		api.scheduleDragOverlay()
+		startBoot(ev)
+	}
+	// Defer boot until WebView finishes initial load; calling SetURL during Windows WebView2 init panics.
+	win.OnWindowEvent(events.Common.WindowRuntimeReady, startBoot)
+	win.OnWindowEvent(events.Mac.WebViewDidFinishNavigation, onWebViewReady)
+	win.OnWindowEvent(events.Windows.WebViewNavigationCompleted, onWebViewReady)
+	win.OnWindowEvent(events.Linux.WindowLoadFinished, onWebViewReady)
 	settingsWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Colink 设置",
 		Width:            settingsWindowWidth,
@@ -538,9 +549,6 @@ func main() {
 	if err := api.sleep.set(store.get().PreventSleep); err != nil {
 		log.Printf("enable sleep prevention: %v", err)
 	}
-
-	api.scheduleDragOverlay()
-	go api.boot()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
