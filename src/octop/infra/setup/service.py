@@ -64,6 +64,16 @@ _ENV_SCOPE = "OCTOP_SERVICE_SCOPE"
 # agent subprocesses exhaust that and surface as EMFILE on accept().
 SERVICE_NOFILE_LIMIT = NOFILE_TARGET
 
+# Server runtime variables passed into service definitions when set in installer env.
+SERVICE_PRESERVED_ENV_VARS = (
+    "OCTOP_GREEN_PACKAGES",
+    "OPENSSL_armcap",
+    "OCTOP_DATABASE_URL",
+    "OCTOP_BIND_HOST",
+    "OCTOP_PORT",
+    "OCTOP_LOG_LEVEL",
+)
+
 
 @dataclass(frozen=True)
 class ServiceRuntime:
@@ -409,7 +419,7 @@ def render_systemd_unit(runtime: ServiceRuntime, *, user_unit: bool | None = Non
     env_map = getattr(os, "environ", None) or {}
     if user_unit:
         env_lines += "Environment=OCTOP_SYSTEMD_USER=1\n"
-    for name in ("OCTOP_GREEN_PACKAGES", "OPENSSL_armcap"):
+    for name in SERVICE_PRESERVED_ENV_VARS:
         if name in env_map:
             env_lines += f"Environment={_systemd_quote(f'{name}={env_map[name]}')}\n"
     nofile = _user_nofile_cap() if user_unit else SERVICE_NOFILE_LIMIT
@@ -906,7 +916,8 @@ def _launchd_status(scope: ServiceScope) -> tuple[bool, bool | None, str]:
 def probe_health(host: str, port: int) -> tuple[bool, str]:
     import httpx
 
-    url = f"http://{host}:{port}/api/health"
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
+    url = f"http://{probe_host}:{port}/api/health"
     try:
         response = httpx.get(url, timeout=3)
         response.raise_for_status()

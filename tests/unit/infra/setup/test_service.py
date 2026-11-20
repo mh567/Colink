@@ -94,6 +94,7 @@ def test_render_systemd_unit_preserves_green_packages_and_armcap(
     packages = root / "packages"
     monkeypatch.setenv("OCTOP_GREEN_PACKAGES", str(packages))
     monkeypatch.setenv("OPENSSL_armcap", "0x3f")
+    monkeypatch.setenv("OCTOP_DATABASE_URL", "postgresql://octop:secret@127.0.0.1:5432/colink")
 
     unit = render_systemd_unit(runtime, user_unit=False)
     lines = unit.splitlines()
@@ -111,6 +112,7 @@ def test_render_systemd_unit_preserves_green_packages_and_armcap(
     assert f"OCTOP_GREEN_PACKAGES={packages}" in env
     assert f"OCTOP_HOME={runtime.home}" in env
     assert "OPENSSL_armcap=0x3f" in env
+    assert "OCTOP_DATABASE_URL=postgresql://octop:secret@127.0.0.1:5432/colink" in env
 
 
 def test_render_launchd_plist_preserves_green_packages_and_armcap(
@@ -127,6 +129,33 @@ def test_render_launchd_plist_preserves_green_packages_and_armcap(
     assert plist["WorkingDirectory"] == str(root)
     assert plist["EnvironmentVariables"]["OCTOP_GREEN_PACKAGES"] == str(packages)
     assert plist["EnvironmentVariables"]["OPENSSL_armcap"] == "0x3f"
+
+
+def test_probe_health_rewrites_inaddr_any_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested_urls: list[str] = []
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, bool]:
+            return {"ok": True}
+
+    def _fake_get(url: str, timeout: int = 3) -> _FakeResponse:
+        requested_urls.append(url)
+        return _FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", _fake_get)
+
+    ok, detail = service_mod.probe_health("0.0.0.0", 8088)
+    assert ok is True
+    assert requested_urls[-1] == "http://127.0.0.1:8088/api/health"
+
+    ok, detail = service_mod.probe_health("::", 8088)
+    assert ok is True
+    assert requested_urls[-1] == "http://127.0.0.1:8088/api/health"
 
 
 def test_render_systemd_unit_user_scope(tmp_path: Path) -> None:
