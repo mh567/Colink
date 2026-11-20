@@ -25,14 +25,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: ${OCTOP_IMAGE:-octop:latest}
+    image: octop:latest
     container_name: octop
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "${OCTOP_CPUS_LIMIT:-4.0}"
-          memory: "${OCTOP_MEM_LIMIT:-4096M}"
     ulimits:
       nofile:
         soft: 65535

@@ -5,18 +5,8 @@
 #
 # 适用场景:
 #   断网物理机/虚拟机、企业私有云环境，使用已导入的离线容器镜像启动服务。
-#   支持通过 docker load -i colink-server-<arch>.tar.gz 导入的本地镜像。
-#
-# 前置准备（离线导入镜像）:
-#   # x86_64 主机:
-#   docker load -i colink-server-amd64.tar.gz
-#   # 或 ARM64 / 银河麒麟主机:
-#   docker load -i colink-server-arm64.tar.gz
-#
-# 用法:
-#   docker compose -f docker/docker-compose.offline.yml up -d
-#   # 指定自定义离线导入的镜像标签:
-#   OCTOP_IMAGE=octop:1.0.3b3 docker compose -f docker/docker-compose.offline.yml up -d
+#   按 docs/T22-双架构服务端离线容器部署.md 导入与主机架构匹配的镜像。
+#   OCTOP_IMAGE=octop:1.0.3b3-lite-arm64 docker compose -f docker/docker-compose.offline.yml up --wait
 #
 # 资源限制与调优:
 #   默认限制 4 核 CPU、4096MB 内存，nofile 软硬限制 65535。
@@ -48,6 +38,7 @@ services:
       - OCTOP_BIND_HOST=0.0.0.0
       - OCTOP_PORT=${OCTOP_PORT:-8088}
       - OCTOP_LOG_LEVEL=${OCTOP_LOG_LEVEL:-info}
+      - OCTOP_PORTAL_ORIGIN=
       - OCTOP_DEFAULT_PASSWORD=${OCTOP_DEFAULT_PASSWORD:-}
       - OCTOP_ADMIN_USERNAME=${OCTOP_ADMIN_USERNAME:-admin}
       - OCTOP_ADMIN_DISPLAY_NAME=${OCTOP_ADMIN_DISPLAY_NAME:-Admin}

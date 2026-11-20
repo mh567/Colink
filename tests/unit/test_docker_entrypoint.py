@@ -462,6 +462,33 @@ def test_entrypoint_stays_quiet_when_shm_is_enough(tmp_path: Path) -> None:
 
 
 @bash_only
+@pytest.mark.parametrize(
+    ("arch", "features", "override", "expected"),
+    [
+        ("aarch64", "asimd sve2", "", "0"),
+        ("arm64", "asimd sve sve2", "", "unset"),
+        ("aarch64", "asimd", "", "unset"),
+        ("aarch64", "asimd sve2", "32", "32"),
+        ("x86_64", "asimd sve2", "", "unset"),
+    ],
+)
+def test_entrypoint_exports_openssl_armcap_only_when_required(
+    tmp_path: Path, arch: str, features: str, override: str, expected: str
+) -> None:
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text(f"Features\t: {features}\n", encoding="utf-8")
+    script = (
+        _source_helpers()
+        + f'\nuname() {{ printf "%s" "{arch}"; }}\n'
+        + f'octop_prepare_arm_runtime "{_bash_path(cpuinfo)}"\n'
+        + """"$BASH" -c 'printf "%s" "${OPENSSL_armcap:-unset}"'\n"""
+    )
+    result = _bash(script, env={"OPENSSL_armcap": override})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
+@bash_only
 def test_entrypoint_arm_prepare_skips_non_arm() -> None:
     script = (
         _source_helpers()

@@ -15,14 +15,9 @@
 
 services:
   octop:
-    image: ${OCTOP_IMAGE:-ghcr.nju.edu.cn/tencentcloud/octop:latest}
+    image: ghcr.nju.edu.cn/tencentcloud/octop:latest
     container_name: octop
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "${OCTOP_CPUS_LIMIT:-4.0}"
-          memory: "${OCTOP_MEM_LIMIT:-4096M}"
     ulimits:
       nofile:
         soft: 65535

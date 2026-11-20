@@ -22,14 +22,11 @@ This directory contains the Docker build and deployment assets for Octop.
 
 **Option 1: Offline container deployment (recommended for air-gapped / production)**
 
-For offline environments, Kylin V10 or private clouds, load the pre-built tarball:
+Follow the [offline deployment guide](../docs/T22-双架构服务端离线容器部署.md) to verify and load the archive for your host architecture. Example for ARM64:
 
 ```bash
-# Load offline container image (for amd64 or arm64)
-docker load -i octop-server-arm64.tar.gz
-
-# Start service with dedicated offline compose (caps at 4 CPUs, 4096MB RAM, 65535 fds, pull_policy: never)
-docker compose -f docker/docker-compose.offline.yml up -d
+docker load -i octop-server-1.0.3b3-arm64.tar.gz
+OCTOP_IMAGE=octop:1.0.3b3-lite-arm64 docker compose -f docker/docker-compose.offline.yml up --wait
 ```
 
 **Option 2: Compose with local build (development)**
@@ -44,7 +41,7 @@ Open `http://localhost:8088`. A valid `OCTOP_DEFAULT_PASSWORD` (≥8 characters 
 
 Compose sets the open-file limit to 65535 for multi-agent workloads. Server startup also raises the soft limit up to 65535 within the inherited hard limit and logs the effective limits. Recreate existing containers to apply changed Compose limits; a restart alone does not change their hard limit.
 
-**Option 2: Build script**
+**Option 3: Build script**
 
 ```bash
 bash docker/docker_build.sh
