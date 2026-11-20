@@ -1,0 +1,45 @@
+.taskLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(12rem, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.saveLocation {
+  padding: 1rem;
+  border: 1px solid var(--fn-border-primary);
+  border-radius: var(--fn-radius-md);
+  background: var(--fn-surface-sunken);
+}
+
+.saveLocation > aside + section {
+  margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+  .taskLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.taskBody {
+  min-width: 0;
+}
+
+.taskBody > section {
+  margin-top: 1rem;
+}
+
+.artifactPreview {
+  height: 25rem;
+  overflow: auto;
+  margin-bottom: 1rem;
+  border: 1px solid var(--fn-border-primary);
+}
+
+@media (min-width: 901px) {
+  .saveLocation {
+    position: sticky;
+    top: 0;
+  }
+}

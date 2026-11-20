@@ -492,7 +492,7 @@ async def test_delete_thread_cascades_trajectory_ledger(env_alice_bob_agent: Any
     assert service.list_events(thread_id, before_seq=None, limit=10, kinds=None) == []
 
 
-async def test_delete_thread_succeeds_when_trajectory_cascade_raises(
+async def test_delete_thread_can_retry_after_trajectory_cleanup_fails(
     env_alice_bob_agent: Any,
 ) -> None:
     client, srv, alice_auth, _bob_auth, agent_id = env_alice_bob_agent
@@ -504,16 +504,23 @@ async def test_delete_thread_succeeds_when_trajectory_cascade_raises(
     def _boom(_thread_id: str) -> int:
         raise RuntimeError("ledger down")
 
+    delete_archive = service.delete_for_thread
     service.delete_for_thread = _boom  # type: ignore[method-assign]
 
     response = await client.delete(
         f"/api/agents/{agent_id}/threads/{thread_id}",
         headers=alice_auth,
     )
-    assert response.status_code == 204, response.text
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "CHECKPOINT_DELETE_FAILED"
     listed = await client.get(f"/api/agents/{agent_id}/threads", headers=alice_auth)
     assert listed.status_code == 200
-    assert all(item["thread_id"] != thread_id for item in listed.json())
+    assert any(item["thread_id"] == thread_id for item in listed.json())
+
+    service.delete_for_thread = delete_archive  # type: ignore[method-assign]
+    retry = await client.delete(f"/api/agents/{agent_id}/threads/{thread_id}", headers=alice_auth)
+    assert retry.status_code == 204, retry.text
+    assert service.list_events(thread_id, before_seq=None, limit=10, kinds=None) == []
 
 
 async def test_live_sse_unsubscribes_on_cancel(env_alice_bob_agent: Any) -> None:

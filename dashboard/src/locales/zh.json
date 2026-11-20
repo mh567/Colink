@@ -1,6 +1,7 @@
 {
   "app": {
-    "pageTitle": "Octop - 懂你、帮你、陪你成长的智能伙伴"
+    "workspace": "企业工作空间",
+    "pageTitle": "Colink · 企业 AI 工作空间"
   },
   "layout": {
     "collapsePanel": "收起面板",
@@ -25,6 +26,8 @@
     "close": "关闭"
   },
   "devices": {
+    "startTaskHint": "接入已批准的桌面设备后，即可创建本机任务。",
+    "viewFilesHint": "接入已批准的桌面设备后，即可查看本机任务产物。",
     "title": "我的设备",
     "subtitle": "查看本人设备的审批和在线状态。",
     "desktopRequired": "请使用桌面客户端接入当前设备。浏览器仅可查看设备状态。首次接入后需管理员批准。",
@@ -172,8 +175,10 @@
     "EXPERT_TEMPLATE_NOT_FOUND": "未找到专家模板。",
     "DEFAULT_EXPERT_FAILED": "无法创建默认专家。",
     "AGENT_NOT_RUNNING": "此专家未启用。",
-    "CHECKPOINT_DELETE_FAILED": "对话数据没有删除，会话已保留，请重试。",
+    "CHECKPOINT_DELETE_FAILED": "会话未清理完毕，已保留，可重试。",
+    "THREAD_NOT_FOUND": "会话不存在。",
     "THREAD_TURN_ACTIVE": "回复进行中，请先停止再删除。",
+    "SHARED_MEMORY_ISOLATION_UNAVAILABLE": "当前运行库无法在共享专家时隔离私有记忆。",
     "AGENT_FAILED": "专家启动失败。",
     "AGENT_BUSY": "专家正忙。",
     "AGENT_NAME_TAKEN": "该名称已被使用，请换一个名称。",
@@ -317,8 +322,11 @@
     "LOCAL_EXPERT_REVIEW_REQUIRED": "请通过本机专家的离线包审核发布入口操作。"
   },
   "nav": {
+    "localTasks": "任务",
+    "files": "文件",
+    "newTask": "新建任务",
     "chat": "对话",
-    "devices": "我的设备",
+    "devices": "授权与设备",
     "common": "常用",
     "control": "控制",
     "experts": "专家",
@@ -377,7 +385,7 @@
     "remoteAndroid": "远程手机",
     "records": "任务",
     "paneSettings": "设置",
-    "paneRecords": "任务",
+    "paneRecords": "最近对话",
     "customize": "自定义导航",
     "customizeTitle": "自定义导航",
     "ungrouped": "未分组",
@@ -474,6 +482,12 @@
     "allowDownloadHint": "关闭后，其他已能访问此包的用户不能导出 ZIP。创建者和管理员仍可下载。"
   },
   "knowledgeBases": {
+    "libraryScope": "知识库范围",
+    "allLibraries": "全部",
+    "personalLibrary": "个人私有",
+    "sharedLibrary": "企业共享",
+    "originalUnavailable": "原文不可访问",
+
     "title": "知识库",
     "subtitle": "上传文档建立索引，在对话中检索引用，也可共享给同实例用户",
     "featureTitle": "启用知识库",
@@ -4248,6 +4262,7 @@
     "themeLight": "浅色",
     "themeDark": "深色",
     "palette": {
+      "fog": "雾蓝",
       "rose": "玫瑰",
       "tech": "科技",
       "indigo": "靛蓝",
@@ -7492,6 +7507,24 @@
     "incompleteResult": "此结果仅基于部分页面内容。",
     "source": "来源",
     "screenshot": "当前页截图",
+    "forms": "表单填写",
+    "readForms": "读取表单",
+    "form": "表单",
+    "selectForm": "选择表单",
+    "submitter": "提交动作",
+    "selectSubmitter": "选择提交动作",
+    "formInstruction": "填写任务",
+    "suggestForm": "生成填写建议",
+    "preview": "填写建议预览",
+    "submitForm": "提交表单",
+    "operationStatus": "表单操作状态",
+    "operationSent": "操作已发出，请核对业务页面结果。",
+    "operationUnknown": "结果待核对，请先检查业务页面。",
+    "operationStale": "页面内容已变化，请重新读取表单。",
+    "operationCancelled": "提交已取消。",
+    "operationNoResponse": "未收到提交回执，请先检查业务页面，之后再决定是否发起新任务。",
+    "checked": "已勾选",
+    "unchecked": "未勾选",
     "uploadTitle": "上传网页附件",
     "uploadHint": "从授权目录选择文件上传到当前网页。",
     "uploadGrant": "选择上传目录授权",
@@ -7527,6 +7560,8 @@
       "BROWSER_SERVICE_UNAVAILABLE": "浏览器服务暂不可用，请稍后重试。",
       "BROWSER_TIMEOUT": "浏览器操作超时，请重试。",
       "BROWSER_NO_RESPONSE": "未收到桌面客户端回执，请重新连接后重试。",
+      "BROWSER_FORM_STALE": "页面表单已变化，请重新读取并核对目标。",
+      "BROWSER_FORM_SUGGEST_FAILED": "无法生成填写建议，请检查企业模型配置后重试。",
       "BROWSER_ACTION_CHANGED": "页面或目标已改变，请核对后重新确认。",
       "BROWSER_TRANSFER_UNCERTAIN": "操作结果不确定，请先到浏览器核对再决定是否重试。",
       "BROWSER_FILE_TOO_LARGE": "文件超过 20 MiB 传输上限。",
@@ -7537,6 +7572,17 @@
     }
   },
   "localDocx": {
+    "artifacts": "本机任务产物",
+    "noArtifacts": "授权目录中没有已完成任务的产物。",
+    "previewArtifact": "预览产物",
+    "previewErrors": {
+      "ARTIFACT_PREVIEW_UNAVAILABLE": "无法预览产物，请核对目录授权和桌面连接。",
+      "ARTIFACT_PREVIEW_CHANGED": "无法确认这是本次任务的产物，请在本机核对文件。",
+      "ARTIFACT_PREVIEW_TOO_LARGE": "预览仅支持不超过 8 MB 的产物。"
+    },
+    "saveLocation": "授权保存位置",
+    "chooseSaveLocation": "选择可写的授权目录。",
+
     "deviceDisconnected": "设备连接已断开，受控操作已暂停。请在上方重新接入设备。",
     "title": "本机文档任务",
     "privacy": "原始文件保留在本机。所选文档的正文经服务端发送到已配置模型。新建任务遇到同名文件时停止。",

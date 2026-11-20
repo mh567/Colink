@@ -469,4 +469,3 @@ func TestLocalDOCXParseCancelRequest(t *testing.T) {
 		t.Fatalf("unexpected parsed request: %+v", req)
 	}
 }
-

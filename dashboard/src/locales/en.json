@@ -1,6 +1,7 @@
 {
   "app": {
-    "pageTitle": "Octop - An intelligent partner that understands you, helps you, and grows with you"
+    "workspace": "Enterprise workspace",
+    "pageTitle": "Colink · Enterprise AI workspace"
   },
   "layout": {
     "collapsePanel": "Collapse panel",
@@ -25,6 +26,8 @@
     "close": "Close"
   },
   "devices": {
+    "startTaskHint": "Connect an approved desktop device to start a local task.",
+    "viewFilesHint": "Connect an approved desktop device to view local task outputs.",
     "title": "My devices",
     "subtitle": "View approval and connection status for your devices.",
     "desktopRequired": "Use the desktop client to connect this device. The browser can only display device status. First-time connections require administrator approval.",
@@ -172,8 +175,10 @@
     "EXPERT_TEMPLATE_NOT_FOUND": "Expert template not found.",
     "DEFAULT_EXPERT_FAILED": "Could not create the default expert.",
     "AGENT_NOT_RUNNING": "This expert is not enabled.",
-    "CHECKPOINT_DELETE_FAILED": "Conversation data was not deleted. The thread is still here; try again.",
+    "CHECKPOINT_DELETE_FAILED": "Conversation cleanup did not finish. The conversation was kept so you can retry.",
+    "THREAD_NOT_FOUND": "Conversation not found.",
     "THREAD_TURN_ACTIVE": "A reply is still in progress. Stop it, then delete this conversation.",
+    "SHARED_MEMORY_ISOLATION_UNAVAILABLE": "This runtime cannot isolate private memory when sharing an expert.",
     "AGENT_FAILED": "Agent failed to start.",
     "AGENT_BUSY": "Agent is busy.",
     "AGENT_NAME_TAKEN": "This name is already in use. Please choose another.",
@@ -317,8 +322,11 @@
     "LOCAL_EXPERT_REVIEW_REQUIRED": "Use the local expert offline package review and publication workflow."
   },
   "nav": {
+    "localTasks": "Tasks",
+    "files": "Files",
+    "newTask": "New task",
     "chat": "Conversation",
-    "devices": "My devices",
+    "devices": "Authorization & devices",
     "common": "Common",
     "control": "Control",
     "experts": "Experts",
@@ -377,7 +385,7 @@
     "remoteAndroid": "Remote Phone",
     "records": "Tasks",
     "paneSettings": "Settings",
-    "paneRecords": "Tasks",
+    "paneRecords": "Recent conversations",
     "customize": "Customize navigation",
     "customizeTitle": "Customize navigation",
     "ungrouped": "Ungrouped",
@@ -474,6 +482,12 @@
     "allowDownloadHint": "When off, other users who can view this package cannot export it as a ZIP. The creator and admins can still download it."
   },
   "knowledgeBases": {
+    "libraryScope": "Library scope",
+    "allLibraries": "All",
+    "personalLibrary": "Private",
+    "sharedLibrary": "Enterprise shared",
+    "originalUnavailable": "Original unavailable",
+
     "title": "Knowledge Bases",
     "subtitle": "Upload and index documents for retrieval in chat, and share them if needed",
     "featureTitle": "Enable Knowledge Bases",
@@ -4248,6 +4262,7 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "palette": {
+      "fog": "Fog Blue",
       "rose": "Rose",
       "tech": "Tech",
       "indigo": "Indigo",
@@ -7492,6 +7507,24 @@
     "incompleteResult": "This result uses only part of the page content.",
     "source": "Source",
     "screenshot": "Screenshot of the current page",
+    "forms": "Form filling",
+    "readForms": "Read forms",
+    "form": "Form",
+    "selectForm": "Select a form",
+    "submitter": "Submit action",
+    "selectSubmitter": "Select a submit action",
+    "formInstruction": "Form task",
+    "suggestForm": "Generate field suggestions",
+    "preview": "Form suggestion preview",
+    "submitForm": "Submit form",
+    "operationStatus": "Form operation status",
+    "operationSent": "Action sent. Check the business page for the result.",
+    "operationUnknown": "Result needs checking. Check the business page first.",
+    "operationStale": "The page changed. Read the form again.",
+    "operationCancelled": "Submission cancelled.",
+    "operationNoResponse": "No submission receipt arrived. Check the business page before deciding whether to start a new task.",
+    "checked": "Checked",
+    "unchecked": "Unchecked",
     "uploadTitle": "Upload Web Attachment",
     "uploadHint": "Upload a file from an authorized directory to the current page.",
     "uploadGrant": "Select upload directory grant",
@@ -7527,6 +7560,8 @@
       "BROWSER_SERVICE_UNAVAILABLE": "The browser service is temporarily unavailable. Try again shortly.",
       "BROWSER_TIMEOUT": "The browser operation timed out. Try again.",
       "BROWSER_NO_RESPONSE": "The desktop client did not respond. Reconnect and try again.",
+      "BROWSER_FORM_STALE": "The form changed. Read it again and check the target.",
+      "BROWSER_FORM_SUGGEST_FAILED": "Could not generate field suggestions. Check the enterprise model configuration and try again.",
       "BROWSER_ACTION_CHANGED": "The page or target changed. Review it and confirm again.",
       "BROWSER_TRANSFER_UNCERTAIN": "The result is uncertain. Check the browser before repeating this operation.",
       "BROWSER_FILE_TOO_LARGE": "The file exceeds the 20 MiB transfer limit.",
@@ -7537,6 +7572,17 @@
     }
   },
   "localDocx": {
+    "artifacts": "Local task outputs",
+    "noArtifacts": "No completed outputs in authorized folders.",
+    "previewArtifact": "Preview output",
+    "previewErrors": {
+      "ARTIFACT_PREVIEW_UNAVAILABLE": "The output is unavailable. Check the directory grant and desktop connection.",
+      "ARTIFACT_PREVIEW_CHANGED": "This task's output could not be verified. Check the file on this computer.",
+      "ARTIFACT_PREVIEW_TOO_LARGE": "Preview supports output files up to 8 MB."
+    },
+    "saveLocation": "Authorized save location",
+    "chooseSaveLocation": "Select an authorized writable folder.",
+
     "deviceDisconnected": "Device connection lost. Controlled operations are paused. Reconnect above.",
     "title": "Local document tasks",
     "privacy": "Original files stay on this computer. Text from the selected document is sent through the server to the configured model. Create tasks stop if a file with the same name exists.",

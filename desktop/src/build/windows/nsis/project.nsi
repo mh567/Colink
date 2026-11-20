@@ -19,11 +19,11 @@ VIProductVersion "${INFO_FILEVERSION}"
 VIFileVersion    "${INFO_FILEVERSION}"
 
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
-VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
+VIAddVersionKey "FileDescription" "Colink Installer"
 VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
-VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
+VIAddVersionKey "ProductName"     "Colink"
 
 ManifestDPIAware true
 
@@ -60,7 +60,7 @@ LangString LANG_WAILS_WEBVIEW2_MISSING ${LANG_ENGLISH} "Microsoft Edge WebView2 
 !define WAILS_INSTALL_WEBVIEW_DETAILPRINT "$(LANG_WAILS_INSTALL_WEBVIEW)"
 !define WAILS_WEBVIEW2_MISSING_ERROR "$(LANG_WAILS_WEBVIEW2_MISSING)"
 
-Name "${INFO_PRODUCTNAME}"
+Name "Colink"
 !ifndef INSTALLER_OUTFILE
     !define INSTALLER_OUTFILE "..\..\..\bin\${INFO_PROJECTNAME}-desktop-windows-${ARCH}-${INFO_PRODUCTVERSION}.exe"
 !endif

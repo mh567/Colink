@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import LocalBrowserPanel from "./LocalBrowserPanel";
 import LocalDocxPanel from "./LocalDocxPanel";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,11 +29,15 @@ import { formatServerDateTime } from "../../utils/formatMessageTime";
 
 const STATUS_COLORS: Record<DeviceStatus, string> = {
   pending: "gold",
-  approved: "green",
+  approved: "success",
   revoked: "default",
 };
 
-export default function DevicesPage() {
+export default function DevicesPage({
+  view = "devices",
+}: {
+  view?: "devices" | "tasks" | "files";
+}) {
   const { t } = useTranslation();
   const user = useCurrentUser();
   const isAdmin = user?.role === "admin";
@@ -72,15 +77,15 @@ export default function DevicesPage() {
     setLoadError(null);
     setManageError(null);
     setActionError(null);
-    void refresh();
+    if (view === "devices") void refresh();
     return () => {
       requestId.current += 1;
     };
-  }, [refresh, user?.id]);
+  }, [refresh, view, user?.id]);
 
   useEffect(() => {
-    if (native.event) void refresh();
-  }, [native.event, refresh]);
+    if (view === "devices" && native.event) void refresh();
+  }, [native.event, refresh, view]);
 
   const mutate = async (row: DeviceView, action: "approve" | "revoke") => {
     setWorkingId(row.device_id);
@@ -222,6 +227,37 @@ export default function DevicesPage() {
     },
   ];
 
+  if (view !== "devices") {
+    const files = view === "files";
+    const deviceId = files ? connectedDeviceId : docxDeviceId;
+    return (
+      <PageShell
+        title={t(files ? "nav.files" : "nav.localTasks")}
+        actions={<Link to="/devices">{t("nav.devices")}</Link>}
+      >
+        {native.available && deviceId ? (
+          <LocalDocxPanel
+            key={`${view}:${deviceId}`}
+            deviceId={deviceId}
+            connected={connectedDeviceId === deviceId}
+            artifactsOnly={files}
+            disconnectCode={
+              native.event?.type === "error" ? native.event.code : undefined
+            }
+          />
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message={t(
+              files ? "devices.viewFilesHint" : "devices.startTaskHint",
+            )}
+          />
+        )}
+      </PageShell>
+    );
+  }
+
   return (
     <PageShell
       title={t("devices.title", "我的设备")}
@@ -277,7 +313,7 @@ export default function DevicesPage() {
                   <Tag color={STATUS_COLORS[native.event.status]}>
                     {statusLabel(native.event.status)}
                   </Tag>
-                  <Tag color={native.event.online ? "green" : undefined}>
+                  <Tag color={native.event.online ? "success" : undefined}>
                     {native.event.online
                       ? t("devices.online", "在线")
                       : t("devices.offline", "离线")}

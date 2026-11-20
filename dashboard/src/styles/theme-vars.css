@@ -1,6 +1,6 @@
 /* ===================================================================
    Octop Design System v3 – CSS Custom Properties
-   Default brand: Elegant Rose #E85D75
+   Colink default: Fog Blue
    Palettes via html[data-palette="rose|tech|indigo|teal|violet|emerald|amber|slate"]
    Mode via html[data-theme="light|dark"]
    =================================================================== */
@@ -370,7 +370,7 @@ html[data-theme="dark"] {
 
 /* ===================================================================
    Brand palettes — override only brand-tinted tokens
-   Default / data-palette="rose" uses the light/dark blocks above.
+   The legacy data-palette="rose" uses the light/dark blocks above.
    =================================================================== */
 
 /* ---------- TECH (#4B74FA) ---------- */
@@ -887,5 +887,99 @@ html[data-theme="dark"] body {
 /* ---- Smooth selection ---- */
 ::selection {
   background: var(--fn-color-brand);
-  color: #ffffff;
+  color: var(--fn-color-on-brand);
+}
+
+/* Colink · Fog Blue */
+html[data-palette="fog"] {
+  --fn-bg-page: var(--fn-bg-layout);
+  --fn-bg-base: var(--fn-bg-layout);
+  --fn-bg-sidebar: var(--fn-sidebar-bg);
+  --fn-bg-toolbar: var(--fn-header-bg);
+  --fn-bg-container: var(--fn-bg-primary);
+  --fn-bg-elevated: var(--fn-bg-primary);
+  --fn-surface: var(--fn-bg-primary);
+  --fn-assistant-bubble-bg: var(--fn-bg-primary);
+  --fn-assistant-bubble-bg-gradient: var(--fn-bg-primary);
+  --fn-bg-tertiary: var(--fn-bg-secondary);
+  --fn-bg-code: var(--fn-bg-secondary);
+  --fn-bg-input-label: var(--fn-bg-secondary);
+  --fn-bg-subtle: var(--fn-bg-secondary);
+  --fn-bg-secondary-hover: var(--fn-bg-secondary);
+  --fn-surface-sunken: var(--fn-bg-secondary);
+  --fn-sidebar-item-hover: var(--fn-bg-secondary);
+  --fn-bg-toolbar-hover: var(--fn-bg-secondary);
+  --fn-text-tertiary: var(--fn-text-secondary);
+  --fn-text-placeholder: var(--fn-text-secondary);
+  --fn-sidebar-group-text: var(--fn-text-secondary);
+  --fn-logo-color: var(--fn-text-brand);
+  --fn-color-brand: var(--fn-text-brand);
+  --fn-color-brand-soft: var(--fn-text-brand);
+  --fn-border-focus: var(--fn-text-brand);
+  --fn-row-selected-border: var(--fn-text-brand);
+  --fn-text-inverse: var(--fn-color-on-brand);
+  --fn-bg-active: var(--fn-bg-hover);
+  --fn-bg-selected: var(--fn-bg-hover);
+  --fn-bg-secondary-active: var(--fn-bg-hover);
+  --fn-sidebar-item-active-bg: var(--fn-bg-hover);
+  --fn-sidebar-item-active: var(--fn-bg-hover);
+  --fn-row-selected-bg: var(--fn-bg-hover);
+  --fn-row-selected-hover: var(--fn-bg-hover);
+  --fn-row-selected-alt-bg: var(--fn-bg-hover);
+  --fn-row-selected-alt-hover: var(--fn-bg-hover);
+  --fn-color-brand-bg: var(--fn-bg-hover);
+  --fn-color-brand-light: var(--fn-bg-hover);
+  --fn-bg-info-light: var(--fn-bg-hover);
+  --fn-success: var(--fn-color-success);
+  --fn-success-bg: var(--fn-bg-success-light);
+  --fn-border-secondary: var(--fn-border-primary);
+  --fn-border-tertiary: var(--fn-border-primary);
+  --fn-border-input-alt: var(--fn-border-primary);
+  --fn-border: var(--fn-border-primary);
+  --fn-border-color: var(--fn-border-primary);
+  --fn-border-strong: var(--fn-border-primary);
+  --fn-border-subtle: var(--fn-border-primary);
+  --fn-card-border-normal: var(--fn-border-primary);
+  --fn-sidebar-border: var(--fn-border-primary);
+  --fn-assistant-bubble-border: var(--fn-border-primary);
+}
+
+html[data-palette="fog"][data-theme="light"] {
+  --fn-bg-layout: #fcfdff;
+  --fn-sidebar-bg: #edf2f9;
+  --fn-header-bg: #f8faff;
+  --fn-bg-primary: #ffffff;
+  --fn-bg-secondary: #e8eef6;
+  --fn-text-primary: #243c59;
+  --fn-text-secondary: #526881;
+  --fn-text-brand: #345f90;
+  --fn-color-brand-hover: #2d5680;
+  --fn-color-on-brand: #ffffff;
+  --fn-bg-hover: #dfeafa;
+  --fn-sidebar-item-active-text: #2d5680;
+  --fn-color-success: #3f725f;
+  --fn-bg-success-light: #e8f3ed;
+  --fn-border-primary: #d9e2ee;
+  --fn-border-input: #798ea9;
+  --fn-assistant-glow-color: 52, 95, 144;
+}
+
+html[data-palette="fog"][data-theme="dark"] {
+  --fn-bg-layout: #1a2b40;
+  --fn-sidebar-bg: #15253a;
+  --fn-header-bg: #1d3048;
+  --fn-bg-primary: #233950;
+  --fn-bg-secondary: #14263b;
+  --fn-text-primary: #e3edfa;
+  --fn-text-secondary: #a5b9d2;
+  --fn-text-brand: #a6c6ee;
+  --fn-color-brand-hover: #bed8f5;
+  --fn-color-on-brand: #233e61;
+  --fn-bg-hover: #2a4b6e;
+  --fn-sidebar-item-active-text: #bed8f5;
+  --fn-color-success: #a8d1bd;
+  --fn-bg-success-light: #2c4948;
+  --fn-border-primary: #3c5470;
+  --fn-border-input: #738aa5;
+  --fn-assistant-glow-color: 166, 198, 238;
 }

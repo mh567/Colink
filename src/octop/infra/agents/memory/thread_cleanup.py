@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,6 +81,41 @@ def workspace_for_agent_row(row: Any, *, paths: Any) -> Path:
         agent_id=str(row.agent_id),
         ensure=False,
     )
+
+
+def delete_session_logs(workspace_dir: Path, system_dir: Path, thread_id: str) -> None:
+    """Rewrite the harness's host-side transcript journals, keeping other sessions intact."""
+    # Internal journals are written on the host even with remote workspace storage.
+    for root in dict.fromkeys((workspace_dir, system_dir)):
+        directory = root / "sessions"
+        if directory.is_symlink() or not root.resolve().is_relative_to(workspace_dir.resolve()):
+            raise OSError(f"Cannot clean session logs outside the agent workspace: {directory}")
+        try:
+            logs = list(directory.iterdir())
+        except FileNotFoundError:
+            continue
+        for log in logs:
+            if log.suffix != ".jsonl":
+                continue
+            if log.is_symlink() or not log.is_file():
+                raise OSError(f"Not a regular session log: {log}")
+            original = log.read_bytes()
+            kept = []
+            for line in original.splitlines(keepends=True):
+                record = json.loads(line) if line.strip() else None
+                if not isinstance(record, dict) or record.get("thread_id") != thread_id:
+                    kept.append(line)
+            remaining = b"".join(kept)
+            if remaining == original:
+                continue
+            with tempfile.NamedTemporaryFile(dir=directory, delete=False) as output:
+                tmp = Path(output.name)
+                try:
+                    output.write(remaining)
+                    output.close()
+                    os.replace(tmp, log)
+                finally:
+                    tmp.unlink(missing_ok=True)
 
 
 def delete_thread_from_agent_stores(

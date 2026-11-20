@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -16,6 +16,8 @@ import {
   type LocalExpert,
 } from "../../api/modules/localExperts";
 import { apiErrorMessage } from "../../utils/apiError";
+import LocalArtifactPreview from "./LocalArtifactPreview";
+import styles from "./LocalDocxPanel.module.less";
 
 interface Grant {
   id: string;
@@ -63,10 +65,12 @@ export default function LocalDocxPanel({
   deviceId,
   connected = true,
   disconnectCode,
+  artifactsOnly = false,
 }: {
   deviceId: string;
   connected?: boolean;
   disconnectCode?: string;
+  artifactsOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -100,24 +104,29 @@ export default function LocalDocxPanel({
   const [source, setSource] = useState("");
   const [output, setOutput] = useState("");
   const [instruction, setInstruction] = useState("");
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewRegion = useRef<HTMLElement>(null);
+  const previewTrigger = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setState({ device_id: deviceId, grants: [], tasks: [], busy: false });
     setFormat("docx");
+    setPreviewId(null);
     setOperation("run");
     setLastRequest(null);
     setExpertId("");
     setExperts([]);
     setExpertError(null);
     let active = true;
-    void localExpertsApi
-      .list()
-      .then((items) => {
-        if (active) setExperts(items);
-      })
-      .catch((error: unknown) => {
-        if (active) setExpertError(error);
-      });
+    if (!artifactsOnly)
+      void localExpertsApi
+        .list()
+        .then((items) => {
+          if (active) setExperts(items);
+        })
+        .catch((error: unknown) => {
+          if (active) setExpertError(error);
+        });
     setSourceGrant("");
     setOutputGrant("");
     setSource("");
@@ -137,7 +146,7 @@ export default function LocalDocxPanel({
       active = false;
       window.removeEventListener("colink:docx-status", receive);
     };
-  }, [deviceId]);
+  }, [artifactsOnly, deviceId]);
 
   useEffect(() => {
     if (connected) send({ action: "list" });
@@ -166,7 +175,7 @@ export default function LocalDocxPanel({
     width: "100%",
     padding: "7px 11px",
     borderRadius: token.borderRadius,
-    border: `1px solid ${token.colorBorder}`,
+    border: "1px solid var(--fn-border-input)",
     background: token.colorBgContainer,
     color: token.colorText,
     font: "inherit",
@@ -210,6 +219,74 @@ export default function LocalDocxPanel({
       grant.mode === "rw" &&
       (!destructive || (deleting ? grant.destructive : grant.overwrite)),
   );
+  const saveDirectory = targetGrants.find((grant) => grant.id === outputGrant);
+  const grantForArtifact = (task: LocalTask) =>
+    task.status === "completed" && task.operation !== "delete" && task.output
+      ? state.grants.find((grant) => {
+          const path = task.output.replaceAll("\\", "/");
+          const directory = grant.path.replaceAll("\\", "/").replace(/\/$/, "");
+          return path.slice(0, path.lastIndexOf("/")) === directory;
+        })
+      : undefined;
+  const previewTask = connected
+    ? state.tasks.find(
+        (task) => task.id === previewId && grantForArtifact(task),
+      )
+    : undefined;
+  const activePreviewId = previewTask?.id;
+  useEffect(() => {
+    if (activePreviewId) previewRegion.current?.focus();
+    else setPreviewId(null);
+  }, [activePreviewId]);
+
+  const previewButton = (task: LocalTask) => (
+    <Button
+      size="small"
+      onClick={(event) => {
+        previewTrigger.current = event.currentTarget;
+        if (activePreviewId === task.id) previewRegion.current?.focus();
+        else setPreviewId(task.id);
+      }}
+    >
+      {t("localDocx.previewArtifact")}
+    </Button>
+  );
+  const preview = previewTask && (
+    <section
+      aria-label={t("localDocx.previewArtifact")}
+      ref={previewRegion}
+      tabIndex={-1}
+    >
+      <Space wrap>
+        <Typography.Title level={5}>
+          {t("localDocx.previewArtifact")}
+        </Typography.Title>
+        <Button
+          size="small"
+          onClick={() => {
+            setPreviewId(null);
+            previewTrigger.current?.focus();
+          }}
+        >
+          {t("common.close")}
+        </Button>
+      </Space>
+      <div>
+        <Typography.Text style={{ overflowWrap: "anywhere" }}>
+          {previewTask.output}
+        </Typography.Text>
+      </div>
+      <div className={styles.artifactPreview}>
+        <LocalArtifactPreview
+          key={previewTask.id}
+          deviceId={deviceId}
+          taskId={previewTask.id}
+          filename={previewTask.output.split(/[/\\]/).at(-1) ?? ""}
+        />
+      </div>
+    </section>
+  );
+
   const hasSource =
     source.trim() && state.grants.some((grant) => grant.id === sourceGrant);
   const hasExpert =
@@ -265,6 +342,36 @@ export default function LocalDocxPanel({
     }
     dispatch({ ...taskCommand, request_id: requestId });
   };
+
+  if (artifactsOnly) {
+    const artifacts = connected ? state.tasks.filter(grantForArtifact) : [];
+    return (
+      <div className={styles.taskLayout}>
+        <Card title={t("localDocx.artifacts")}>
+          {artifacts.length ? (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              {artifacts.map((task) => (
+                <div key={task.id}>
+                  <Typography.Text
+                    copyable
+                    style={{ overflowWrap: "anywhere" }}
+                  >
+                    {task.output}
+                  </Typography.Text>{" "}
+                  {previewButton(task)}
+                </div>
+              ))}
+            </Space>
+          ) : (
+            <Typography.Text type="secondary">
+              {t("localDocx.noArtifacts")}
+            </Typography.Text>
+          )}
+        </Card>
+        {preview && <div className={styles.saveLocation}>{preview}</div>}
+      </div>
+    );
+  }
 
   return (
     <Card
@@ -485,314 +592,343 @@ export default function LocalDocxPanel({
             )}
           />
         )}
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            submitTask();
-          }}
-        >
-          <fieldset
-            disabled={state.busy || !connected}
-            style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
-                gap: 16,
+        <div className={styles.taskLayout}>
+          <div className={styles.taskBody}>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitTask();
               }}
             >
-              {!deleting && (
-                <div>
-                  <label htmlFor={`${id}-source-grant`}>
-                    {t("localDocx.sourceGrant", "资料目录")}
-                  </label>
-                  <select
-                    id={`${id}-source-grant`}
-                    value={sourceGrant}
-                    onChange={(event) => setSourceGrant(event.target.value)}
-                    style={selectStyle}
-                    required
-                  >
-                    <option value="">
-                      {t("localDocx.select", "请选择授权目录")}
-                    </option>
-                    {state.grants.map((grant) => (
-                      <option key={grant.id} value={grant.id}>
-                        {grant.path}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div>
-                <label htmlFor={`${id}-output-grant`}>
-                  {destructive
-                    ? t("localDocx.targetGrant", "目标目录")
-                    : t("localDocx.outputGrant", "成果目录")}
-                </label>
-                <select
-                  id={`${id}-output-grant`}
-                  value={outputGrant}
-                  onChange={(event) => setOutputGrant(event.target.value)}
-                  style={selectStyle}
-                  required
-                >
-                  <option value="">
-                    {t("localDocx.select", "请选择授权目录")}
-                  </option>
-                  {targetGrants.map((grant) => (
-                    <option key={grant.id} value={grant.id}>
-                      {grant.path}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {!deleting && (
-                <div>
-                  <label htmlFor={`${id}-source`}>
-                    {t("localDocx.source", "源文件名")}
-                  </label>
-                  <Input
-                    id={`${id}-source`}
-                    value={source}
-                    onChange={(event) => setSource(event.target.value)}
-                    placeholder={t(
-                      `${contentKey}.sourceExample`,
-                      format === "ocr"
-                        ? "例如：扫描资料.pdf"
-                        : "例如：会议记录.docx",
-                    )}
-                    maxLength={240}
-                    required
-                  />
-                </div>
-              )}
-              <div>
-                <label htmlFor={`${id}-output`}>
-                  {destructive
-                    ? t("localDocx.target", "目标文件名")
-                    : t("localDocx.output", "新文件名")}
-                </label>
-                <Input
-                  id={`${id}-output`}
-                  value={output}
-                  onChange={(event) => setOutput(event.target.value)}
-                  placeholder={t(
-                    `${contentKey}.outputExample`,
-                    format === "ocr"
-                      ? "例如：识别文字.txt"
-                      : "例如：会议纪要.docx",
-                  )}
-                  maxLength={240}
-                  required
-                />
-              </div>
-            </div>
-            {format !== "ocr" && !deleting && (
-              <div style={{ marginTop: 16, marginBottom: 16 }}>
-                <label htmlFor={`${id}-instruction`}>
-                  {t("localDocx.instruction", "任务描述")}
-                </label>
-                <Input.TextArea
-                  id={`${id}-instruction`}
-                  value={instruction}
-                  onChange={(event) => setInstruction(event.target.value)}
-                  autoSize={{ minRows: 3, maxRows: 8 }}
-                  maxLength={8000}
-                  required
-                  placeholder={t(
-                    `${contentKey}.instructionExample`,
-                    "整理所选文档，列出结论、待办和负责人。",
-                  )}
-                />
-              </div>
-            )}
-            <Space
-              wrap
-              style={{ marginTop: format === "ocr" || deleting ? 16 : 0 }}
-            >
-              <Button
-                type="primary"
-                htmlType="submit"
-                loading={state.busy}
-                disabled={!canRun}
+              <fieldset
+                disabled={state.busy || !connected}
+                style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
               >
-                {operation === "overwrite"
-                  ? t("localDocx.requestOverwrite", "请求覆盖")
-                  : deleting
-                  ? t("localDocx.requestDelete", "请求删除")
-                  : t(
-                      `${contentKey}.run`,
-                      format === "ocr"
-                        ? "识别扫描 PDF"
-                        : format === "xlsx"
-                        ? "生成 XLSX"
-                        : format === "pptx"
-                        ? "生成 PPTX"
-                        : format === "pdf"
-                        ? "生成 PDF"
-                        : "生成 DOCX",
-                    )}
-              </Button>
-              {canStartNew && (
-                <Button disabled={!canRun} onClick={() => submitTask(true)}>
-                  {t("localDocx.startNewTask", "新建本次任务")}
-                </Button>
-              )}
-            </Space>
-          </fieldset>
-        </form>
-        {state.tasks.length > 0 && (
-          <section
-            aria-label={t("localDocx.history", "本机任务记录")}
-            aria-live="polite"
-          >
-            <Typography.Title level={5}>
-              {t("localDocx.history", "本机任务记录")}
-            </Typography.Title>
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
-              {state.tasks.map((task) => (
                 <div
-                  key={task.id}
                   style={{
-                    borderTop: `1px solid ${token.colorBorderSecondary}`,
-                    paddingTop: 12,
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
+                    gap: 16,
                   }}
                 >
-                  <Space wrap align="center" style={{ marginBottom: 4 }}>
-                    <Tag color={statusColors[task.status] ?? "default"}>
-                      {statuses[task.status] ?? task.status}
-                    </Tag>
-                    <Tag>{(task.format ?? "docx").toUpperCase()}</Tag>
-                    {task.operation && task.operation !== "run" && (
-                      <Tag>{operations[task.operation]}</Tag>
-                    )}
-                    {(task.status === "running" ||
-                      task.status === "awaiting_confirmation") && (
-                      <Button
-                        size="small"
-                        danger
-                        disabled={!connected}
-                        onClick={() =>
-                          dispatch({ action: "cancel", task_id: task.id })
-                        }
-                      >
-                        {t("localDocx.cancelTask", "取消任务")}
-                      </Button>
-                    )}
-                  </Space>
-                  <div>
-                    <Typography.Text strong>{task.instruction}</Typography.Text>
-                  </div>
-                  {task.source && (
+                  {!deleting && (
                     <div>
-                      {!task.output &&
-                        (task.status === "failed" ||
-                          task.status === "cancelled") && (
+                      <label htmlFor={`${id}-source-grant`}>
+                        {t("localDocx.sourceGrant", "资料目录")}
+                      </label>
+                      <select
+                        id={`${id}-source-grant`}
+                        value={sourceGrant}
+                        onChange={(event) => setSourceGrant(event.target.value)}
+                        style={selectStyle}
+                        required
+                      >
+                        <option value="">
+                          {t("localDocx.select", "请选择授权目录")}
+                        </option>
+                        {state.grants.map((grant) => (
+                          <option key={grant.id} value={grant.id}>
+                            {grant.path}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor={`${id}-output-grant`}>
+                      {destructive
+                        ? t("localDocx.targetGrant", "目标目录")
+                        : t("localDocx.outputGrant", "成果目录")}
+                    </label>
+                    <select
+                      id={`${id}-output-grant`}
+                      value={outputGrant}
+                      onChange={(event) => setOutputGrant(event.target.value)}
+                      style={selectStyle}
+                      required
+                    >
+                      <option value="">
+                        {t("localDocx.select", "请选择授权目录")}
+                      </option>
+                      {targetGrants.map((grant) => (
+                        <option key={grant.id} value={grant.id}>
+                          {grant.path}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {!deleting && (
+                    <div>
+                      <label htmlFor={`${id}-source`}>
+                        {t("localDocx.source", "源文件名")}
+                      </label>
+                      <Input
+                        id={`${id}-source`}
+                        value={source}
+                        onChange={(event) => setSource(event.target.value)}
+                        placeholder={t(
+                          `${contentKey}.sourceExample`,
+                          format === "ocr"
+                            ? "例如：扫描资料.pdf"
+                            : "例如：会议记录.docx",
+                        )}
+                        maxLength={240}
+                        required
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor={`${id}-output`}>
+                      {destructive
+                        ? t("localDocx.target", "目标文件名")
+                        : t("localDocx.output", "新文件名")}
+                    </label>
+                    <Input
+                      id={`${id}-output`}
+                      value={output}
+                      onChange={(event) => setOutput(event.target.value)}
+                      placeholder={t(
+                        `${contentKey}.outputExample`,
+                        format === "ocr"
+                          ? "例如：识别文字.txt"
+                          : "例如：会议纪要.docx",
+                      )}
+                      maxLength={240}
+                      required
+                    />
+                  </div>
+                </div>
+                {format !== "ocr" && !deleting && (
+                  <div style={{ marginTop: 16, marginBottom: 16 }}>
+                    <label htmlFor={`${id}-instruction`}>
+                      {t("localDocx.instruction", "任务描述")}
+                    </label>
+                    <Input.TextArea
+                      id={`${id}-instruction`}
+                      value={instruction}
+                      onChange={(event) => setInstruction(event.target.value)}
+                      autoSize={{ minRows: 3, maxRows: 8 }}
+                      maxLength={8000}
+                      required
+                      placeholder={t(
+                        `${contentKey}.instructionExample`,
+                        "整理所选文档，列出结论、待办和负责人。",
+                      )}
+                    />
+                  </div>
+                )}
+                <Space
+                  wrap
+                  style={{ marginTop: format === "ocr" || deleting ? 16 : 0 }}
+                >
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={state.busy}
+                    disabled={!canRun}
+                  >
+                    {operation === "overwrite"
+                      ? t("localDocx.requestOverwrite", "请求覆盖")
+                      : deleting
+                      ? t("localDocx.requestDelete", "请求删除")
+                      : t(
+                          `${contentKey}.run`,
+                          format === "ocr"
+                            ? "识别扫描 PDF"
+                            : format === "xlsx"
+                            ? "生成 XLSX"
+                            : format === "pptx"
+                            ? "生成 PPTX"
+                            : format === "pdf"
+                            ? "生成 PDF"
+                            : "生成 DOCX",
+                        )}
+                  </Button>
+                  {canStartNew && (
+                    <Button disabled={!canRun} onClick={() => submitTask(true)}>
+                      {t("localDocx.startNewTask", "新建本次任务")}
+                    </Button>
+                  )}
+                </Space>
+              </fieldset>
+            </form>
+            {state.tasks.length > 0 && (
+              <section
+                aria-label={t("localDocx.history", "本机任务记录")}
+                aria-live="polite"
+              >
+                <Typography.Title level={5}>
+                  {t("localDocx.history", "本机任务记录")}
+                </Typography.Title>
+                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                  {state.tasks.map((task) => (
+                    <div
+                      key={task.id}
+                      style={{
+                        borderTop: `1px solid ${token.colorBorderSecondary}`,
+                        paddingTop: 12,
+                      }}
+                    >
+                      <Space wrap align="center" style={{ marginBottom: 4 }}>
+                        <Tag color={statusColors[task.status] ?? "default"}>
+                          {statuses[task.status] ?? task.status}
+                        </Tag>
+                        <Tag>{(task.format ?? "docx").toUpperCase()}</Tag>
+                        {task.operation && task.operation !== "run" && (
+                          <Tag>{operations[task.operation]}</Tag>
+                        )}
+                        {(task.status === "running" ||
+                          task.status === "awaiting_confirmation") && (
+                          <Button
+                            size="small"
+                            danger
+                            disabled={!connected}
+                            onClick={() =>
+                              dispatch({ action: "cancel", task_id: task.id })
+                            }
+                          >
+                            {t("localDocx.cancelTask", "取消任务")}
+                          </Button>
+                        )}
+                      </Space>
+                      <div>
+                        <Typography.Text strong>
+                          {task.instruction}
+                        </Typography.Text>
+                      </div>
+                      {task.source && (
+                        <div>
+                          {!task.output &&
+                            (task.status === "failed" ||
+                              task.status === "cancelled") && (
+                              <Typography.Text
+                                type="secondary"
+                                style={{ fontSize: 12, marginRight: 4 }}
+                              >
+                                {t("localDocx.retainedArtifact", "可用产物：")}
+                              </Typography.Text>
+                            )}
+                          <Typography.Text type="secondary">
+                            {task.source}
+                          </Typography.Text>
+                        </div>
+                      )}
+                      {task.output && (
+                        <div>
+                          {(task.status === "failed" ||
+                            task.status === "cancelled") && (
+                            <Typography.Text
+                              type="secondary"
+                              style={{ fontSize: 12, marginRight: 4 }}
+                            >
+                              {t("localDocx.retainedArtifact", "可用产物：")}
+                            </Typography.Text>
+                          )}
+                          <Typography.Text
+                            copyable
+                            style={{ overflowWrap: "anywhere" }}
+                          >
+                            {task.output}
+                          </Typography.Text>
+                          {connected &&
+                            grantForArtifact(task) &&
+                            previewButton(task)}
+                        </div>
+                      )}
+                      {task.status === "cancelled" && (
+                        <Alert
+                          type="info"
+                          showIcon
+                          style={{ marginTop: 8 }}
+                          message={t(
+                            "localDocx.cancelledHint",
+                            "任务已取消，未继续后续动作；已保留可用产物。",
+                          )}
+                        />
+                      )}
+                      {task.status === "awaiting_confirmation" && (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          style={{ marginTop: 8 }}
+                          message={t(
+                            "localDocx.awaitingHint",
+                            "任务待确认：待确认动作不会自动执行，请在本机弹窗确认，或取消任务后重新发起。",
+                          )}
+                        />
+                      )}
+                      {task.status === "interrupted" && (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          style={{ marginTop: 8 }}
+                          message={
+                            task.error
+                              ? errorMessage(task.error)
+                              : t(
+                                  "localDocx.interruptedHint",
+                                  "任务中断或结果不明，已保留已有文件，请核对目标文件后重试。",
+                                )
+                          }
+                        />
+                      )}
+                      {task.status === "failed" && task.error && (
+                        <Alert
+                          type="error"
+                          showIcon
+                          style={{ marginTop: 8 }}
+                          message={errorMessage(task.error)}
+                        />
+                      )}
+                      {task.steps && task.steps.length > 0 && (
+                        <div style={{ marginTop: 6 }}>
                           <Typography.Text
                             type="secondary"
-                            style={{ fontSize: 12, marginRight: 4 }}
+                            style={{ fontSize: 12 }}
                           >
-                            {t("localDocx.retainedArtifact", "可用产物：")}
+                            {t("localDocx.completedSteps", "已完成步骤：")}
                           </Typography.Text>
-                        )}
-                      <Typography.Text type="secondary">
-                        {task.source}
-                      </Typography.Text>
-                    </div>
-                  )}
-                  {task.output && (
-                    <div>
-                      {(task.status === "failed" ||
-                        task.status === "cancelled") && (
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 12, marginRight: 4 }}
-                        >
-                          {t("localDocx.retainedArtifact", "可用产物：")}
-                        </Typography.Text>
+                          <ul
+                            style={{
+                              margin: "2px 0 0 16px",
+                              padding: 0,
+                              fontSize: 12,
+                              color: token.colorTextSecondary,
+                            }}
+                          >
+                            {task.steps.map((st, idx) => (
+                              <li key={idx}>
+                                {t(`localDocx.stepLabels.${st}`, st)}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
-                      <Typography.Text style={{ overflowWrap: "anywhere" }}>
-                        {task.output}
-                      </Typography.Text>
                     </div>
-                  )}
-                  {task.status === "cancelled" && (
-                    <Alert
-                      type="info"
-                      showIcon
-                      style={{ marginTop: 8 }}
-                      message={t(
-                        "localDocx.cancelledHint",
-                        "任务已取消，未继续后续动作；已保留可用产物。",
-                      )}
-                    />
-                  )}
-                  {task.status === "awaiting_confirmation" && (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      style={{ marginTop: 8 }}
-                      message={t(
-                        "localDocx.awaitingHint",
-                        "任务待确认：待确认动作不会自动执行，请在本机弹窗确认，或取消任务后重新发起。",
-                      )}
-                    />
-                  )}
-                  {task.status === "interrupted" && (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      style={{ marginTop: 8 }}
-                      message={
-                        task.error
-                          ? errorMessage(task.error)
-                          : t(
-                              "localDocx.interruptedHint",
-                              "任务中断或结果不明，已保留已有文件，请核对目标文件后重试。",
-                            )
-                      }
-                    />
-                  )}
-                  {task.status === "failed" && task.error && (
-                    <Alert
-                      type="error"
-                      showIcon
-                      style={{ marginTop: 8 }}
-                      message={errorMessage(task.error)}
-                    />
-                  )}
-                  {task.steps && task.steps.length > 0 && (
-                    <div style={{ marginTop: 6 }}>
-                      <Typography.Text
-                        type="secondary"
-                        style={{ fontSize: 12 }}
-                      >
-                        {t("localDocx.completedSteps", "已完成步骤：")}
-                      </Typography.Text>
-                      <ul
-                        style={{
-                          margin: "2px 0 0 16px",
-                          padding: 0,
-                          fontSize: 12,
-                          color: token.colorTextSecondary,
-                        }}
-                      >
-                        {task.steps.map((st, idx) => (
-                          <li key={idx}>
-                            {t(`localDocx.stepLabels.${st}`, st)}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </Space>
-          </section>
-        )}
+                  ))}
+                </Space>
+              </section>
+            )}
+          </div>
+          <div className={styles.saveLocation}>
+            <aside aria-label={t("localDocx.saveLocation")}>
+              <Typography.Title level={5}>
+                {t("localDocx.saveLocation")}
+              </Typography.Title>
+              {saveDirectory ? (
+                <Typography.Text style={{ overflowWrap: "anywhere" }}>
+                  {saveDirectory.path}
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  {t("localDocx.chooseSaveLocation")}
+                </Typography.Text>
+              )}
+            </aside>
+            {preview}
+          </div>
+        </div>
       </Space>
     </Card>
   );

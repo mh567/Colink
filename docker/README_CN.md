@@ -12,6 +12,7 @@
 | `../.dockerignore` | 构建上下文忽略规则（Podman 与 BuildKit 均适用） |
 | `docker_build.sh` | 从源码构建镜像（默认开启 BuildKit 缓存） |
 | `docker-compose.yml` | 本地开发 / 自托管一键启动 |
+| `docker-compose.offline.yml` | 双架构（x86_64 / ARM64）服务端离线容器编排，显式资源限制与数据持久化，无需拉取镜像 |
 | `docker-compose.cn.yml` | 同一套服务，拉取 `ghcr.nju.edu.cn/tencentcloud/octop:latest`（不本地构建） |
 | `docker-compose.postgres.yml` | 仅 PostgreSQL（+ pgvector）开发/测试库；扩展在 `postgres/init-vector.sql` |
 | `postgres/init-vector.sql` | 实例级 `CREATE EXTENSION vector`（initdb.d；**不**进 Octop 迁移） |
@@ -19,7 +20,16 @@
 
 ### 快速开始
 
-**方式一：Compose（推荐）**
+**方式一：离线容器部署（推荐生产与内网断网环境）**
+
+按[离线部署指南](../docs/T22-双架构服务端离线容器部署.md)选择并核对与宿主机架构一致的镜像。以下以 ARM64 为例：
+
+```bash
+docker load -i octop-server-1.0.3b3-arm64.tar.gz
+OCTOP_IMAGE=octop:1.0.3b3-lite-arm64 docker compose -f docker/docker-compose.offline.yml up --wait
+```
+
+**方式二：在线 Compose（开发/联调）**
 
 在仓库根目录执行：
 
@@ -31,7 +41,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 
 Compose 将多 agent 服务的文件描述符限制设为 65535。服务启动时也会在继承的 hard limit 内将 soft limit 提升至最多 65535，并记录实际限额。已有容器需重新创建才能应用 Compose 限额变化；仅重启不会改变容器的 hard limit。
 
-**方式二：构建脚本**
+**方式三：构建脚本**
 
 ```bash
 bash docker/docker_build.sh

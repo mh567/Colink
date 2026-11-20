@@ -28,6 +28,37 @@ func TestBrowserRequestRejectsArbitraryBrowserActions(t *testing.T) {
 	}
 }
 
+func TestBrowserFormRequestsAcceptOnlyTheirProtocolFields(t *testing.T) {
+	base := `{"request_id":"` + strings.Repeat("a", 32) + `","tab_id":"` + sampleBrowserTab + `","url":"https://intranet.test/order",`
+	selection := `"form_id":"el1","submit_id":"el2"`
+	for _, body := range []string{
+		base + `"action":"forms"}`,
+		base + `"action":"suggest_form",` + selection + `,"instruction":"Update the order"}`,
+		base + `"action":"submit_form",` + selection + `,"snapshot_id":"snapshot_1","values":{"el3":"42","el4":true}}`,
+		`{"request_id":"` + strings.Repeat("b", 32) + `","action":"operations"}`,
+	} {
+		if _, err := parseBrowserRequest(url.QueryEscape(body)); err != nil {
+			t.Errorf("valid request %s returned %v", body, err)
+		}
+	}
+	for _, body := range []string{
+		base + `"action":"form_snapshot",` + selection + `}`,
+		base + `"action":"capture",` + selection + `}`,
+		base + `"action":"forms","values":{"el3":"42"}}`,
+		base + `"action":"suggest_form","form_id":"el1","instruction":"Update the order"}`,
+		base + `"action":"submit_form",` + selection + `,"snapshot_id":"snapshot_1","values":{"el3":42}}`,
+		base + `"action":"submit_form",` + selection + `,"snapshot_id":"snapshot_1","values":{"el3":null}}`,
+		base + `"action":"submit_form",` + selection + `,"snapshot_id":"snapshot_1","values":{"el3":["42"]}}`,
+		base + `"action":"submit_form",` + selection + `,"snapshot_id":"snapshot_1","values":{"../el3":true}}`,
+		base + `"action":"submit_form",` + selection + `,"snapshot_id":"snapshot_1","values":{"el3":true},"confirmed":true}`,
+		base + `"action":"operations"}`,
+	} {
+		if _, err := parseBrowserRequest(url.QueryEscape(body)); err == nil {
+			t.Errorf("accepted invalid request %s", body)
+		}
+	}
+}
+
 type browserTestProcess struct {
 	actions       []browserAction
 	stopped       bool

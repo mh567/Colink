@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 342 80" role="img" aria-labelledby="title">
+<title id="title">Colink</title>
+<g fill="#FFFFFF" transform="translate(0 1) scale(.305)">
+<path d="M192.3 58.7 A98 98 0 1 0 192.3 197.3 L166.84 171.84 A62 62 0 1 1 166.84 84.16 Z"/>
+<path d="M203 79.5 A56 56 0 0 1 203 176.5 L187 148.78 A24 24 0 0 0 187 107.22 Z"/>
+</g>
+<g fill="#FFFFFF" transform="translate(40 -61) scale(1.12)">
+<path d="M87 66a31 31 0 1 0 0 48l-9-10a17.5 17.5 0 1 1 0-28z"/>
+<path fill-rule="evenodd" d="M111 76a21 21 0 1 0 0 42 21 21 0 0 0 0-42zm0 11a10 10 0 1 1 0 20 10 10 0 0 1 0-20z"/>
+<path d="M138 62h12v55h-12zM159 77h12v40h-12z"/>
+<circle cx="165" cy="66.5" r="6.5"/>
+<path d="M180 77h11.5v4c3-3 7-5 12-5 9 0 15 6 15 16v25h-12V95c0-5-2.5-8-7-8-4.6 0-7.5 3.4-7.5 8.4V117H180z"/>
+<path d="M227 62h12v30l12.5-15h14l-15.8 18 16.5 22h-14.4l-10-14-2.8 3.2V117h-12z"/>
+</g>
+</svg>

@@ -11,12 +11,12 @@
     <!-- PWA: theme color (light / dark) -->
     <meta
       name="theme-color"
-      content="#ffffff"
+      content="#FCFDFF"
       media="(prefers-color-scheme: light)"
     />
     <meta
       name="theme-color"
-      content="#1a1c28"
+      content="#1A2B40"
       media="(prefers-color-scheme: dark)"
     />
     <!-- PWA: standalone mode for iOS Safari -->
@@ -26,10 +26,10 @@
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
     />
-    <meta name="apple-mobile-web-app-title" content="Octop" />
+    <meta name="apple-mobile-web-app-title" content="Colink" />
     <!-- Web App Manifest -->
     <link rel="manifest" href="%BASE_URL%manifest.json" />
-    <title>Octop</title>
+    <title>Colink</title>
     <!--
       Resolve dashboard theme before first paint. Must stay a classic script:
       the splash CSS keys off html[data-theme], not prefers-color-scheme,
@@ -49,7 +49,7 @@
         }
         try {
           var raw = localStorage.getItem(KEY);
-          var pref = "system";
+          var pref = "light";
           if (raw === "light" || raw === "dark" || raw === "system") {
             pref = raw;
           } else if (raw) {
@@ -67,10 +67,10 @@
             mode = "dark";
           }
         } catch (e) {
-          if (systemDark()) mode = "dark";
+          // Keep the light first paint when the saved preference is unreadable.
         }
         document.documentElement.setAttribute("data-theme", mode);
-        var themeColor = mode === "dark" ? "#1a1c28" : "#ffffff";
+        var themeColor = mode === "dark" ? "#1A2B40" : "#FCFDFF";
         var metas = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < metas.length; i++) {
           metas[i].setAttribute("content", themeColor);
@@ -87,7 +87,7 @@
       body {
         height: 100%;
         margin: 0;
-        background: #f7f8fa;
+        background: #fcfdff;
       }
       #root {
         min-height: 100%;
@@ -109,18 +109,18 @@
           max(24px, env(safe-area-inset-bottom, 0px))
           max(24px, env(safe-area-inset-left, 0px));
         margin: 0;
-        background: #f7f8fa;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-          "Noto Sans SC", sans-serif;
-        color: #8b8fa3;
+        background: #fcfdff;
+        font-family: system-ui, "Segoe UI", "Microsoft YaHei",
+          "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
+        color: #526881;
       }
       html[data-theme="dark"],
       html[data-theme="dark"] body {
-        background: #12141c;
+        background: #1a2b40;
       }
       html[data-theme="dark"] #octop-boot {
-        background: #12141c;
-        color: rgba(255, 255, 255, 0.55);
+        background: #1a2b40;
+        color: #a5b9d2;
       }
       #octop-boot-mark {
         position: relative;
@@ -133,13 +133,13 @@
         position: absolute;
         inset: 0;
         border-radius: 50%;
-        border: 3px solid rgba(232, 93, 117, 0.18);
-        border-top-color: #e85d75;
+        border: 3px solid #d9e2ee;
+        border-top-color: #345f90;
         animation: octop-boot-spin 0.85s linear infinite;
       }
       html[data-theme="dark"] #octop-boot-ring {
-        border-color: rgba(240, 139, 154, 0.22);
-        border-top-color: #f08b9a;
+        border-color: #3c5470;
+        border-top-color: #a6c6ee;
       }
       .octop-boot-logo {
         position: absolute;

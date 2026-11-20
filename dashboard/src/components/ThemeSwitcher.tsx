@@ -30,6 +30,8 @@ export default function ThemeSwitcher({ compact }: ThemeSwitcherProps) {
 
   return (
     <div
+      role="group"
+      aria-label={t("nav.theme")}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -44,6 +46,9 @@ export default function ThemeSwitcher({ compact }: ThemeSwitcherProps) {
         return (
           <Tooltip key={key} title={labelMap[key]} mouseEnterDelay={0.4}>
             <button
+              type="button"
+              aria-label={labelMap[key]}
+              aria-pressed={active}
               onClick={() => setPreference(key)}
               style={{
                 display: "flex",
@@ -53,13 +58,14 @@ export default function ThemeSwitcher({ compact }: ThemeSwitcherProps) {
                 height: btnSize,
                 border: "none",
                 borderRadius: "var(--fn-radius-full, 999px)",
-                background: active ? "var(--fn-bg-elevated)" : "transparent",
+                background: active
+                  ? "var(--fn-sidebar-item-active-bg)"
+                  : "transparent",
                 color: active
-                  ? "var(--fn-text-primary)"
+                  ? "var(--fn-sidebar-item-active-text)"
                   : "var(--fn-text-secondary)",
-                boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
                 cursor: "pointer",
-                transition: "all 0.2s ease",
+                transition: "background var(--fn-transition-fast)",
               }}
             >
               <Icon size={iconSize} strokeWidth={1.8} />

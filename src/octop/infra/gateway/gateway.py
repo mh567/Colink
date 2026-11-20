@@ -278,6 +278,7 @@ class Gateway:
             self._processor,
             hub=self._ws_hub,
             steer=self._steer,
+            threads=self._thread_registry,
             channel_id=WS_CHANNEL_ID,
         )
         await self._channel_manager.add_channel(self._ws_channel)

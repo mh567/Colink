@@ -17,9 +17,9 @@ afterEach(() => {
 });
 
 describe("appearanceStorage", () => {
-  it("defaults to system preference and rose palette", () => {
-    expect(readStoredAppearance().preference).toBe("system");
-    expect(readStoredAppearance().palette).toBe(DEFAULT_PALETTE);
+  it("starts in light Fog Blue on a fresh installation", () => {
+    expect(readStoredAppearance().preference).toBe("light");
+    expect(readStoredAppearance().palette).toBe("fog");
   });
 
   it("migrates legacy plain theme string + palette key", () => {
@@ -29,6 +29,22 @@ describe("appearanceStorage", () => {
     const appearance = readStoredAppearance();
     expect(appearance.preference).toBe("dark");
     expect(appearance.palette).toBe("tech");
+  });
+
+  it("updates the old automatic palette without resetting the dark theme", () => {
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({ preference: "dark", palette: "rose" }),
+    );
+    expect(readStoredAppearance()).toMatchObject({
+      preference: "dark",
+      palette: "fog",
+    });
+    writeStoredAppearance({ preference: "dark", palette: "rose" });
+    expect(readStoredAppearance()).toMatchObject({
+      preference: "dark",
+      palette: "rose",
+    });
   });
 
   it("reads unified JSON under the theme key", () => {
@@ -105,14 +121,14 @@ describe("appearanceStorage", () => {
 
   it("falls back safely on invalid JSON or unknown values", () => {
     localStorage.setItem(THEME_STORAGE_KEY, "{not-json");
-    expect(readStoredAppearance().preference).toBe("system");
+    expect(readStoredAppearance().preference).toBe("light");
     expect(readStoredAppearance().palette).toBe(DEFAULT_PALETTE);
 
     localStorage.setItem(
       THEME_STORAGE_KEY,
       JSON.stringify({ preference: "neon", palette: "pink" }),
     );
-    expect(readStoredAppearance().preference).toBe("system");
+    expect(readStoredAppearance().preference).toBe("light");
     expect(readStoredAppearance().palette).toBe(DEFAULT_PALETTE);
   });
 });

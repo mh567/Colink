@@ -34,7 +34,7 @@ function isPalette(value: unknown): value is ThemePalette {
 
 function readLegacyPalette(): ThemePalette {
   const stored = localStorage.getItem(LEGACY_PALETTE_STORAGE_KEY);
-  if (isPalette(stored)) return stored;
+  if (isPalette(stored)) return stored === "rose" ? DEFAULT_PALETTE : stored;
   return DEFAULT_PALETTE;
 }
 
@@ -46,7 +46,7 @@ export function readStoredAppearance(): StoredAppearance {
   const raw = localStorage.getItem(THEME_STORAGE_KEY);
   if (!raw) {
     return {
-      preference: "system",
+      preference: "light",
       palette: readLegacyPalette(),
       customColor: DEFAULT_CUSTOM_COLOR,
     };
@@ -67,9 +67,11 @@ export function readStoredAppearance(): StoredAppearance {
       const obj = parsed as Record<string, unknown>;
       const preference = isPreference(obj.preference)
         ? obj.preference
-        : "system";
+        : "light";
       const palette = isPalette(obj.palette)
-        ? obj.palette
+        ? obj.palette === "rose" && obj.paletteExplicit !== true
+          ? DEFAULT_PALETTE
+          : obj.palette
         : readLegacyPalette();
       const customColor =
         normalizeHexColor(obj.customColor as string) ?? DEFAULT_CUSTOM_COLOR;
@@ -80,7 +82,7 @@ export function readStoredAppearance(): StoredAppearance {
   }
 
   return {
-    preference: "system",
+    preference: "light",
     palette: readLegacyPalette(),
     customColor: DEFAULT_CUSTOM_COLOR,
   };
@@ -93,6 +95,7 @@ export function writeStoredAppearance(appearance: StoredAppearance): void {
     JSON.stringify({
       preference: appearance.preference,
       palette: appearance.palette,
+      ...(appearance.palette === "rose" && { paletteExplicit: true }),
       customColor:
         normalizeHexColor(appearance.customColor ?? "") ?? DEFAULT_CUSTOM_COLOR,
     }),

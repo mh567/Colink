@@ -263,7 +263,7 @@ export default function MainLayout() {
               overflow: "hidden",
             }}
           >
-            {isMobile &&
+            {(isMobile || !onWorkbench) &&
               !(
                 SELF_HEADER_PATHS.has(currentPath) ||
                 [...SELF_HEADER_PATHS].some((p) =>

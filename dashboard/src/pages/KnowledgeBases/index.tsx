@@ -104,7 +104,11 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import { useListPanelCollapsed } from "../../hooks/useListPanelCollapsed";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
 import PageShell from "../../layouts/PageShell";
-import { apiErrorMessage, isNotFoundApiError } from "../../utils/apiError";
+import {
+  apiErrorMessage,
+  isNotFoundApiError,
+  parseApiError,
+} from "../../utils/apiError";
 import { saveBlobAsFile } from "../../utils/saveBlobAsFile";
 import { createDetailRequestGate } from "../../utils/detailRequestGate";
 import { getDocKind, type DocKind } from "../../utils/docKind";
@@ -159,7 +163,13 @@ type BaseFormValues = {
 };
 
 type DocsViewMode = "card" | "table";
+type LibraryScope = "all" | "shared" | "personal";
+const EMPTY_DOCUMENTS: KnowledgeDocument[] = [];
 const DOCS_VIEW_STORAGE_KEY = "octop:knowledge-bases-docs-view";
+
+function matchesLibraryScope(base: KnowledgeBase, scope: LibraryScope) {
+  return scope === "all" || base.shared === (scope === "shared");
+}
 
 function loadDocsViewMode(): DocsViewMode {
   const stored = localStorage.getItem(DOCS_VIEW_STORAGE_KEY);
@@ -295,10 +305,30 @@ export default function KnowledgeBasesPage() {
     loadDocsViewMode(),
   );
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
-  const [selected, setSelected] = useState<KnowledgeBase | null>(null);
-  const selectedIdRef = useRef<string | null>(null);
-  selectedIdRef.current = selected?.id ?? null;
-  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [libraryScope, setLibraryScope] = useState<LibraryScope>("all");
+  const listedBases = bases.filter((base) =>
+    matchesLibraryScope(base, libraryScope),
+  );
+  const [preferredBaseId, setPreferredBaseId] = useState<string | null>(null);
+  const detailTarget =
+    listedBases.find((base) => base.id === preferredBaseId) ??
+    (isMobile ? undefined : listedBases[0]);
+  const selectedId = detailTarget?.id;
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const [detail, setDetail] = useState<{
+    base: KnowledgeBase;
+    documents: KnowledgeDocument[];
+  } | null>(null);
+  const activeDetail =
+    detail &&
+    detail.base.id === selectedId &&
+    matchesLibraryScope(detail.base, libraryScope)
+      ? detail
+      : null;
+  const selected = activeDetail?.base ?? null;
+  const loadedBaseId = selected?.id;
+  const documents = activeDetail?.documents ?? EMPTY_DOCUMENTS;
   const [currentFolder, setCurrentFolder] = useState("");
   const [docTreeExpanded, setDocTreeExpanded] = useState<string[]>([
     KNOWLEDGE_DOC_TREE_ROOT,
@@ -328,7 +358,8 @@ export default function KnowledgeBasesPage() {
     }[]
   >([]);
   const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const [loadingDetailId, setLoadingDetailId] = useState<string>();
+  const detailLoading = Boolean(selectedId && loadingDetailId === selectedId);
   const [refreshing, setRefreshing] = useState(false);
   const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const [baseDrawerOpen, setBaseDrawerOpen] = useState(false);
@@ -388,7 +419,7 @@ export default function KnowledgeBasesPage() {
   const mdBodyRef = useRef<HTMLDivElement | null>(null);
   const mdFindInputRef = useRef<InputRef | null>(null);
   const mdFindHitsRef = useRef<{ node: Text; start: number }[]>([]);
-  const previewTextAbortRef = useRef<AbortController | null>(null);
+  const previewAbortRef = useRef<AbortController | null>(null);
   const chunkRequestRef = useRef(0);
   const isRichPreview = Boolean(previewKind || previewAsMarkdown);
 
@@ -407,7 +438,10 @@ export default function KnowledgeBasesPage() {
   const previewableDocs = useMemo(
     () =>
       documents.filter(
-        (document) => !document.is_dir && canPreviewKnowledgeDocument(document),
+        (document) =>
+          !document.is_dir &&
+          document.status !== "withdrawn" &&
+          canPreviewKnowledgeDocument(document),
       ),
     [documents],
   );
@@ -579,9 +613,12 @@ export default function KnowledgeBasesPage() {
   );
 
   const closePreview = useCallback(() => {
-    previewTextAbortRef.current?.abort();
-    previewTextAbortRef.current = null;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
     setPreviewOpen(false);
+    setPreviewLoading(false);
+    setPreviewFilename("");
+    setPreviewText("");
     setPreviewKind(null);
     setPreviewDocId(null);
     setPreviewHasOriginal(false);
@@ -611,6 +648,18 @@ export default function KnowledgeBasesPage() {
     }
     closePreview();
   }, [closePreview, previewMaximized]);
+
+  useEffect(() => {
+    if (
+      previewDocId &&
+      (!selected ||
+        !documents.some(
+          (document) =>
+            document.id === previewDocId && document.status !== "withdrawn",
+        ))
+    )
+      closePreview();
+  }, [previewDocId, documents, selected, closePreview]);
 
   /**
    * Native fullscreen on the document content area (viewer toolbar + PDF /
@@ -797,13 +846,10 @@ export default function KnowledgeBasesPage() {
     try {
       const rows = await knowledgeBasesApi.list();
       setBases(rows);
-      setSelected((current) =>
-        current && !rows.some((row) => row.id === current.id) ? null : current,
-      );
     } catch (error) {
       message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
     }
-  }, [t]);
+  }, [message, t]);
 
   const loadCapability = useCallback(async () => {
     try {
@@ -965,21 +1011,34 @@ export default function KnowledgeBasesPage() {
 
   const loadDetail = useCallback(
     async (id: string, options?: { silent?: boolean }) => {
+      if (selectedIdRef.current !== id) return;
       const requestId = detailRequestGate.current.begin();
-      if (!options?.silent) setDetailLoading(true);
+      const isCurrent = () =>
+        selectedIdRef.current === id &&
+        detailRequestGate.current.isCurrent(requestId);
+      if (!options?.silent) setLoadingDetailId(id);
       try {
         const [base, nextDocuments] = await Promise.all([
           knowledgeBasesApi.get(id),
           knowledgeBasesApi.listDocuments(id),
         ]);
-        if (!detailRequestGate.current.isCurrent(requestId)) return;
-        setSelected(base);
-        setDocuments(nextDocuments);
+        if (!isCurrent()) return;
+        setBases((current) => {
+          if (
+            !current.some((row) => row.id === id && row.shared !== base.shared)
+          )
+            return current;
+          return current.map((row) => (row.id === id ? base : row));
+        });
+        setDetail({ base, documents: nextDocuments });
       } catch (error) {
-        if (!detailRequestGate.current.isCurrent(requestId)) return;
-        if (isNotFoundApiError(error)) {
-          setSelected(null);
-          setDocuments([]);
+        if (!isCurrent()) return;
+        if (
+          isNotFoundApiError(error) ||
+          parseApiError(error)?.code === "KNOWLEDGE_FORBIDDEN"
+        ) {
+          setDetail(null);
+          setBases((current) => current.filter((row) => row.id !== id));
           return;
         }
         if (!options?.silent) {
@@ -988,16 +1047,73 @@ export default function KnowledgeBasesPage() {
           );
         }
       } finally {
-        if (
-          !options?.silent &&
-          detailRequestGate.current.isCurrent(requestId)
-        ) {
-          setDetailLoading(false);
-        }
+        if (isCurrent()) setLoadingDetailId(undefined);
       }
     },
-    [t],
+    [message, t],
   );
+
+  useEffect(() => {
+    if (!previewOpen || !loadedBaseId || !previewDocId) return;
+    const preview = previewAbortRef.current;
+    const ref = { kb_id: loadedBaseId, doc_id: previewDocId };
+    let pending: AbortController | undefined;
+    const recheck = () => {
+      if (document.visibilityState === "hidden") return;
+      pending?.abort();
+      const request = (pending = new AbortController());
+      void knowledgeBasesApi.citationStatus([ref], request.signal).then(
+        ({ withdrawn }) => {
+          if (
+            request.signal.aborted ||
+            preview !== previewAbortRef.current ||
+            selectedIdRef.current !== ref.kb_id ||
+            !withdrawn.some(
+              (row) => row.kb_id === ref.kb_id && row.doc_id === ref.doc_id,
+            )
+          ) {
+            return;
+          }
+          closePreview();
+          message.info(t("knowledgeBases.originalUnavailable"));
+          setDetail((current) =>
+            current?.base.id === ref.kb_id
+              ? {
+                  ...current,
+                  documents: current.documents.filter(
+                    (row) => row.id !== ref.doc_id,
+                  ),
+                }
+              : current,
+          );
+          void loadDetail(ref.kb_id, { silent: true });
+          void loadBases();
+        },
+        () => {
+          // A failed check does not mean the document was withdrawn.
+        },
+      );
+    };
+    recheck();
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    const timer = window.setInterval(recheck, 30_000);
+    return () => {
+      pending?.abort();
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+      window.clearInterval(timer);
+    };
+  }, [
+    closePreview,
+    loadBases,
+    loadDetail,
+    loadedBaseId,
+    message,
+    previewDocId,
+    previewOpen,
+    t,
+  ]);
 
   useEffect(() => {
     const receive = (event: Event) => {
@@ -1076,10 +1192,18 @@ export default function KnowledgeBasesPage() {
     return () => window.clearInterval(timer);
   }, [documents, loadDetail, selected]);
   useEffect(() => {
-    if (!isMobile && !selected && bases.length > 0 && !detailLoading) {
-      void loadDetail(bases[0].id);
+    setDetail(null);
+    if (!selectedId) {
+      setLoadingDetailId(undefined);
+      return;
     }
-  }, [bases, detailLoading, isMobile, loadDetail, selected]);
+    setPreferredBaseId(selectedId);
+    void loadDetail(selectedId);
+    const gate = detailRequestGate.current;
+    return () => {
+      gate.begin();
+    };
+  }, [loadDetail, selectedId]);
 
   useEffect(() => {
     if (!isMobile) setMobilePane("list");
@@ -1089,9 +1213,10 @@ export default function KnowledgeBasesPage() {
     setRefreshing(true);
     try {
       await Promise.all([
-        loadBases(),
         loadCapability(),
-        selected ? loadDetail(selected.id) : Promise.resolve(),
+        loadBases().then(() =>
+          selectedId ? loadDetail(selectedId) : undefined,
+        ),
       ]);
     } finally {
       setRefreshing(false);
@@ -1099,8 +1224,19 @@ export default function KnowledgeBasesPage() {
   };
 
   const selectBase = (base: KnowledgeBase) => {
-    if (base.id !== selected?.id) void loadDetail(base.id);
+    setPreferredBaseId(base.id);
+    if (base.id === selectedId && !selected && !detailLoading) {
+      void loadDetail(base.id);
+    }
     if (isMobile) setMobilePane("detail");
+  };
+
+  const changeLibraryScope = (scope: LibraryScope) => {
+    setLibraryScope(scope);
+    const keepSelection =
+      detailTarget && matchesLibraryScope(detailTarget, scope);
+    setPreferredBaseId(keepSelection ? detailTarget.id : null);
+    if (!keepSelection) setMobilePane("list");
   };
 
   const openCreate = () => {
@@ -1180,8 +1316,8 @@ export default function KnowledgeBasesPage() {
       setBaseDrawerOpen(false);
       setPendingAvatarFile(null);
       await loadBases();
-      await loadDetail(next.id);
-      if (isMobile) setMobilePane("detail");
+      selectBase(next);
+      if (next.id === selected?.id) await loadDetail(next.id);
       message.success(
         t(editingBaseId ? "knowledgeBases.updated" : "knowledgeBases.created"),
       );
@@ -1192,24 +1328,9 @@ export default function KnowledgeBasesPage() {
 
   const deleteBase = async (base: KnowledgeBase) => {
     const deletedId = base.id;
-    const deletingSelected = deletedId === selected?.id;
-    if (deletingSelected) {
-      detailRequestGate.current.begin();
-      setSelected(null);
-      setDocuments([]);
-      setDetailLoading(false);
-    }
     try {
       await knowledgeBasesApi.delete(deletedId);
-      const rows = await knowledgeBasesApi.list();
-      setBases(rows);
-      if (deletingSelected) {
-        if (isMobile) {
-          setMobilePane("list");
-        } else if (rows.length > 0) {
-          await loadDetail(rows[0].id);
-        }
-      }
+      setBases((current) => current.filter((row) => row.id !== deletedId));
       message.success(t("knowledgeBases.deleted"));
     } catch (error) {
       message.error(
@@ -1602,7 +1723,7 @@ export default function KnowledgeBasesPage() {
     document: KnowledgeDocument,
     mode: "file" | "chunks" = "file",
   ) => {
-    if (!selected || document.is_dir) return;
+    if (!selected || document.is_dir || document.status === "withdrawn") return;
     const filePreview = canPreviewKnowledgeDocument(document);
     const chunkPreview = (document.chunk_count ?? 0) > 0;
     if (mode === "file" && !filePreview) return;
@@ -1610,9 +1731,9 @@ export default function KnowledgeBasesPage() {
     const rich = canRichPreviewKnowledgeDocument(document);
     const kind = rich ? getDocKind(document.filename) : null;
     const asMarkdown = isKnowledgeMarkdownDocument(document);
-    previewTextAbortRef.current?.abort();
+    previewAbortRef.current?.abort();
     const abort = new AbortController();
-    previewTextAbortRef.current = abort;
+    previewAbortRef.current = abort;
     setPreviewOpen(true);
     setPreviewFilename(document.filename);
     setPreviewKind(kind);
@@ -1628,7 +1749,9 @@ export default function KnowledgeBasesPage() {
     setMdFindHitCount(0);
     setPreviewFileAvailable(filePreview);
     setPreviewMode(filePreview ? mode : "chunks");
+    chunkRequestRef.current += 1;
     setChunkItems([]);
+    setChunkLoading(false);
     setChunkError(null);
     if (mode === "chunks" || !filePreview) {
       void loadDocumentChunks(selected.id, document.id);
@@ -1668,7 +1791,7 @@ export default function KnowledgeBasesPage() {
       }
     } catch (error) {
       if (abort.signal.aborted) return;
-      setPreviewOpen(false);
+      closePreview();
       message.error(
         apiErrorMessage(error, t("knowledgeBases.previewFailed"), t),
       );
@@ -1680,6 +1803,7 @@ export default function KnowledgeBasesPage() {
   const downloadDocumentOriginal = async (
     documentId: string,
     filename: string,
+    signal?: AbortSignal,
   ) => {
     if (!selected) return;
     try {
@@ -1687,37 +1811,44 @@ export default function KnowledgeBasesPage() {
         selected.id,
         documentId,
         "attachment",
+        undefined,
+        signal,
       );
+      if (signal?.aborted) return;
       await saveBlobAsFile(blob, filename || "download");
     } catch (error) {
+      if (signal?.aborted) return;
       message.error(
         apiErrorMessage(error, t("knowledgeBases.downloadOriginalFailed"), t),
       );
     }
   };
 
-  // Depend on selected.id (not the whole selected object). Silent indexing
-  // polls call setSelected(base) every 2.5s with a new object reference; that
-  // used to recreate fetchBlob and re-run DocumentPreviewCore's load effect,
-  // aborting slow Office parsers (docx/pptx/xlsx) while fast PDF survived.
-  const selectedId = selected?.id;
+  const downloadPreviewOriginal = () => {
+    const signal = previewAbortRef.current?.signal;
+    if (previewDocId && signal) {
+      void downloadDocumentOriginal(previewDocId, previewFilename, signal);
+    }
+  };
+
+  // Keep the viewer's fetch stable as indexing refreshes the base object.
   const fetchPreviewBlob = useCallback(
     async (
       onProgress?: (loaded: number, total: number) => void,
       signal?: AbortSignal,
     ) => {
-      if (!selectedId || !previewDocId) {
+      if (!loadedBaseId || !previewDocId) {
         throw new Error("missing knowledge document preview target");
       }
       return knowledgeBasesApi.fetchDocumentFile(
-        selectedId,
+        loadedBaseId,
         previewDocId,
         "inline",
         onProgress,
         signal,
       );
     },
-    [selectedId, previewDocId],
+    [loadedBaseId, previewDocId],
   );
 
   useEffect(() => {
@@ -1743,12 +1874,13 @@ export default function KnowledgeBasesPage() {
       return;
     }
 
-    if (selected?.id !== kb) {
+    if (selectedId !== kb) {
+      if (!listedBases.some((row) => row.id === kb)) setLibraryScope("all");
       selectBase(base);
       return;
     }
 
-    if (detailLoading) return;
+    if (!selected || detailLoading) return;
 
     const resolved = resolveKnowledgeDeepLink({
       kb,
@@ -1779,7 +1911,8 @@ export default function KnowledgeBasesPage() {
     documents,
     message,
     searchParams,
-    selected?.id,
+    selected,
+    selectedId,
     setSearchParams,
     t,
   ]);
@@ -1873,6 +2006,29 @@ export default function KnowledgeBasesPage() {
   };
 
   const renderDocumentActions = (document: KnowledgeDocument) => {
+    if (document.status === "withdrawn") {
+      return (
+        <span className={styles.docCardActions}>
+          <Typography.Text type="secondary">
+            {t("knowledgeBases.originalUnavailable")}
+          </Typography.Text>
+          {canWriteSelected && (
+            <Popconfirm
+              title={t("knowledgeBases.deleteDocumentConfirm")}
+              onConfirm={() => void deleteDocument(document.id)}
+            >
+              <Button
+                type="text"
+                danger
+                size="small"
+                icon={<Trash2 size={14} />}
+                aria-label={t("common.delete")}
+              />
+            </Popconfirm>
+          )}
+        </span>
+      );
+    }
     const canPreview = canPreviewKnowledgeDocument(document);
     const previewBtn = (
       <Button
@@ -1995,7 +2151,9 @@ export default function KnowledgeBasesPage() {
           >
             {name}
           </span>
-          {canWriteSelected && !document.is_dir ? (
+          {canWriteSelected &&
+          !document.is_dir &&
+          document.status !== "withdrawn" ? (
             <Tooltip title={t("knowledgeBases.renameFile")}>
               <button
                 type="button"
@@ -2017,8 +2175,10 @@ export default function KnowledgeBasesPage() {
     );
   };
 
-  const showListPane = !isMobile || mobilePane === "list";
-  const showDetailPane = !isMobile || mobilePane === "detail";
+  const showDetailPane =
+    !isMobile ||
+    (mobilePane === "detail" && Boolean(selected || detailLoading));
+  const showListPane = !isMobile || !showDetailPane;
   const showListPanel = showListPane && (isMobile || !listPanelCollapsed);
   const showEnableGuide = !loading && !usable && bases.length === 0;
   const showEmptyGuide = !loading && usable && bases.length === 0;
@@ -2166,11 +2326,27 @@ export default function KnowledgeBasesPage() {
                 <Tooltip title={t("common.refresh")}>
                   <Button
                     icon={<RefreshCw size={15} />}
+                    aria-label={t("common.refresh")}
                     loading={refreshing}
                     onClick={() => void refresh()}
                   />
                 </Tooltip>
               </div>
+              <Segmented<LibraryScope>
+                className={styles.libraryScope}
+                aria-label={t("knowledgeBases.libraryScope")}
+                size="small"
+                value={libraryScope}
+                onChange={changeLibraryScope}
+                options={[
+                  { value: "all", label: t("knowledgeBases.allLibraries") },
+                  {
+                    value: "personal",
+                    label: t("knowledgeBases.personalLibrary"),
+                  },
+                  { value: "shared", label: t("knowledgeBases.sharedLibrary") },
+                ]}
+              />
               {loading ? (
                 <div className={styles.centered}>
                   <Spin />
@@ -2179,7 +2355,7 @@ export default function KnowledgeBasesPage() {
                 <List
                   className={styles.list}
                   split={false}
-                  dataSource={bases}
+                  dataSource={listedBases}
                   locale={{
                     emptyText: (
                       <Empty
@@ -2191,6 +2367,16 @@ export default function KnowledgeBasesPage() {
                   renderItem={(base) => (
                     <List.Item
                       className={styles.listRow}
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (
+                          event.target !== event.currentTarget ||
+                          (event.key !== "Enter" && event.key !== " ")
+                        )
+                          return;
+                        event.preventDefault();
+                        selectBase(base);
+                      }}
                       onClick={() => selectBase(base)}
                     >
                       <div
@@ -2429,6 +2615,13 @@ export default function KnowledgeBasesPage() {
                           );
                         })}
                       </nav>
+                      <Tag>
+                        {t(
+                          selected.shared
+                            ? "knowledgeBases.sharedLibrary"
+                            : "knowledgeBases.personalLibrary",
+                        )}
+                      </Tag>
                     </div>
                     <div className={skillStyles.gridToolbarRight}>
                       <Segmented
@@ -2814,7 +3007,8 @@ export default function KnowledgeBasesPage() {
                               key: "chunk_count",
                               width: 80,
                               render: (chunkCount: number, document) =>
-                                document.is_dir ? (
+                                document.is_dir ||
+                                document.status === "withdrawn" ? (
                                   "—"
                                 ) : (
                                   <button
@@ -2971,16 +3165,14 @@ export default function KnowledgeBasesPage() {
             </Tooltip>
           </div>
         }
-        open={previewOpen}
+        open={previewOpen && Boolean(loadedBaseId)}
         onCancel={requestClosePreview}
         closable={false}
         footer={
           previewDocId && previewHasOriginal ? (
             <Button
               icon={<Download size={14} />}
-              onClick={() =>
-                void downloadDocumentOriginal(previewDocId, previewFilename)
-              }
+              onClick={downloadPreviewOriginal}
             >
               {t("knowledgeBases.downloadOriginal")}
             </Button>
@@ -3042,7 +3234,7 @@ export default function KnowledgeBasesPage() {
               ))
             )}
           </div>
-        ) : previewKind && previewDocId ? (
+        ) : previewKind && previewDocId && loadedBaseId ? (
           <div
             className={styles.richPreviewBody}
             data-preview-fullscreen-root=""
@@ -3053,13 +3245,7 @@ export default function KnowledgeBasesPage() {
               filename={previewFilename}
               fetchBlob={fetchPreviewBlob}
               onDownload={
-                previewHasOriginal
-                  ? () =>
-                      void downloadDocumentOriginal(
-                        previewDocId,
-                        previewFilename,
-                      )
-                  : undefined
+                previewHasOriginal ? downloadPreviewOriginal : undefined
               }
             />
           </div>

@@ -108,7 +108,7 @@ does not set these headers itself.
 | `GET`    | `/auth/me` | user | `{id, username, role, display_name, locale, ...}` |
 | `PATCH`  | `/auth/me` | user | body `{display_name?, locale?, ...}` |
 | `POST`   | `/auth/change-password` | user | body `{old_password, new_password}` → `204`, with a replacement access token in `X-Octop-Access-Token`. Outstanding tokens stop working. Accounts without a local password (directory/SSO-provisioned) get `PASSWORD_NOT_SET` |
-| `GET`    | `/health` | public | `{status: "ok", version}` |
+| `GET`    | `/health` | public | `{ok, version, arch, started_at, db, users_loaded, agents_running}` |
 
 ## Users (admin)
 
@@ -146,16 +146,23 @@ WebSocket 首帧为 `{type:"hello", access_token, public_key, name, platform}`�
 
 本票不新增运行依赖，复用 Go 标准库、已锁定的 WebSocket 库和 `cryptography`，运行不从公网补装。按 2026-11-06 的开发确认，T01 的真实模型任务与麒麟干净环境验收缺口继续保留，分别由 #4/#5 和 #7 补齐；本票的设备接入测试不替代这些验收。
 
-## 本机浏览器查询与附件
+## 本机浏览器查询与表单操作
 
-管理员在用户权限中授予“本机浏览器查询”（`local_browser`）。员工在桌面客户端接入已批准的本人设备，从设备页打开专用浏览器并亲自登录。员工可在浏览器中打开查询结果，或在面板中打开已知的查询地址。例如，打开示例订单 `DEMO-42` 的结果标签，在面板中选择该标签并询问库存数量。答案与来源一同显示，可单独截图核对。
+管理员在用户权限中授予“本机浏览器操作”（`local_browser`）。员工在桌面客户端接入已批准的本人设备，从设备页打开专用浏览器并亲自登录。员工可在浏览器中打开查询结果，或在面板中打开已知的查询地址。例如，打开示例订单 `DEMO-42` 的结果标签，在面板中选择该标签并询问库存数量。答案与来源一同显示，可单独截图核对。
+
+处理表单时，员工选择当前标签页、候选表单和提交动作，填写任务说明并获取字段建议。建议只针对选定表单的可写字段；员工核对字段当前值和建议值后，桌面客户端会打开原生确认窗，列出页面、脱敏提交地址、请求方法、打开位置、表单、提交动作和字段变化。只有员工确认后才调用所选提交动作。
+
+附件操作使用本机目录授权。`upload` 只从授权目录读取文件并选入网页；`download` 只接受当前页面同源的下载链接或指向该链接的 CSS 选择器，不跟随跨站跳转。下载写入读写授权目录。网页动作需要原生确认；覆盖已有文件还需要单独确认。
 
 | 方法 | 路径 | 请求与结果 |
 | --- | --- | --- |
-| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作可为 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture`、`close`、`upload`、`download` 或 `overwrite`。通过时返回 `{allowed:true}` |
+| `POST` | `/devices/{device_id}/browser/authorize` | 员工令牌及 `X-Colink-Device-Session`。请求 `{action}`，动作包括 `open`、`list`、`new_tab`、`select_tab`、`close_tab`、`query`、`capture`、`close`、`forms`、`suggest_form`、`submit_form`、`operations`、`upload`、`download` 和 `overwrite`。通过时返回 `{allowed:true}` |
 | `POST` | `/devices/{device_id}/browser/query` | 同上。请求 `{instruction,text}`，分别最多 8,000 和 60,000 字符。已授权的企业内网模型返回 `{text}` |
+| `POST` | `/devices/{device_id}/browser/form-suggest` | 同上。请求 `{instruction,fields}`；任务说明最多 8,000 字符，字段快照为 `{id,label,type,value,options}` 列表，紧凑 JSON 不超过 16 KiB。授权的企业内网模型返回按字段 ID 索引的 `{values}`，只含字符串或复选框布尔值 |
 
-原生客户端在启动浏览器、打开网址及读取页面前分别校验会话与动作权限。查询和截图绑定选中标签的完整地址，地址变化后先刷新标签列表。界面来源省略查询参数和片段。同名同地址的标签需要先在专用浏览器中定位并核对。登录配置与截图留在本机。查询只把提问和提取到的页面可见文字发送给授权的企业模型，禁用模型调用追踪。如果页面内容超出读取上限，或有无法读取的嵌入页面，查询结果会标明内容不完整。业务系统的填表和提交由员工在浏览器窗口内核对；面板可通过已授权文件和可识别的下载链接处理附件。
+原生客户端在启动浏览器、打开网址、读取页面和提交前分别校验会话与动作权限。查询和截图绑定选中标签的完整地址，地址变化后先刷新标签列表。界面来源省略查询参数和片段。同名同地址的标签需要先在专用浏览器中定位并核对。登录配置与截图留在本机。查询将提问和提取到的页面可见文字发送给授权的企业模型；表单建议将任务说明及所选表单字段的标识、标签、类型、当前值和选项发送给该模型，不发送页面地址、脚本或选择器，禁用模型调用追踪。模型不能决定提交目标或提交控件。表单值不写入本机操作记录。
+
+表单提交只调用一次所选按钮。`action_sent` 表示浏览器点击调用已返回，不代表业务服务已成功处理。提交回执丢失时记录为 `outcome_unknown`；应用重启后，未完成的确认或提交分别恢复为 `interrupted` 或 `outcome_unknown`。这些状态不提供重放，员工须先在业务页面检查结果。若页面内容超出读取上限，或有无法读取的嵌入页面，查询结果会标明内容不完整。
 
 - `upload` 需要本机目录读取授权和 `local_files_read`；确认后只把文件选入网页，提交结果在业务网页上核对。
 - `download` 需要读写目录和 `local_files_create`；只接受与当前网页同源的直接链接或指向该链接的 CSS 选择器（二选一）。跨站、跳转到不同地址和无法关联的下载不会保存。
@@ -293,7 +300,7 @@ and `allow_download` still apply to users who can already view the package.
 
 | Path | Auth | Notes |
 |------|------|-------|
-| `WS /agents/{id}/chat/ws?token=<jwt>` | owner | Primary dashboard turn endpoint. Send `{"type":"user_turn", ...}` frames (optional `hitl_policy` is a thread-scoped tool-approval bypass); server replies with harness stream chunks ending in `{"type":"done"}` or `{"type":"error","message":"..."}`. `{"type":"ping"}` → `{"type":"pong"}`. `{"type":"subscribe","thread_id"}` → `{"type":"turn_status","thread_id","active"}` plus a `steer.queue_snapshot` baseline (attach to an in-flight turn without cancelling on disconnect). `{"type":"cancel","thread_id"}` stops the active turn and discards its queued steers (explicit stop; disconnect alone does **not** cancel). See [Mid-turn steering](#mid-turn-steering) for steer frames. |
+| `WS /agents/{id}/chat/ws?token=<jwt>` | owner | Primary dashboard turn endpoint. Session bindings come from the authenticated user and expert; both explicit and bound threads must belong to that user. Send `{"type":"user_turn", ...}` frames (optional `hitl_policy` is a thread-scoped tool-approval bypass); server replies with harness stream chunks ending in `{"type":"done"}` or `{"type":"error","message":"..."}`. `{"type":"ping"}` → `{"type":"pong"}`. `{"type":"subscribe","thread_id"}` → `{"type":"turn_status","thread_id","active"}` plus a `steer.queue_snapshot` baseline (attach to an in-flight turn without cancelling on disconnect). `{"type":"cancel","thread_id"}` stops the active turn and discards its queued steers (explicit stop; disconnect alone does **not** cancel). See [Mid-turn steering](#mid-turn-steering) for steer frames. |
 | `GET /agents/{id}/chat/welcome` | agent access | `{welcome_message, quick_prompts, task_examples}`; `task_examples` is `null` when the workspace field is absent |
 | `POST /text/assist` | JWT | Unified polish/generate: body `{kind, text?, context?, locale?, default_model?, agent_id?}` → `{text}`. Form kinds require `context.name`; `chat.prompt` requires `text`. Model defaults to automatic routing. |
 | `POST /agents/{id}/chat/polish` | owner | **Deprecated** compat alias for `POST /text/assist` with `kind=chat.prompt` |
@@ -347,11 +354,11 @@ approval card. A park older than 30 minutes is discarded (`park_expired`).
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| `GET`    | `/agents/{id}/chat/sessions` | owner | `[{id, thread_id, title, archived, last_active, unread, ...}]` |
-| `POST`   | `/agents/{id}/chat/sessions` | owner | body `{session_key?}` → `{thread_id, session_key}` |
-| `PATCH`  | `/agents/{id}/chat/sessions/{thread_id}` | owner | body `{title?, pinned?}` → updated row |
-| `DELETE` | `/agents/{id}/chat/sessions/{thread_id}` | owner | `204` (archives the active row) |
-| `GET`    | `/agents/{id}/chat/sessions/{thread_id}/history` | owner | paginated message history; `turn_active` tells a reconnecting client whether to re-`subscribe` over the chat WebSocket |
+| `GET` | `/agents/{id}/threads` | own conversations | List conversations the current user owns for this expert. |
+| `POST` | `/agents/{id}/threads` | expert access | Create and bind a new conversation for the current user. |
+| `PATCH` | `/agents/{id}/threads/{thread_id}` | conversation owner | Rename, pin, or update conversation settings. |
+| `DELETE` | `/agents/{id}/threads/{thread_id}` | conversation owner | Removes stored conversation history, checkpoints, and metadata. Keeps independently saved memories, task files and retained audit. Returns `204`, or `200` with compaction status when `compact` is supplied. `THREAD_NOT_FOUND` is `404`; active turns or retryable cleanup failures return `409`. |
+| `GET` | `/agents/{id}/threads/{thread_id}/history` | conversation owner | Paginated messages. `turn_active` signals whether to reconnect to a running turn. |
 
 **Tool result blocks.** `tool_result` blocks in history (and `tool_result`
 frames on the chat WebSocket) carry the tool's return value in `output`. When a

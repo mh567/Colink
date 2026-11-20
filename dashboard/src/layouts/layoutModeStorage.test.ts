@@ -14,8 +14,8 @@ describe("layoutModeStorage", () => {
     localStorage.removeItem(MINIMAL_NAV_PANE_KEY);
   });
 
-  it("defaults to classic layout and records pane", () => {
-    expect(loadLayoutMode()).toBe("classic");
+  it("defaults to the single rail and records pane", () => {
+    expect(loadLayoutMode()).toBe("minimal");
     expect(loadMinimalNavPane()).toBe("records");
   });
 
@@ -36,7 +36,7 @@ describe("layoutModeStorage", () => {
   it("ignores invalid stored values", () => {
     localStorage.setItem(LAYOUT_MODE_KEY, "weird");
     localStorage.setItem(MINIMAL_NAV_PANE_KEY, "other");
-    expect(loadLayoutMode()).toBe("classic");
+    expect(loadLayoutMode()).toBe("minimal");
     expect(loadMinimalNavPane()).toBe("records");
   });
 });

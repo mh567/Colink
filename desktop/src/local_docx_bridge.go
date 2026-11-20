@@ -87,6 +87,9 @@ func (a *App) emitDOCXResult(s docxSession, err error, importID string) {
 	if err != nil {
 		event.Error = presentFileopsError(s.Locale, err).Error()
 	}
+	for i := range event.Tasks {
+		event.Tasks[i].OutputHash = ""
+	}
 	// Local identities are only for reopening the exact directory, not UI data.
 	for i := range event.Grants {
 		event.Grants[i].Identity = ""
@@ -308,10 +311,10 @@ func (a *App) confirmLocalFile(ctx context.Context, locale Locale, operation, pa
 	case "browser_overwrite":
 		action, scope = copyFileOverwrite, copyBrowserOverwriteScope
 	case "browser_upload":
-		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		title, message = copyBrowserTransferConfirmTitle, copyBrowserTransferConfirmMessage
 		action, scope = copyBrowserUpload, copyBrowserUploadScope
 	case "browser_download":
-		title, message = copyBrowserConfirmTitle, copyBrowserConfirmMessage
+		title, message = copyBrowserTransferConfirmTitle, copyBrowserTransferConfirmMessage
 		action, scope = copyBrowserDownload, copyBrowserDownloadScope
 	default:
 		return false, fileopsCopyError(copyFileInvalidIntent)

@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
 from octop.infra.db.repos.sessions import SessionRepo, SessionRow
 from octop.infra.db.repos.threads import ThreadRepo, ThreadRow
+from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.ulid import new_ulid
+
+if TYPE_CHECKING:
+    from octop.infra.server import AppRuntime
+
+logger = logging.getLogger(__name__)
 
 
 class ThreadRegistry:
@@ -486,8 +493,8 @@ class ThreadRegistry:
         )
 
     def delete_thread(self, thread_id: str) -> None:
-        self._threads.delete(thread_id)
         self._sessions.delete_for_thread(thread_id)
+        self._threads.delete(thread_id)
 
     def increment_unread(self, session_key: str, *, delta: int = 1) -> None:
         self._sessions.increment_unread(session_key, delta=delta)
@@ -518,3 +525,52 @@ def thread_row_has_messages(row: ThreadRow) -> bool:
     if row.title:
         return True
     return row.last_active > 0
+
+
+async def _delete_thread_data(
+    runtime: AppRuntime, agent_id: str, thread_id: str, *, compact: bool | None
+) -> None:
+    registry = runtime.agent_registry
+    try:
+        if compact is False:
+            await registry.delete_thread_checkpoint(agent_id, thread_id, reclaim=False)
+        else:
+            await registry.delete_thread_checkpoint(agent_id, thread_id)
+        await registry.delete_thread_logs(agent_id, thread_id)
+        trajectory = runtime.trajectory_service
+        if trajectory is not None:
+            await asyncio.to_thread(trajectory.delete_for_thread, thread_id)
+        runtime.gateway.thread_registry.delete_thread(thread_id)
+    except OctopError:
+        raise
+    except Exception as exc:
+        logger.exception("conversation cleanup failed thread=%s", thread_id)
+        raise OctopError.localized(ErrorCode.CHECKPOINT_DELETE_FAILED) from exc
+
+
+async def delete_dashboard_thread(
+    runtime: AppRuntime, agent_id: str, thread_id: str, *, compact: bool | None
+) -> None:
+    """Keep a conversation retryable until all of its stores have been cleaned."""
+    registry = runtime.agent_registry
+    hub = runtime.gateway.ws_hub
+    if not hub.try_begin_thread_deletion(thread_id):
+        raise OctopError.localized(ErrorCode.THREAD_TURN_ACTIVE)
+    try:
+        # Journals are shared between an expert's conversations, so keep the
+        # expert idle as well as excluding new turns for this conversation.
+        if not registry.try_begin_history_backfill(agent_id):
+            raise OctopError.localized(ErrorCode.AGENT_BUSY)
+        try:
+            cleanup = asyncio.create_task(
+                _delete_thread_data(runtime, agent_id, thread_id, compact=compact)
+            )
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+                raise
+        finally:
+            registry.end_history_backfill(agent_id)
+    finally:
+        hub.end_thread_deletion(thread_id)

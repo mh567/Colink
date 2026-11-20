@@ -20,7 +20,9 @@ from octop_gateway.models import (
 )
 from octop_gateway.utils import close_event_stream
 
+from octop.i18n import error_message
 from octop.i18n.domains.stream import format_stream_error
+from octop.infra.errors import ErrorCode
 from octop.infra.gateway.media.attachment_hints import (
     inbound_attachments_from_parts,
     is_vision_attachment,
@@ -47,11 +49,13 @@ class WebSocketChannel(BaseChannel):
         *,
         hub: WebSocketHub,
         steer: SteerCoordinator | None = None,
+        threads: ThreadRegistry | None = None,
         channel_id: str = WS_CHANNEL_ID,
     ) -> None:
         super().__init__(processor, channel_id=channel_id, debounce_seconds=0.0)
         self._hub = hub
         self._steer = steer or SteerCoordinator()
+        self._threads = threads
 
     def _default_constraints(self) -> ChannelConstraints:
         return ChannelConstraints(
@@ -104,9 +108,6 @@ class WebSocketChannel(BaseChannel):
         """
         message = self.parse_inbound(raw_payload)
 
-        if self._media_backend:
-            await self._persist_media(message)
-
         msg_meta = message.metadata or {}
         conn_id = str(msg_meta.get("ws_connection_id") or "")
         if not conn_id:
@@ -120,6 +121,33 @@ class WebSocketChannel(BaseChannel):
             await self._hub.push(conn_id, {"type": "done"})
             return
 
+        # A queued turn can reach this worker after its conversation was deleted.
+        failure = None
+        if self._threads is not None:
+            row = self._threads.get_thread(thread_id)
+            subject = message.channel_subject
+            if row is None or row.agent_id != message.tenant_id:
+                failure = ErrorCode.THREAD_NOT_FOUND
+            elif subject is None or str(row.user_id) != subject.subject_id:
+                failure = ErrorCode.FORBIDDEN
+        if failure is None and not self._hub.try_begin_turn(thread_id):
+            failure = ErrorCode.THREAD_TURN_ACTIVE
+        if failure is not None:
+            locale = resolve_locale(channel_type=self.channel_type, metadata=msg_meta)
+            await self._hub.push(
+                conn_id, {"type": "error", "message": error_message(failure.value, locale)}
+            )
+            await self._hub.push(conn_id, {"type": "done"})
+            return
+
+        try:
+            if self._media_backend:
+                await self._persist_media(message)
+            await self._run_turn(message, thread_id, conn_id)
+        finally:
+            self._hub.mark_turn_idle(thread_id)
+
+    async def _run_turn(self, message: InboundMessage, thread_id: str, conn_id: str) -> None:
         self._track_subject(message)
         # Per-turn routing copy: do not write thread_id onto the shared
         # ChannelSubject (keyed by user), or concurrent threads 串流 via _send_*.
@@ -162,7 +190,6 @@ class WebSocketChannel(BaseChannel):
         self._steer.remember_context(
             thread_id, message.metadata if isinstance(message.metadata, dict) else None
         )
-        self._hub.mark_turn_active(thread_id)
         failed = False
         stream = None
         try:
@@ -307,7 +334,6 @@ class WebSocketChannel(BaseChannel):
                 logger.exception("websocket failed to deliver error frame thread=%s", thread_id)
         finally:
             discarded = self._steer.end_turn(thread_id, failed=failed)
-            self._hub.mark_turn_idle(thread_id)
             if stream is not None:
                 await close_event_stream(stream)
             if discarded is not None:

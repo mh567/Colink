@@ -246,7 +246,7 @@ pip install octop
 From a source checkout with uv:
 
 ```bash
-uv sync --extra local-embedding
+uv sync --locked --extra local-embedding
 ```
 
 ### 2. Initialize

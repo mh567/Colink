@@ -56,16 +56,19 @@ async def octop_client(
     fake_agent: Any | None = None,
     patch_llm: bool = True,
     bind_database: bool = True,
+    seed_default_expert: bool = True,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, OctopServer]]:
     """Start OctopServer, yield ``(httpx client, server)``, then stop.
 
     Greenfield starts defer the control-plane DB until ``/setup/database``.
     Most tests set ``bind_database=True`` (default) to bind SQLite immediately.
     Pass ``bind_database=False`` to exercise deferred password / status paths.
+    Pass ``seed_default_expert=False`` to start without a cached market template.
     """
     ctx = patch_harness(fake_agent) if patch_llm else nullcontext(fake_agent)
     with ctx:
-        seed_cached_general_assistant(home)
+        if seed_default_expert:
+            seed_cached_general_assistant(home)
         srv = OctopServer(home=home)
         await srv.start()
         if bind_database and not srv.database_bound:

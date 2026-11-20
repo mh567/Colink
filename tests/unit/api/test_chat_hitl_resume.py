@@ -15,6 +15,7 @@ from starlette.requests import Request
 from octop.api.routers.chat.models import HitlResumeBody
 from octop.api.routers.chat.routes import iter_dashboard_hitl_resume_sse, resume_hitl
 from octop.infra.gateway.hitl.coordinator import HitlChannelCoordinator
+from octop.infra.gateway.ws import WebSocketHub
 
 
 def _parse_sse_chunks(raw: str) -> list[dict[str, Any]]:
@@ -59,6 +60,12 @@ def pending_file_approval(tmp_path: Path):
         yield {"type": "token", "content": "updated"}
 
     gateway = SimpleNamespace(
+        thread_registry=SimpleNamespace(
+            get_thread=lambda _: (
+                SimpleNamespace(agent_id="shared-agent", user_id=1) if conversation_exists else None
+            )
+        ),
+        ws_hub=WebSocketHub(),
         processor=SimpleNamespace(
             hitl_coordinator=hitl, iter_hitl_resume_chunks=run_confirmed_action
         ),
@@ -69,10 +76,14 @@ def pending_file_approval(tmp_path: Path):
     )
 
     request_waits_for_new_turn = False
+    conversation_exists = True
 
-    async def submit(employee: int, pending_id: str | None, *, new_turn: bool = False):
-        nonlocal request_waits_for_new_turn
+    async def submit(
+        employee: int, pending_id: str | None, *, new_turn: bool = False, deleted: bool = False
+    ):
+        nonlocal request_waits_for_new_turn, conversation_exists
         request_waits_for_new_turn = new_turn
+        conversation_exists = not deleted
         return await resume_hitl(
             "shared-agent",
             HitlResumeBody(
@@ -120,6 +131,15 @@ async def test_two_approval_requests_for_one_pause_update_the_file_once(
 async def test_file_approval_expires_if_a_new_turn_starts_before_execution(pending_file_approval):
     target, pending_id, submit = pending_file_approval
     response = await submit(1, pending_id, new_turn=True)
+    frames = _parse_sse_chunks("".join([frame async for frame in response.body_iterator]))
+    assert frames[0]["type"] == "error"
+    assert target.read_bytes() == b"original"
+
+
+@pytest.mark.asyncio
+async def test_file_approval_does_not_resume_a_deleted_conversation(pending_file_approval):
+    target, pending_id, submit = pending_file_approval
+    response = await submit(1, pending_id, deleted=True)
     frames = _parse_sse_chunks("".join([frame async for frame in response.body_iterator]))
     assert frames[0]["type"] == "error"
     assert target.read_bytes() == b"original"
