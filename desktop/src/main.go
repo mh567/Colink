@@ -45,6 +45,7 @@ type App struct {
 	browser          *localBrowser
 	browserBridgeKey [32]byte
 	ownsListenPort   bool
+	notifyWarning    func(title, message string)
 }
 
 func (a *App) ServiceName() string { return "desktop" }
@@ -57,6 +58,9 @@ func (a *App) ServiceShutdown() error {
 	}
 	if a.browser != nil {
 		a.browser.close()
+	}
+	if a.docx != nil {
+		a.docx.close()
 	}
 	a.sleep.stop()
 	a.mu.Lock()
@@ -190,6 +194,25 @@ func (a *App) setStatus(msg string) {
 	a.app.Event.Emit("desktop:status", msg)
 }
 
+func (a *App) warnUpgradeFallback(locale Locale, message string) {
+	if message == "" {
+		return
+	}
+	title := desktopText(locale, copyErrorUpgradeFailed)
+	if a.notifyWarning != nil {
+		a.notifyWarning(title, message)
+		return
+	}
+	if a.app == nil {
+		return
+	}
+	dialog := a.app.Dialog.Warning().SetTitle(title).SetMessage(message)
+	if a.window != nil {
+		dialog.AttachToWindow(a.window)
+	}
+	dialog.Show()
+}
+
 func (a *App) boot() {
 	locale := LocaleEN
 	if a.store != nil {
@@ -228,7 +251,15 @@ func (a *App) boot() {
 		return
 	}
 	a.setStatus(desktopText(locale, copyStatusCheckingRuntime))
-	if err := ensurePortableAtStartup(locale, a.setStatus); err != nil {
+	upgradeFailedMsg := desktopText(locale, copyStatusUpdateFailedKeep)
+	var upgradeWarning string
+	status := func(msg string) {
+		if msg == upgradeFailedMsg {
+			upgradeWarning = msg
+		}
+		a.setStatus(msg)
+	}
+	if err := ensurePortableAtStartup(locale, status); err != nil {
 		a.setStatus(err.Error())
 		return
 	}
@@ -269,6 +300,9 @@ func (a *App) boot() {
 		a.mu.Unlock()
 	}
 	a.showDashboard(base)
+	if upgradeWarning != "" {
+		go a.warnUpgradeFallback(locale, upgradeWarning)
+	}
 }
 
 func (a *App) showDashboard(base string) {
@@ -378,9 +412,8 @@ func main() {
 	api.docx = newLocalDOCX(octopHome())
 	api.device = &deviceClient{emit: api.emitDeviceStatus, retryAudit: api.docx.retryFileAudit}
 	api.docx.confirmDestructive = api.confirmLocalFile
-	api.browser = newLocalBrowser(octopHome())
+	api.browser = newLocalBrowserWithDOCX(octopHome(), api.docx)
 	api.browser.confirmSubmit = api.confirmLocalBrowserSubmit
-	api.browser.docx = api.docx
 	api.browser.confirmDestructive = api.confirmLocalFile
 	rand.Read(api.browserBridgeKey[:])
 
@@ -437,10 +470,21 @@ func main() {
 	app.Event.On("desktop:close", func(_ *application.CustomEvent) {
 		api.hideToTray()
 	})
-	installDragOverlay := func(_ *application.WindowEvent) { api.scheduleDragOverlay() }
-	win.OnWindowEvent(events.Mac.WebViewDidFinishNavigation, installDragOverlay)
-	win.OnWindowEvent(events.Windows.WebViewNavigationCompleted, installDragOverlay)
-	win.OnWindowEvent(events.Linux.WindowLoadFinished, installDragOverlay)
+	var bootOnce sync.Once
+	startBoot := func(_ *application.WindowEvent) {
+		bootOnce.Do(func() {
+			go api.boot()
+		})
+	}
+	onWebViewReady := func(ev *application.WindowEvent) {
+		api.scheduleDragOverlay()
+		startBoot(ev)
+	}
+	// Defer boot until WebView finishes initial load; calling SetURL during Windows WebView2 init panics.
+	win.OnWindowEvent(events.Common.WindowRuntimeReady, startBoot)
+	win.OnWindowEvent(events.Mac.WebViewDidFinishNavigation, onWebViewReady)
+	win.OnWindowEvent(events.Windows.WebViewNavigationCompleted, onWebViewReady)
+	win.OnWindowEvent(events.Linux.WindowLoadFinished, onWebViewReady)
 	settingsWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Colink 设置",
 		Width:            settingsWindowWidth,
@@ -505,9 +549,6 @@ func main() {
 	if err := api.sleep.set(store.get().PreventSleep); err != nil {
 		log.Printf("enable sleep prevention: %v", err)
 	}
-
-	api.scheduleDragOverlay()
-	go api.boot()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 # Octop desktop NSIS installer.
 # Built by `wails3 task package` on a Windows runner:
@@ -45,6 +45,20 @@ ManifestDPIAware true
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_RESERVEFILE_LANGDLL
+
+LangString LANG_WAILS_WIN10_REQUIRED ${LANG_SIMPCHINESE} "本产品需要 Windows 10 1809（或 Windows Server 2019）及以上版本。"
+LangString LANG_WAILS_WIN10_REQUIRED ${LANG_ENGLISH} "This product requires Windows 10 1809 (or Windows Server 2019) or later."
+LangString LANG_WAILS_ARCH_NOT_SUPPORTED ${LANG_SIMPCHINESE} "当前系统架构不支持安装本产品，支持架构：${ARCH}"
+LangString LANG_WAILS_ARCH_NOT_SUPPORTED ${LANG_ENGLISH} "This product can't be installed on the current Windows architecture. Supports: ${ARCH}"
+LangString LANG_WAILS_INSTALL_WEBVIEW ${LANG_SIMPCHINESE} "正在安装：Microsoft Edge WebView2 运行时"
+LangString LANG_WAILS_INSTALL_WEBVIEW ${LANG_ENGLISH} "Installing: Microsoft Edge WebView2 Runtime"
+LangString LANG_WAILS_WEBVIEW2_MISSING ${LANG_SIMPCHINESE} "未检测到 Microsoft Edge WebView2 运行时。$\r$\n离线环境请先安装 ${WEBVIEW2_STANDALONE_INSTALLER}，或将其放在本安装程序同级目录后重试。"
+LangString LANG_WAILS_WEBVIEW2_MISSING ${LANG_ENGLISH} "Microsoft Edge WebView2 Runtime was not detected.$\r$\nIn an offline environment, install ${WEBVIEW2_STANDALONE_INSTALLER} first or place it next to this installer and retry."
+
+!define WAILS_WIN10_REQUIRED "$(LANG_WAILS_WIN10_REQUIRED)"
+!define WAILS_ARCHITECTURE_NOT_SUPPORTED "$(LANG_WAILS_ARCH_NOT_SUPPORTED)"
+!define WAILS_INSTALL_WEBVIEW_DETAILPRINT "$(LANG_WAILS_INSTALL_WEBVIEW)"
+!define WAILS_WEBVIEW2_MISSING_ERROR "$(LANG_WAILS_WEBVIEW2_MISSING)"
 
 Name "Colink"
 !ifndef INSTALLER_OUTFILE

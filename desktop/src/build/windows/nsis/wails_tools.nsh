@@ -66,9 +66,17 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     !endif
 !endif
 
+!ifndef WEBVIEW2_STANDALONE_INSTALLER
+    !if "${ARCH}" == "arm64"
+        !define WEBVIEW2_STANDALONE_INSTALLER "MicrosoftEdgeWebView2RuntimeInstallerARM64.exe"
+    !else
+        !define WEBVIEW2_STANDALONE_INSTALLER "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+    !endif
+!endif
+
 !macro wails.checkArchitecture
     !ifndef WAILS_WIN10_REQUIRED
-        !define WAILS_WIN10_REQUIRED "This product is only supported on Windows 10 (Server 2016) and later."
+        !define WAILS_WIN10_REQUIRED "This product requires Windows 10 1809 (or Windows Server 2019) or later."
     !endif
 
     !ifndef WAILS_ARCHITECTURE_NOT_SUPPORTED
@@ -76,6 +84,7 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     !endif
 
     ${If} ${AtLeastWin10}
+    ${AndIf} ${AtLeastBuild} 17763
         !ifdef SUPPORTS_AMD64
             ${if} ${IsNativeAMD64}
                 Goto ok
@@ -170,35 +179,82 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     ${EndIf}
 !macroend
 
-# Install webview2 by launching the bootstrapper
-# See https://docs.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution#online-only-deployment
-!macro wails.webview2runtime
-    !ifndef WAILS_INSTALL_WEBVIEW_DETAILPRINT
-        !define WAILS_INSTALL_WEBVIEW_DETAILPRINT "Installing: WebView2 Runtime"
-    !endif
-
+# Read WebView2 Runtime version into $0; clears $0 if empty or sentinel "0.0.0.0".
+!macro wails.readWebView2Version
     SetRegView 64
     ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    ${If} $0 == "0.0.0.0"
+        StrCpy $0 ""
+    ${EndIf}
+    ${If} $0 == ""
+        ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${If} $0 == "0.0.0.0"
+            StrCpy $0 ""
+        ${EndIf}
+    ${EndIf}
+    ${If} $0 == ""
+        ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${If} $0 == "0.0.0.0"
+            StrCpy $0 ""
+        ${EndIf}
+    ${EndIf}
+!macroend
+
+# Install WebView2 from side-by-side offline installer, embedded offline installer, or online bootstrapper.
+!macro wails.webview2runtime
+    !ifndef WAILS_INSTALL_WEBVIEW_DETAILPRINT
+        !define WAILS_INSTALL_WEBVIEW_DETAILPRINT "Installing: Microsoft Edge WebView2 Runtime"
+    !endif
+    !ifndef WAILS_WEBVIEW2_MISSING_ERROR
+        !define WAILS_WEBVIEW2_MISSING_ERROR "Microsoft Edge WebView2 Runtime was not detected.$\r$\nIn an offline environment, install ${WEBVIEW2_STANDALONE_INSTALLER} first or place it next to this installer and retry."
+    !endif
+
+    !insertmacro wails.readWebView2Version
     ${If} $0 != ""
         Goto ok
-    ${EndIf}
-
-    ${If} ${REQUEST_EXECUTION_LEVEL} == "user"
-        ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-        ${If} $0 != ""
-            Goto ok
-        ${EndIf}
     ${EndIf}
 
     SetDetailsPrint both
     DetailPrint "${WAILS_INSTALL_WEBVIEW_DETAILPRINT}"
     SetDetailsPrint listonly
 
-    InitPluginsDir
-    CreateDirectory "$pluginsdir\webview2bootstrapper"
-    SetOutPath "$pluginsdir\webview2bootstrapper"
-    File "MicrosoftEdgeWebview2Setup.exe"
-    ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install'
+    ${If} ${IsNativeARM64}
+        StrCpy $2 "MicrosoftEdgeWebView2RuntimeInstallerARM64.exe"
+    ${Else}
+        StrCpy $2 "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+    ${EndIf}
+
+    # Prefer side-by-side standalone offline installer next to the setup executable.
+    ${If} ${FileExists} "$EXEDIR\$2"
+        ExecWait '"$EXEDIR\$2" /silent /install'
+    ${Else}
+        !ifdef ARG_WEBVIEW2_OFFLINE_INSTALLER
+            InitPluginsDir
+            CreateDirectory "$pluginsdir\webview2offline"
+            SetOutPath "$pluginsdir\webview2offline"
+            File "/oname=WebView2Standalone.exe" "${ARG_WEBVIEW2_OFFLINE_INSTALLER}"
+            ExecWait '"$pluginsdir\webview2offline\WebView2Standalone.exe" /silent /install'
+        !else
+            InitPluginsDir
+            CreateDirectory "$pluginsdir\webview2bootstrapper"
+            SetOutPath "$pluginsdir\webview2bootstrapper"
+            File /nonfatal "MicrosoftEdgeWebview2Setup.exe"
+            ${If} ${FileExists} "$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe"
+                ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install'
+            ${EndIf}
+        !endif
+    ${EndIf}
+
+    !insertmacro wails.readWebView2Version
+    ${If} $0 == ""
+        SetErrorLevel 66
+        IfSilent silentWebView notSilentWebView
+        silentWebView:
+            Abort
+        notSilentWebView:
+            MessageBox MB_ICONSTOP|MB_OK "${WAILS_WEBVIEW2_MISSING_ERROR}"
+            Abort
+    ${EndIf}
 
     SetDetailsPrint both
     ok:
