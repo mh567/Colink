@@ -860,3 +860,66 @@ it("displays failure reason, completed steps and retains artifact on failed task
   expect(screen.getByText("可用产物：")).toBeInTheDocument();
   expect(screen.getByText("/成果/可用产物.docx")).toBeInTheDocument();
 });
+
+it("displays warning alert and disables operations when device connection is disconnected", async () => {
+  (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+  await act(async () => {
+    render(<LocalDocxPanel deviceId="mine" connected={false} />);
+  });
+  expect(
+    screen.getByText("设备连接已断开，受控操作已暂停。请在上方重新接入设备。"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "生成 DOCX" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "选择只读目录" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "选择读写目录" })).toBeDisabled();
+});
+
+it("reloads the terminal task state when the same device reconnects", async () => {
+  const task = {
+    id: "1",
+    instruction: "整理",
+    source: "原文.docx",
+    output: "",
+    status: "running",
+  };
+  const emit = (terminal: boolean) =>
+    window.dispatchEvent(
+      new CustomEvent("colink:docx-status", {
+        detail: {
+          device_id: "mine",
+          busy: !terminal,
+          grants: [],
+          tasks: [{ ...task, status: terminal ? "failed" : "running" }],
+        },
+      }),
+    );
+  let reconnected = false;
+  (window as Window & { _wails?: unknown })._wails = {
+    invoke: vi.fn(() => emit(reconnected)),
+  };
+  const { rerender } = render(<LocalDocxPanel deviceId="mine" connected />);
+  await act(async () => {});
+  expect(screen.getByText("处理中")).toBeInTheDocument();
+  rerender(<LocalDocxPanel deviceId="mine" connected={false} />);
+  reconnected = true;
+  rerender(<LocalDocxPanel deviceId="mine" connected />);
+  expect(await screen.findByText("失败")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "刷新本机记录" })).toBeEnabled();
+});
+
+it("tells the employee that a revoked device needs administrator approval", async () => {
+  (window as Window & { _wails?: unknown })._wails = { invoke: vi.fn() };
+  await act(async () => {
+    render(
+      <LocalDocxPanel
+        deviceId="mine"
+        connected={false}
+        disconnectCode="DEVICE_REVOKED"
+      />,
+    );
+  });
+  expect(
+    screen.getByText("设备授权已撤销，请联系管理员重新批准。"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/在上方重新接入/)).not.toBeInTheDocument();
+});

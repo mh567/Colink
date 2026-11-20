@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -316,6 +317,83 @@ func TestLocalDOCXOutputWriteHoldsGrantLock(t *testing.T) {
 	}
 }
 
+func TestLocalDOCXStopsBeforeSendingOrWritingAfterRevocation(t *testing.T) {
+	for _, revoke := range []string{"source", "device"} {
+		t.Run(revoke, func(t *testing.T) {
+			var calls atomic.Int32
+			var deviceDenied atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/generate"):
+					calls.Add(1)
+					w.Write([]byte(`{"text":"结果"}`))
+				case strings.HasSuffix(r.URL.Path, "/file-events"):
+					w.Write([]byte(`{"recorded":true}`))
+				case deviceDenied.Load():
+					w.WriteHeader(http.StatusForbidden)
+				default:
+					w.Write([]byte(`{"allowed":true}`))
+				}
+			}))
+			defer server.Close()
+			dir := t.TempDir()
+			data, err := makeDOCX("原文")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(dir, "input.docx"), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			worker := newLocalDOCX(t.TempDir())
+			defer worker.close()
+			session := docxSession{Base: server.URL, DeviceID: "device", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
+			source, err := worker.grant(session, dir, "ro")
+			if err != nil {
+				t.Fatal(err)
+			}
+			outDir := t.TempDir()
+			output, err := worker.grant(session, outDir, "rw")
+			if err != nil {
+				t.Fatal(err)
+			}
+			preserved := filepath.Join(outDir, "previous.docx")
+			if err = os.WriteFile(preserved, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			refreshes := 0
+			current := func() error {
+				if revoke == "device" && calls.Load() > 0 {
+					deviceDenied.Store(true)
+				}
+				return nil
+			}
+			session.Refresh = func() (docxSession, error) {
+				refreshes++
+				if revoke == "source" && refreshes == 3 {
+					if err := worker.revoke(session, source.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return session, nil
+			}
+			req := docxRequest{SourceGrant: source.ID, Source: "input.docx", OutputGrant: output.ID, Output: "output.docx", Instruction: "整理"}
+			task, err := worker.run(session, req, current)
+			if err == nil || task.Status != "failed" {
+				t.Errorf("revoked task must fail: %+v, %v", task, err)
+			}
+			if revoke == "source" && calls.Load() != 0 {
+				t.Error("started a model request after the directory was revoked")
+			}
+			if _, err := os.Stat(filepath.Join(outDir, req.Output)); !os.IsNotExist(err) {
+				t.Errorf("created output after revocation: %v", err)
+			}
+			if got, err := os.ReadFile(preserved); err != nil || !bytes.Equal(got, data) {
+				t.Errorf("changed completed output: %v", err)
+			}
+		})
+	}
+}
+
 func TestLocalDOCXRevokeDuringModelCallStopsOutput(t *testing.T) {
 	for _, revokedGrant := range []string{"source", "output"} {
 		t.Run(revokedGrant, func(t *testing.T) {
@@ -429,19 +507,12 @@ func TestLocalDOCXRevokeDuringModelCallStopsOutput(t *testing.T) {
 			if _, err = worker.openGrant(otherSession, otherGrant.ID, true); err != nil {
 				t.Fatalf("revocation affected another device: %v", err)
 			}
-			worker.mu.Lock()
-			busy := worker.busy
-			worker.mu.Unlock()
-			if !busy {
-				t.Fatal("revocation cleared the running task's busy state")
-			}
-
-			release()
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
-				t.Fatal("running task did not finish after model response was released")
+				t.Fatal("revocation did not stop the task while the model was still running")
 			}
+			release()
 			state, err := worker.state(session)
 			if err != nil || len(state.Tasks) != 1 || state.Tasks[0].Status != "failed" || state.Tasks[0].Error == "" {
 				t.Fatalf("revoked task was not recorded as failed: state=%+v err=%v", state, err)
