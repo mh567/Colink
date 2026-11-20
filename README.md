@@ -361,6 +361,8 @@ All install scripts provision an isolated environment at `~/.octop/venv` and a `
 octop update          # fetch and install the latest octop, then restart the service if one is registered
 ```
 
+When switching an existing Python installation to a build that depends on `colink-harness` and `colink-memory`, use a fresh virtual environment and keep your existing `~/.octop/` data. The upstream and fork packages share import paths; uninstalling either from an environment that contains both can remove files used by the other.
+
 The schema migrates automatically on next boot; run `octop init` only if the setup wizard prompts for a migration. Always back up first (`octop backup`) before a cross-version upgrade.
 
 ## ⚙️ Configuration

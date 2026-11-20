@@ -360,6 +360,8 @@ docker run -d \
 octop update          # 获取并安装最新版 Octop，若已注册系统服务则自动重启
 ```
 
+如果新版本改用 `colink-harness` 和 `colink-memory`，已有 Python 安装请切换到新的虚拟环境，保留原有 `~/.octop/` 数据。fork 与上游包使用同一导入路径；两套包混装后，卸载其中一套可能删掉另一套正在使用的文件。
+
 数据库结构会在下次启动时自动迁移；仅当设置向导提示需要迁移时才运行 `octop init`。跨版本升级前请务必先备份（`octop backup`）。
 
 ## ⚙️ 配置

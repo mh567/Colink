@@ -14,6 +14,7 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "strip_restricted_skills.py"
 DIST_INFO = "octop_harness-1.0.7.dist-info"
+COLINK_DIST_INFO = "colink_harness-1.0.7.post1.dist-info"
 KEPT_RECORD = (
     "octop_harness/__init__.py,,\r\n"
     '"octop_harness/builtin/skills/en/keep,skill/SKILL.md",sha256=unchanged,17\r\n'
@@ -24,14 +25,14 @@ KEPT_RECORD = (
 ).encode()
 
 
-def _installation(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
+def _installation(tmp_path: Path, dist_info: str = DIST_INFO) -> tuple[Path, dict[str, bytes]]:
     site_packages = tmp_path / "packages with spaces"
     retained = {
         "octop_harness/__init__.py": b"",
         "octop_harness/builtin/skills/en/keep,skill/SKILL.md": b"keep this skill\n",
         "octop_harness/builtin/skills/en/powerpoint-extra/SKILL.md": b"separate skill\n",
-        f"{DIST_INFO}/METADATA": b"Name: octop-harness\nVersion: 1.0.7\nLicense: MIT\n",
-        f"{DIST_INFO}/licenses/LICENSE": b"MIT license must remain\n",
+        f"{dist_info}/METADATA": b"Name: octop-harness\nVersion: 1.0.7\nLicense: MIT\n",
+        f"{dist_info}/licenses/LICENSE": b"MIT license must remain\n",
         "another_component-1.0.dist-info/NOTICE": b"keep third-party notice\n",
     }
     restricted = {
@@ -45,9 +46,10 @@ def _installation(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
         path = site_packages / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-    record = site_packages / DIST_INFO / "RECORD"
-    record.write_bytes(KEPT_RECORD + "".join(f"{path},,\r\n" for path in restricted).encode())
-    retained[f"{DIST_INFO}/RECORD"] = KEPT_RECORD
+    record = site_packages / dist_info / "RECORD"
+    kept_record = KEPT_RECORD.replace(DIST_INFO.encode(), dist_info.encode())
+    record.write_bytes(kept_record + "".join(f"{path},,\r\n" for path in restricted).encode())
+    retained[f"{dist_info}/RECORD"] = kept_record
     return site_packages, retained
 
 
@@ -61,8 +63,11 @@ def _run(site_packages: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_cli_removes_complete_trees_and_preserves_other_materials(tmp_path: Path) -> None:
-    site_packages, retained = _installation(tmp_path)
+@pytest.mark.parametrize("dist_info", [DIST_INFO, COLINK_DIST_INFO])
+def test_cli_removes_complete_trees_and_preserves_other_materials(
+    tmp_path: Path, dist_info: str
+) -> None:
+    site_packages, retained = _installation(tmp_path, dist_info)
 
     for _ in range(2):
         result = _run(site_packages)
@@ -75,7 +80,7 @@ def test_cli_removes_complete_trees_and_preserves_other_materials(tmp_path: Path
         assert actual == retained
         assert not (site_packages / "octop_harness/builtin/skills/en/powerpoint").exists()
         assert not (site_packages / "octop_harness/builtin/skills/zh/powerpoint").exists()
-        with (site_packages / DIST_INFO / "RECORD").open(encoding="utf-8", newline="") as stream:
+        with (site_packages / dist_info / "RECORD").open(encoding="utf-8", newline="") as stream:
             assert all((site_packages / row[0]).is_file() for row in csv.reader(stream))
 
 
@@ -99,8 +104,9 @@ def test_cli_does_not_change_a_shared_cache_record(tmp_path: Path) -> None:
     [
         ("tree", "SITE_PACKAGES is not a directory"),
         ("package", "octop_harness installation is missing"),
-        ("metadata", "Expected one octop-harness dist-info, found 0"),
-        ("unique-metadata", "Expected one octop-harness dist-info, found 2"),
+        ("metadata", "Expected one Harness dist-info, found 0"),
+        ("unique-metadata", "Expected one Harness dist-info, found 2"),
+        ("mixed-metadata", "Expected one Harness dist-info, found 2"),
         ("record", "RECORD"),
     ],
 )
@@ -116,6 +122,8 @@ def test_cli_rejects_incomplete_or_ambiguous_installations(
         shutil.rmtree(site_packages / DIST_INFO)
     elif missing == "unique-metadata":
         (site_packages / "octop_harness-9.0.dist-info").mkdir()
+    elif missing == "mixed-metadata":
+        (site_packages / COLINK_DIST_INFO).mkdir()
     else:
         (site_packages / DIST_INFO / "RECORD").unlink()
     before = {path: path.read_bytes() for path in site_packages.rglob("*") if path.is_file()}
