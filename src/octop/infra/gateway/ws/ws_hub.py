@@ -39,6 +39,7 @@ class WebSocketHub:
         self._user_conns: dict[int, set[str]] = {}
         self._conn_user: dict[str, int] = {}
         self._active_turns: set[str] = set()
+        self._deleting_threads: set[str] = set()
 
     def register(
         self,
@@ -99,6 +100,21 @@ class WebSocketHub:
         conns.discard(connection_id)
         if not conns:
             self._thread_subscribers.pop(thread_id, None)
+
+    def try_begin_thread_deletion(self, thread_id: str) -> bool:
+        if thread_id in self._active_turns or thread_id in self._deleting_threads:
+            return False
+        self._deleting_threads.add(thread_id)
+        return True
+
+    def end_thread_deletion(self, thread_id: str) -> None:
+        self._deleting_threads.discard(thread_id)
+
+    def try_begin_turn(self, thread_id: str) -> bool:
+        if thread_id in self._deleting_threads or thread_id in self._active_turns:
+            return False
+        self.mark_turn_active(thread_id)
+        return True
 
     def mark_turn_active(self, thread_id: str) -> None:
         tid = thread_id.strip()

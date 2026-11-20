@@ -701,3 +701,13 @@ def test_reused_archive_rejects_outside_scope_link_cycle(portable_integrity_fixt
     info.external_attr = 0o120777 << 16
     write_integrity_archive(root, archive, extra=(info, "link"))
     assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
+def test_vendored_harness_wheel_excludes_restricted_materials() -> None:
+    (wheel,) = SCRIPT.parent.parent.joinpath("vendor").glob("octop_harness-*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        paths = archive.namelist()
+        assert any(path.endswith(".dist-info/licenses/LICENSE") for path in paths)
+        for lang in ("en", "zh"):
+            prefix = f"octop_harness/builtin/skills/{lang}/powerpoint/"
+            assert not any(path.startswith(prefix) for path in paths)

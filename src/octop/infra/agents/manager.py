@@ -1173,6 +1173,8 @@ class AgentManager:
 
         if shared and is_team_agent(existing):
             raise OctopError(ErrorCode.TEAM_NOT_SHAREABLE, "teams cannot be shared")
+        if shared:
+            self._require_shared_memory_isolation()
         if bool(existing.is_shared) == shared:
             return existing
         if not self.try_begin_history_backfill(agent_id):
@@ -1181,7 +1183,9 @@ class AgentManager:
             async with self._lifecycle_lock_for(agent_id):
                 live = self._octop_harness_or_none(agent_id)
                 set_mem_access = getattr(live, "set_memory_access", None)
-                if shared and callable(set_mem_access):
+                if shared and live is not None:
+                    if not callable(set_mem_access):
+                        raise OctopError.localized(ErrorCode.SHARED_MEMORY_ISOLATION_UNAVAILABLE)
                     set_mem_access(False)
                 self._repos.agent_repo.set_shared(agent_id, shared)
                 if not shared and callable(set_mem_access):
@@ -1702,6 +1706,21 @@ class AgentManager:
         """Raise when any owned agent has an in-flight team job."""
         for agent_id in agent_ids:
             self._teams.assert_can_delete_agent(agent_id)
+
+    async def delete_thread_logs(self, agent_id: str, thread_id: str) -> None:
+        """Clean up the internal journals while the caller holds the agent idle."""
+        from octop.infra.agents.memory.thread_cleanup import (  # noqa: PLC0415
+            delete_session_logs,
+            workspace_for_agent_row,
+        )
+        from octop.infra.agents.workspace.dir import host_system_dir  # noqa: PLC0415
+
+        row = self.get_row(agent_id)
+        if row is None:
+            raise OctopError.localized(ErrorCode.AGENT_NOT_FOUND)
+        workspace_dir = workspace_for_agent_row(row, paths=self._paths)
+        system_dir = host_system_dir(workspace_dir, self._agent_config_dict(row))
+        await asyncio.to_thread(delete_session_logs, workspace_dir, system_dir, thread_id)
 
     async def delete_thread_checkpoint(
         self, agent_id: str, thread_id: str, *, reclaim: bool = True
@@ -4053,9 +4072,16 @@ class AgentManager:
                 ErrorCode.FORBIDDEN, "local experts require the authorized device task"
             )
 
+    @staticmethod
+    def _require_shared_memory_isolation() -> None:
+        if "memory_access_enabled" not in _HARNESS_AGENT_CONFIG_FIELDS:
+            raise OctopError.localized(ErrorCode.SHARED_MEMORY_ISOLATION_UNAVAILABLE)
+
     def _build_harness_config(self, row: AgentRow) -> HarnessAgentConfig:
         """Convert an AgentRow into a HarnessAgentConfig."""
         self._assert_harness_allowed(row)
+        if row.is_shared:
+            self._require_shared_memory_isolation()
         from octop_harness.middleware.bootstrap import bootstrap_marker_exists  # noqa: PLC0415
 
         from octop.infra.agents.workspace.dir import (  # noqa: PLC0415
@@ -4374,7 +4400,7 @@ class AgentManager:
         ):
             memory_settings["memory_extract_on_session_end"] = False
 
-        if row.is_shared and "memory_access_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
+        if row.is_shared:
             memory_settings["memory_access_enabled"] = False
 
         harness_cfg = HarnessAgentConfig(
@@ -4413,8 +4439,6 @@ class AgentManager:
             **memory_settings,
             **_resolve_memory_backend_kwargs(cfg, workspace_dir=workspace_dir, config=self._config),
         )
-        if not hasattr(harness_cfg, "memory_access_enabled"):
-            object.__setattr__(harness_cfg, "memory_access_enabled", not row.is_shared)
         if "tools_disabled" in _HARNESS_AGENT_CONFIG_FIELDS:
             from octop.infra.agents.settings.tool_catalog import effective_tools_disabled
             from octop.infra.agents.teams import host_tools_disabled
@@ -4477,13 +4501,10 @@ class AgentManager:
                 ],
             )
         self._tool_guard_rules.ensure_seeded()
-        res = replace(
+        return replace(
             applied,
             tool_guard_rules_dir=str(self._tool_guard_rules.rules_dir),
         )
-        if not hasattr(res, "memory_access_enabled"):
-            object.__setattr__(res, "memory_access_enabled", not row.is_shared)
-        return res
 
     def _install_team_host_dispatch(self) -> None:
         """Team hosts always enqueue inbox work, even on harness 1.0.8 (default sync)."""

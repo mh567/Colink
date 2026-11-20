@@ -652,18 +652,26 @@ _clone_source_workspace() {
     git clone --depth 1 "$OCTOP_REPO" "$workdir/orca"
 }
 
+install_source() {
+    local checkout="$1"
+    local source_links=()
+    if [ -d "$checkout/vendor" ]; then
+        source_links=(--find-links "$checkout/vendor")
+    fi
+    prepare_console "$checkout"
+    uv pip install "${checkout}${EXTRAS_SUFFIX}" --python "$OCTOP_VENV/bin/python" "${source_links[@]+"${source_links[@]}"}"
+}
+
 if [ "$FROM_SOURCE" = true ]; then
     if [ -n "$SOURCE_DIR" ]; then
         info "Installing from local source: $SOURCE_DIR"
-        prepare_console "$SOURCE_DIR"
-        uv pip install "${SOURCE_DIR}${EXTRAS_SUFFIX}" --python "$OCTOP_VENV/bin/python"
+        install_source "$SOURCE_DIR"
     else
         INSTALL_WORKDIR="$(mktemp -d)"
         trap 'rm -rf "$INSTALL_WORKDIR"' EXIT
         _clone_source_workspace "$INSTALL_WORKDIR"
         REPO_DIR="$INSTALL_WORKDIR/orca"
-        prepare_console "$REPO_DIR"
-        uv pip install "${REPO_DIR}${EXTRAS_SUFFIX}" --python "$OCTOP_VENV/bin/python"
+        install_source "$REPO_DIR"
     fi
 else
     # PEP 508: extras go between the name and the version (octop[browser]==x.y.z).

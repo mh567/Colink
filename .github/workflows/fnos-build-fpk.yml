@@ -240,6 +240,7 @@ jobs:
         timeout-minutes: 15
         env:
           UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.uv-python
+          WHEEL_SOURCE: ${{ steps.wheel.outputs.source }}
         run: |
           set -euo pipefail
           set -x
@@ -247,10 +248,14 @@ jobs:
           : > "$LOG"
           mkdir -p "${{ github.workspace }}/fnos/native/app/site-packages"
           SP="${{ github.workspace }}/fnos/native/app/site-packages"
+          local_links=()
+          if [[ "$WHEEL_SOURCE" == build ]]; then
+            local_links=(--find-links vendor)
+          fi
           {
             python3 -m pip install --quiet uv
             python3 -m uv pip install --python python3.12 \
-              --target "$SP" --no-cache "$(ls dist/octop-*.whl | head -1)"
+              --target "$SP" --no-cache "${local_links[@]}" "$(ls dist/octop-*.whl | head -1)"
             rm -rf "$SP/mcp" "$SP"/mcp-*.dist-info \
                    "$SP/langchain_mcp_adapters" "$SP"/langchain_mcp_adapters-*.dist-info
             mkdir -p /tmp/octop-pinned
@@ -361,6 +366,7 @@ jobs:
         timeout-minutes: 15
         env:
           UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.uv-python
+          WHEEL_SOURCE: ${{ steps.wheel.outputs.source }}
         run: |
           set -euo pipefail
           set -x
@@ -368,13 +374,17 @@ jobs:
           : > "$LOG"
           mkdir -p "${{ github.workspace }}/fnos/native/app/site-packages"
           SP="${{ github.workspace }}/fnos/native/app/site-packages"
+          local_links=()
+          if [[ "$WHEEL_SOURCE" == build ]]; then
+            local_links=(--find-links vendor)
+          fi
           {
             uname -m
             python3.12 -c "import platform; print(platform.machine())"
             python3 -m pip install --quiet uv
             # esdk-obs-python is sdist-only; --only-binary :all: fails the resolver.
             python3 -m uv pip install --python python3.12 \
-              --target "$SP" --no-cache \
+              --target "$SP" --no-cache "${local_links[@]}" \
               "$(ls dist/octop-*.whl | head -1)"
             rm -rf "$SP/mcp" "$SP"/mcp-*.dist-info \
                    "$SP/langchain_mcp_adapters" "$SP"/langchain_mcp_adapters-*.dist-info

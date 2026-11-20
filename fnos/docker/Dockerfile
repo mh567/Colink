@@ -98,6 +98,7 @@ WORKDIR /app
 
 # 仅改源码时可复用此层缓存（用 uv pip 安装，避免 uv.lock 冻结冲突）
 COPY pyproject.toml README.md LICENSE ./
+COPY vendor/*.whl ./vendor/
 COPY src/ ./src/
 COPY --from=frontend-builder /build/src/octop/dashboard/ ./src/octop/dashboard/
 
@@ -122,10 +123,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
        esac \
     && apt-get update && apt-get install -y --no-install-recommends build-essential \
     && if [ "$OCTOP_IMAGE_VARIANT" = "lite" ]; then \
-         uv pip install --python /app/.venv ".[browser]" \
+         uv pip install --python /app/.venv --find-links /app/vendor ".[browser]" \
          && /app/.venv/bin/python -c "import octop"; \
        else \
-         uv pip install --python /app/.venv ".[desktop,local-embedding,knowledge-ocr]" \
+         uv pip install --python /app/.venv --find-links /app/vendor ".[desktop,local-embedding,knowledge-ocr]" \
          && /app/.venv/bin/python -c "import cv2, fastembed, huggingface_hub, mss, rapidocr, onnxruntime, pymupdf; import importlib.util; assert importlib.util.find_spec('pynput')"; \
        fi \
     && /app/.venv/bin/python /strip_restricted_skills.py \

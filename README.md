@@ -246,8 +246,10 @@ pip install octop
 From a source checkout with uv:
 
 ```bash
-uv sync --extra local-embedding
+uv sync --locked --extra local-embedding
 ```
+
+This checkout uses two patched dependency wheels. See [the vendor notes](vendor/README.md) for installation with pip and rebuilding the wheels.
 
 ### 2. Initialize
 

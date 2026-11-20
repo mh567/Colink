@@ -443,6 +443,7 @@ def _delete_server(hub: WebSocketHub) -> tuple[MagicMock, MagicMock]:
     server.app_runtime.gateway.thread_registry.get_thread.return_value = thread
     server.app_runtime.gateway.ws_hub = hub
     server.app_runtime.agent_registry.delete_thread_checkpoint = AsyncMock()
+    server.app_runtime.agent_registry.delete_thread_logs = AsyncMock()
     server.app_runtime.trajectory_service = None
     user = MagicMock()
     user.id = 1
@@ -609,7 +610,7 @@ async def test_delete_thread_missing_raises_not_found() -> None:
         await history_mod.delete_thread(
             "agt_1", "thr_missing", compact=None, user=user, server=server
         )
-    assert exc_info.value.code is ErrorCode.AGENT_NOT_FOUND
+    assert exc_info.value.code is ErrorCode.THREAD_NOT_FOUND
     assert exc_info.value.status == 404
 
 

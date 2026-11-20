@@ -248,8 +248,10 @@ pip install octop
 从源码用 uv 开发时：
 
 ```bash
-uv sync --extra local-embedding
+uv sync --locked --extra local-embedding
 ```
+
+当前源码使用两份带补丁的依赖 wheel。纯 pip 安装与重建方法见[依赖补丁说明](vendor/README.md)。
 
 ### 2. 初始化
 

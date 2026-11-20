@@ -21,8 +21,8 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "argon2-cffi>=23.1",
     "pyjwt>=2.8",
-    "octop-harness[all]>=1.0.7",
-    "octop-memory>=1.0.3",
+    "octop-harness[all]==1.0.7+colink.1",
+    "octop-memory==1.0.3+colink.1",
     "lark-oapi>=1.7.3",
     "octop-gateway>=1.0.3",
     "cryptography>=41",
@@ -109,6 +109,14 @@ dev = [
 
 [project.scripts]
 octop = "octop.cli.main:cli"
+
+# Temporary upstream fixes used by locked source installs (see vendor/README.md).
+[tool.uv.sources]
+octop-harness = { path = "vendor/octop_harness-1.0.7+colink.1-py3-none-any.whl" }
+octop-memory = { path = "vendor/octop_memory-1.0.3+colink.1-py3-none-any.whl" }
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["uv.lock", "vendor/*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/octop"]

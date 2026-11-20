@@ -11,13 +11,18 @@ Validates:
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
+import json
 from typing import Any
 
 import pytest
+from langgraph.graph import END, START, MessagesState, StateGraph
+from octop_gateway.models import ChannelSubject, InboundMessage, TextContent
 
+from octop.infra.agents.memory.client import _open_memory_for_agent
 from octop.infra.audit.file_ops import record_file_event
 from octop.infra.db.repos._base import now_ts
+from octop.infra.gateway.ws import WS_CHANNEL_ID
 from octop.infra.users.permissions import BASELINE_PERMISSIONS
 from tests.support.auth import create_user, resolve_user_id
 
@@ -36,6 +41,32 @@ async def _create_test_users(
     alice_id = await resolve_user_id(client, admin_auth, "alice_s")
     bob_id = await resolve_user_id(client, admin_auth, "bob_s")
     return alice_auth, bob_auth, alice_id, bob_id
+
+
+async def test_share_requires_runtime_memory_isolation(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from octop.infra.agents import manager as manager_module
+    from octop.infra.errors import OctopError
+
+    client, srv, admin_auth = env
+    resp = await client.post(
+        "/api/agents/from-expert/default", headers=admin_auth, json={"name": "Share test"}
+    )
+    assert resp.status_code == 201, resp.text
+    agent_id = resp.json()["agent_id"]
+    manager = srv.app_runtime.agent_registry
+    monkeypatch.setattr(
+        manager_module,
+        "_HARNESS_AGENT_CONFIG_FIELDS",
+        manager_module._HARNESS_AGENT_CONFIG_FIELDS - {"memory_access_enabled"},
+    )
+
+    with pytest.raises(OctopError) as raised:
+        await manager.set_shared(agent_id, True)
+
+    assert raised.value.code == "SHARED_MEMORY_ISOLATION_UNAVAILABLE"
+    assert not srv.services.agent_repo.get(agent_id).is_shared
 
 
 async def test_session_private_scope_across_employees_and_admin(env: Any) -> None:
@@ -178,6 +209,26 @@ async def test_session_deletion_preserves_task_artifacts_memory_and_audit(env: A
     assert resp_2.status_code == 201, resp_2.text
     thr_2 = str(resp_2.json()["thread_id"])
 
+    registry = srv.app_runtime.agent_registry
+    checkpointer, _ = _open_memory_for_agent(registry, registry.get_row(agent_id))
+    builder = StateGraph(MessagesState)
+    builder.add_node("reply", lambda _state: {"messages": [("ai", "Saved reply")]})
+    builder.add_edge(START, "reply")
+    builder.add_edge("reply", END)
+    graph = builder.compile(checkpointer=checkpointer)
+    checkpoint_config = {"configurable": {"thread_id": thr_1}}
+    await graph.ainvoke({"messages": [("human", "Conversation to remove")]}, checkpoint_config)
+    assert await checkpointer.aget_tuple(checkpoint_config) is not None
+
+    workspace = registry.workspace_for_agent(agent_id)
+    records = [
+        {"thread_id": thr_1, "role": "user", "content": "Conversation to remove"},
+        {"thread_id": thr_2, "role": "user", "content": "Conversation to retain"},
+    ]
+    raw_log = "".join(json.dumps(record) + "\n" for record in records)
+    for path in ("sessions/2026-11-20.jsonl", ".octop/sessions/2026-11-19.1.jsonl"):
+        workspace.upload_bytes(path, raw_log.encode())
+
     # 1. Create a task artifact in the workspace and link it to thr_1
     workspace_dir = srv.app_runtime.agent_registry.resolve_workspace_dir(agent_id)
     workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -238,9 +289,16 @@ async def test_session_deletion_preserves_task_artifacts_memory_and_audit(env: A
     assert thr_1 not in remaining_ids
     assert thr_2 in remaining_ids
 
+    assert await checkpointer.aget_tuple(checkpoint_config) is None
+
     # b) Task artifact file on disk is NOT deleted (non-simplified cleanup)
     assert artifact_file.is_file()
     assert artifact_file.read_bytes() == b"PK\x03\x04test-docx-content-bytes"
+
+    for path in ("sessions/2026-11-20.jsonl", ".octop/sessions/2026-11-19.1.jsonl"):
+        log_data = workspace.download_bytes(path)
+        assert log_data is not None
+        assert [json.loads(line) for line in log_data.splitlines()] == records[1:]
 
     # c) Personal memory atom is NOT deleted
     search_mem = await client.post(
@@ -264,39 +322,8 @@ async def test_session_deletion_preserves_task_artifacts_memory_and_audit(env: A
     assert any(row["target"] == request_id for row in admin_audit)
 
 
-async def test_memory_forget_preserves_sessions_and_audit(
-    env: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_memory_forget_preserves_sessions_and_audit(env: Any) -> None:
     """Forgetting a memory removes the memory atom, but does not delete sessions or audit."""
-    # When octop-memory has not released atom_forget_ids upstream, provide test double.
-    from octop_memory.core import Memory
-
-    if not hasattr(Memory, "atom_forget_ids"):
-        monkeypatch.setattr(
-            Memory,
-            "atom_forget_ids",
-            lambda self, atom_id: (atom_id,),
-            raising=False,
-        )
-    if not hasattr(Memory, "forget_atom"):
-
-        def _fake_forget_atom(self: Any, atom_id: str) -> bool:
-            conn = getattr(self.backend, "_conn", None)
-            if conn is not None:
-                ns = getattr(self, "namespace", "")
-                with conn:
-                    conn.execute(f"DELETE FROM {ns}_atoms WHERE id = ?", (atom_id,))
-                    with contextlib.suppress(Exception):
-                        conn.execute(f"DELETE FROM {ns}_atoms_fts WHERE id = ?", (atom_id,))
-            return True
-
-        monkeypatch.setattr(
-            Memory,
-            "forget_atom",
-            _fake_forget_atom,
-            raising=False,
-        )
-
     client, srv, admin_auth = env
     alice_auth, _bob_auth, _alice_id, _bob_id = await _create_test_users(client, admin_auth)
 
@@ -385,7 +412,7 @@ async def test_session_delete_error_feedback_turn_active_and_missing(env: Any) -
         headers=alice_auth,
     )
     assert missing_resp.status_code == 404
-    assert missing_resp.json().get("error", {}).get("code") == "AGENT_NOT_FOUND"
+    assert missing_resp.json().get("error", {}).get("code") == "THREAD_NOT_FOUND"
 
     # 2. Create a thread and mark turn active
     resp = await client.post(f"/api/agents/{agent_id}/threads", headers=alice_auth)
@@ -412,3 +439,61 @@ async def test_session_delete_error_feedback_turn_active_and_missing(env: Any) -
         headers=alice_auth,
     )
     assert ok_resp.status_code == 204
+
+
+async def test_queued_turn_cannot_write_while_or_after_conversation_is_deleted(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, srv, auth = env
+    agent = await client.post(
+        "/api/agents/from-expert/default", headers=auth, json={"name": "Concurrent delete"}
+    )
+    assert agent.status_code == 201, agent.text
+    agent_id = agent.json()["agent_id"]
+    created = await client.post(f"/api/agents/{agent_id}/threads", headers=auth)
+    assert created.status_code == 201, created.text
+    thread_id = created.json()["thread_id"]
+    runtime = srv.app_runtime
+    hub = runtime.gateway.ws_hub
+    thread = runtime.gateway.thread_registry.get_thread(thread_id)
+    assert thread is not None
+    frames: list[dict[str, Any]] = []
+
+    async def capture(frame: dict[str, Any]) -> None:
+        frames.append(frame)
+
+    hub.register("owner-tab", capture, user_id=thread.user_id)
+    ready = asyncio.Event()
+    release = asyncio.Event()
+    delete_checkpoint = runtime.agent_registry.delete_thread_checkpoint
+
+    async def wait_for_other_tab(*args: Any, **kwargs: Any) -> None:
+        ready.set()
+        await release.wait()
+        await delete_checkpoint(*args, **kwargs)
+
+    monkeypatch.setattr(runtime.agent_registry, "delete_thread_checkpoint", wait_for_other_tab)
+    message = InboundMessage(
+        channel_id=WS_CHANNEL_ID,
+        channel_type="dashboard",
+        tenant_id=agent_id,
+        channel_subject=ChannelSubject(subject_id=str(thread.user_id)),
+        content=[TextContent(text="Follow-up from the other tab")],
+        metadata={"thread_id": thread_id, "ws_connection_id": "owner-tab"},
+    )
+    delete = asyncio.create_task(
+        client.delete(f"/api/agents/{agent_id}/threads/{thread_id}", headers=auth)
+    )
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=5)
+        await runtime.gateway._ws_channel.handle_inbound(message)
+        assert [frame["type"] for frame in frames] == ["error", "done"]
+    finally:
+        release.set()
+        response = await delete
+    assert response.status_code == 204, response.text
+
+    frames.clear()
+    await runtime.gateway._ws_channel.handle_inbound(message)
+    assert [frame["type"] for frame in frames] == ["error", "done"]
+    assert runtime.gateway.thread_registry.get_thread(thread_id) is None

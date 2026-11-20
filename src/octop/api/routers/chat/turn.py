@@ -64,20 +64,18 @@ async def resolve_thread_id(
     user_id: int,
     thread_registry: Any,
     thread_id: str | None,
-    session_key: str | None,
 ) -> tuple[str, str]:
-    sk = session_key or ThreadRegistry.dashboard_key(agent_id=agent_id, user_id=user_id)
-    if thread_id:
-        row = thread_registry.get_thread(thread_id)
+    sk = ThreadRegistry.dashboard_key(agent_id=agent_id, user_id=user_id)
+    selected = thread_id or thread_registry.get_bound_thread_id(sk)
+    if selected:
+        row = thread_registry.get_thread(selected)
         if row is None or row.agent_id != agent_id:
-            raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"thread {thread_id!r} not found")
+            raise OctopError.localized(ErrorCode.THREAD_NOT_FOUND)
         if row.user_id != user_id:
-            raise OctopError(ErrorCode.FORBIDDEN, "thread not owned by user")
-        await thread_registry.rebind(session_key=sk, thread_id=thread_id, agent_id=agent_id)
-        return thread_id, sk
-    bound = thread_registry.get_bound_thread_id(sk)
-    if bound:
-        return bound, sk
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
+        if thread_id:
+            await thread_registry.rebind(session_key=sk, thread_id=selected, agent_id=agent_id)
+        return selected, sk
     tid = await thread_registry.get_or_create_by_key(
         session_key=sk,
         agent_id=agent_id,
@@ -284,7 +282,6 @@ async def prepare_dashboard_turn(
         user_id=user.id,
         thread_registry=thread_registry,
         thread_id=turn.thread_id,
-        session_key=turn.session_key,
     )
     model_ref = (turn.default_model or "").strip() or None
     if (

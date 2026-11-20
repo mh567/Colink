@@ -109,12 +109,14 @@ def _forget(registry: AgentManager, agent_id: str, atom_id: str, user: User, liv
     with pause, memory_io_lock:
         row = authorize_memory(registry, agent_id, user)
         memory, _bridge = _open_memory_for_agent(registry, row)
-        if not callable(getattr(memory, "atom_forget_ids", None)):
+        find_ids = getattr(memory, "atom_forget_ids", None)
+        forget = getattr(memory, "forget_atom", None)
+        if not callable(find_ids) or not callable(forget):
             raise RuntimeError("octop-memory does not provide permanent atom forgetting")
-        atom_ids = memory.atom_forget_ids(atom_id)
+        atom_ids = find_ids(atom_id)
         if not atom_ids:
             raise OctopError.localized(ErrorCode.NOT_FOUND)
         record_forgotten_ids(registry.paths.root, agent_id, atom_ids)
-        if not memory.forget_atom(atom_id):
+        if not forget(atom_id):
             raise OctopError.localized(ErrorCode.NOT_FOUND)
     invalidate_cached_memory(agent_id)
