@@ -157,6 +157,7 @@
     "UPDATE_TARGET_NOT_NEWER": "目标版本 {{target}} 必须高于已安装版本 {{current}}，不支持重装同版本或降级。",
     "NOT_FOUND": "未找到。",
     "USER_DISABLED": "账号已禁用。",
+    "DEVICE_REVOKED": "设备授权已撤销，请联系管理员重新批准。",
     "LOGIN_LOCKED": "登录失败次数过多，请 {{minutes}} 分钟后再试。",
     "USERNAME_TAKEN": "用户名已被占用。",
     "EMAIL_TAKEN": "邮箱已被占用。",
@@ -7536,6 +7537,7 @@
     }
   },
   "localDocx": {
+    "deviceDisconnected": "设备连接已断开，受控操作已暂停。请在上方重新接入设备。",
     "title": "本机文档任务",
     "privacy": "原始文件保留在本机。所选文档的正文经服务端发送到已配置模型。新建任务遇到同名文件时停止。",
     "deletePrivacy": "仅删除目标目录中的一个文件。",

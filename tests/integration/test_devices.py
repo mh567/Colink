@@ -9,6 +9,7 @@ import os
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from starlette.websockets import WebSocketDisconnect
 
 from tests.support.auth import create_user
 from tests.support.http import ws_connect, ws_token
@@ -219,6 +220,8 @@ async def test_live_device_loses_access_after_revocation_or_account_change(env, 
         assert (
             await client.post(f"/api/devices/{device_id}/approve", headers=admin)
         ).status_code == 200
+        await ws.send_json({"type": "heartbeat"})
+        assert (await ws.receive_json())["online"] is True
         if action == "revoke":
             changed = await client.post(f"/api/devices/{device_id}/revoke", headers=admin)
         elif action == "disable":
@@ -234,11 +237,21 @@ async def test_live_device_loses_access_after_revocation_or_account_change(env, 
         assert changed.is_success
         managed = (await client.get("/api/devices/manage", headers=admin)).json()
         assert managed[0]["online"] is False
-        await ws.send_json({"type": "heartbeat"})
-        assert (await ws.receive_json())["type"] == "error"
+        error = await ws.receive_json(timeout=1)
+        assert error["type"] == "error"
+        assert (
+            error["code"]
+            == {
+                "revoke": "DEVICE_REVOKED",
+                "disable": "USER_DISABLED",
+                "reset": "TOKEN_EXPIRED",
+            }[action]
+        )
+        with pytest.raises(WebSocketDisconnect):
+            await ws.receive_json(timeout=1)
     async with ws_connect(client._octop_app, "/api/devices/connect") as ws:
         if action == "revoke":
-            assert (await _hello(ws, alice, key))["code"] == "FORBIDDEN"
+            assert (await _hello(ws, alice, key))["code"] == "DEVICE_REVOKED"
         else:
             await ws.send_json(
                 {

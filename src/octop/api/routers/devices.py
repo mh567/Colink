@@ -675,6 +675,21 @@ async def _receive(ws: WebSocket) -> str:
     return raw
 
 
+async def _receive_heartbeat(ws: WebSocket, connection: DeviceConnection) -> DeviceHeartbeat:
+    incoming = asyncio.create_task(_receive(ws))
+    try:
+        done, _ = await asyncio.wait(
+            (incoming, connection.disconnected), return_when=asyncio.FIRST_COMPLETED
+        )
+        if connection.disconnected in done:
+            raise OctopError.localized(connection.disconnected.result())
+        return DeviceHeartbeat.model_validate_json(incoming.result())
+    finally:
+        if not incoming.done():
+            incoming.cancel()
+        await asyncio.gather(incoming, return_exceptions=True)
+
+
 @router.websocket("/connect")
 async def connect_device(ws: WebSocket) -> None:
     await ws.accept()
@@ -714,7 +729,7 @@ async def connect_device(ws: WebSocket) -> None:
                     ),
                 }
             )
-            heartbeat = DeviceHeartbeat.model_validate_json(await _receive(ws))
+            heartbeat = await _receive_heartbeat(ws, connection)
             access_token = heartbeat.access_token or access_token
             user = resolve_user_from_token(server, access_token)
             if user.id != connection.user_id:

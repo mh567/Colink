@@ -62,9 +62,11 @@ function send(command: Record<string, string>) {
 export default function LocalDocxPanel({
   deviceId,
   connected = true,
+  disconnectCode,
 }: {
   deviceId: string;
   connected?: boolean;
+  disconnectCode?: string;
 }) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -131,12 +133,15 @@ export default function LocalDocxPanel({
         });
     };
     window.addEventListener("colink:docx-status", receive);
-    send({ action: "list" });
     return () => {
       active = false;
       window.removeEventListener("colink:docx-status", receive);
     };
   }, [deviceId]);
+
+  useEffect(() => {
+    if (connected) send({ action: "list" });
+  }, [deviceId, connected]);
 
   const dispatch = (command: Record<string, string>) => {
     if (!connected) return;
@@ -271,6 +276,27 @@ export default function LocalDocxPanel({
       }
     >
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
+        {!connected && (
+          <Alert
+            type="warning"
+            showIcon
+            message={
+              disconnectCode === "DEVICE_REVOKED"
+                ? t(
+                    "apiErrors.DEVICE_REVOKED",
+                    "设备授权已撤销，请联系管理员重新批准。",
+                  )
+                : disconnectCode === "USER_DISABLED"
+                ? t("apiErrors.USER_DISABLED", "账号已禁用。")
+                : disconnectCode === "TOKEN_EXPIRED"
+                ? t("apiErrors.TOKEN_EXPIRED", "登录已过期，请重新登录。")
+                : t(
+                    "localDocx.deviceDisconnected",
+                    "设备连接已断开，受控操作已暂停。请在上方重新接入设备。",
+                  )
+            }
+          />
+        )}
         <div>
           <label htmlFor={`${id}-format`}>
             {t("localDocx.format", "文件类型")}
