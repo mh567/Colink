@@ -25,9 +25,9 @@
 | --- | --- | --- | --- |
 | Colink (`octop`) | `1.0.3b3` | `pyproject.toml` | 源码版本核对；Windows 正式打包产物待实测 |
 | `octop.desktop` | `Go 1.25.0` / `wails v3.0.0-beta.13` | `desktop/src/go.mod` | Windows x64 本机 `go test ./...` 与 `go vet ./...` 通过；NSIS `.exe` 编译与实机安装待测 |
-| `octop-harness` | `1.0.7` | `uv.lock` | 锁文件核对；Windows 便携包断网实跑待测 |
+| `colink-harness` | `1.0.7.post1` | `uv.lock`（合并主线 PR #63 后锁定） | 锁文件核对；Windows 便携包断网实跑待测 |
 | `octop-gateway` | `1.0.3` | `uv.lock` | 锁文件核对；Windows 便携包断网实跑待测 |
-| `octop-memory` | `1.0.3` | `uv.lock` | 锁文件核对；Windows 便携包断网实跑待测 |
+| `colink-memory` | `1.0.3.post1` | `uv.lock`（合并主线 PR #63 后锁定） | 锁文件核对；Windows 便携包断网实跑待测 |
 | `octop-browser` | `1.0.0` | `uv.lock` | 锁文件核对；Windows 断网浏览器资源与实跑待测 |
 | `python-docx` | `1.2.0` | `uv.lock` | 锁文件核对；Go 本机 DOCX 读写单元测试通过；客户端完整任务闭环待测 |
 | `python-pptx` | `1.0.2` | `uv.lock` | 锁文件核对；便携包断网实跑待测 |
