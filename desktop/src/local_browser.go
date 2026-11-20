@@ -65,6 +65,7 @@ type localBrowser struct {
 	process            browserProcess
 	stagedUploads      []string
 	docx               *localDOCX
+	ownsDOCX           bool
 	confirmDestructive func(context.Context, Locale, string, string) (bool, error)
 	authorize          func(docxSession, string) error
 	query              func(docxSession, string, string) (string, error)
@@ -73,7 +74,13 @@ type localBrowser struct {
 
 func newLocalBrowser(home string) *localBrowser {
 	return &localBrowser{
-		home: home, docx: newLocalDOCX(home), authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
+		home: home, docx: newLocalDOCX(home), ownsDOCX: true, authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
+	}
+}
+
+func newLocalBrowserWithDOCX(home string, docx *localDOCX) *localBrowser {
+	return &localBrowser{
+		home: home, docx: docx, ownsDOCX: false, authorize: authorizeLocalBrowser, query: queryLocalBrowser, start: startBrowserWorker,
 	}
 }
 
@@ -129,7 +136,7 @@ func (b *localBrowser) close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.stopLocked()
-	if b.docx != nil {
+	if b.ownsDOCX && b.docx != nil {
 		b.docx.close()
 	}
 }

@@ -56,6 +56,7 @@ tasks:
         vars:
           ARCH: "{{.ARCH}}"
           VERSION: "{{.VERSION}}"
+          WEBVIEW2_OFFLINE_INSTALLER: "{{.WEBVIEW2_OFFLINE_INSTALLER}}"
       - cmd: >-
           powershell -NoProfile -Command
           "Remove-Item -Force '{{.BIN_DIR}}/{{.APP_NAME}}-Desktop-windows-{{.ARCH}}.zip' -ErrorAction SilentlyContinue;
@@ -75,7 +76,15 @@ tasks:
       - sh: makensis -VERSION
         msg: "makensis is required. Install NSIS (choco install nsis) and ensure it is on PATH."
     cmds:
-      - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis"
+      - cmd: >-
+          powershell -NoProfile -Command
+          "if ('{{.WEBVIEW2_OFFLINE_INSTALLER}}' -eq '') { wails3 generate webview2bootstrapper -dir '{{.ROOT_DIR}}/build/windows/nsis' }"
+        platforms: [windows]
+      - cmd: >-
+          if [ -z '{{.WEBVIEW2_OFFLINE_INSTALLER}}' ]; then
+            wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis";
+          fi
+        platforms: [linux, darwin]
       - cmd: >-
           powershell -NoProfile -Command
           "Remove-Item -Force '{{.ROOT_DIR}}/{{.ARCHIVE}}' -ErrorAction SilentlyContinue;
@@ -86,13 +95,15 @@ tasks:
       - cmd: python3 "{{.ROOT_DIR}}/build/stamp_version.py" nsis-defines "{{.VERSION}}" version_defines.nsh
         platforms: [linux, darwin]
       - cmd: >-
-          makensis
+          makensis -INPUTCHARSET UTF8
+          {{if .WEBVIEW2_OFFLINE_INSTALLER}}-DARG_WEBVIEW2_OFFLINE_INSTALLER="{{.WEBVIEW2_OFFLINE_INSTALLER}}"{{end}}
           -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe"
           -DINSTALLER_OUTFILE="{{.ROOT_DIR}}\{{.ARCHIVE}}"
           project.nsi
         platforms: [windows]
       - cmd: >-
-          makensis
+          makensis -INPUTCHARSET UTF8
+          {{if .WEBVIEW2_OFFLINE_INSTALLER}}-DARG_WEBVIEW2_OFFLINE_INSTALLER="{{.WEBVIEW2_OFFLINE_INSTALLER}}"{{end}}
           -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe"
           -DINSTALLER_OUTFILE="{{.ROOT_DIR}}/{{.ARCHIVE}}"
           project.nsi
@@ -100,6 +111,7 @@ tasks:
     vars:
       ARCH: '{{.ARCH | default ARCH}}'
       VERSION: '{{.VERSION | default "dev"}}'
+      WEBVIEW2_OFFLINE_INSTALLER: '{{.WEBVIEW2_OFFLINE_INSTALLER | default ""}}'
       # Display / outfile / registry keep pep440; INFO_FILEVERSION is numeric X.X.X.X.
       ARG_FLAG: '{{if eq (.ARCH | default ARCH) "amd64"}}AMD64{{else}}ARM64{{end}}'
       ARCHIVE: '{{.BIN_DIR}}/{{.APP_NAME}}-desktop-windows-{{.ARCH}}-{{.VERSION}}.exe'

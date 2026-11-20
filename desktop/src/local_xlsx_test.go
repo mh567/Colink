@@ -146,7 +146,7 @@ func TestLocalXLSXFailuresNeverCreateArtifact(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker := newLocalDOCX(t.TempDir())
-	t.Cleanup(worker.close)
+			t.Cleanup(worker.close)
 			session := docxSession{Base: server.URL, DeviceID: "mine", UserID: 1, Context: context.Background()}
 			mode := "rw"
 			if scenario == "readonly" {

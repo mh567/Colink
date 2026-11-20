@@ -40,6 +40,13 @@ func TestManagedPDFPublicationBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer root.Close()
+			if scenario == "directory changed" && runtime.GOOS == "windows" {
+				// Windows NTFS blocks renaming a directory while os.OpenRoot holds its handle.
+				if err := os.Rename(dir, dir+"-moved"); err == nil {
+					t.Fatal("Windows allowed renaming directory held by open root")
+				}
+				return
+			}
 			creds := testCredentials
 			creds.Format = "pdf"
 			ctx, cancel := context.WithCancel(context.Background())
@@ -71,9 +78,6 @@ func TestManagedPDFPublicationBoundaries(t *testing.T) {
 					case "cancelled":
 						cancel()
 					case "directory changed":
-						if runtime.GOOS == "windows" {
-							t.Skip("Windows prevents renaming directories containing open files")
-						}
 						if err := os.Rename(dir, dir+"-moved"); err != nil {
 							t.Fatal(err)
 						}
