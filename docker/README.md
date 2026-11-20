@@ -12,6 +12,7 @@ This directory contains the Docker build and deployment assets for Octop.
 | `../.dockerignore` | Build context ignore rules (applies to both Podman and BuildKit) |
 | `docker_build.sh` | Build image from source (BuildKit cache enabled by default) |
 | `docker-compose.yml` | One-command local / self-hosted deployment |
+| `docker-compose.offline.yml` | Dual-arch (x86_64 / ARM64) offline container compose with explicit resource limits and persistence |
 | `docker-compose.cn.yml` | Same stack, pulls `ghcr.nju.edu.cn/tencentcloud/octop:latest` (no local build) |
 | `docker-compose.postgres.yml` | PostgreSQL (+ pgvector) for dual-backend dev/tests |
 | `postgres/init-vector.sql` | Instance-level `CREATE EXTENSION vector` (initdb.d; **not** Octop migrations) |
@@ -19,7 +20,19 @@ This directory contains the Docker build and deployment assets for Octop.
 
 ### Quick start
 
-**Option 1: Compose (recommended)**
+**Option 1: Offline container deployment (recommended for air-gapped / production)**
+
+For offline environments, Kylin V10 or private clouds, load the pre-built tarball:
+
+```bash
+# Load offline container image (for amd64 or arm64)
+docker load -i octop-server-arm64.tar.gz
+
+# Start service with dedicated offline compose (caps at 4 CPUs, 4096MB RAM, 65535 fds, pull_policy: never)
+docker compose -f docker/docker-compose.offline.yml up -d
+```
+
+**Option 2: Compose with local build (development)**
 
 From the repository root:
 

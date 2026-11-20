@@ -108,7 +108,7 @@ does not set these headers itself.
 | `GET`    | `/auth/me` | user | `{id, username, role, display_name, locale, ...}` |
 | `PATCH`  | `/auth/me` | user | body `{display_name?, locale?, ...}` |
 | `POST`   | `/auth/change-password` | user | body `{old_password, new_password}` → `204`, with a replacement access token in `X-Octop-Access-Token`. Outstanding tokens stop working. Accounts without a local password (directory/SSO-provisioned) get `PASSWORD_NOT_SET` |
-| `GET`    | `/health` | public | `{status: "ok", version}` |
+| `GET`    | `/health` | public | `{ok, version, arch, started_at, db, users_loaded, agents_running}` |
 
 ## Users (admin)
 

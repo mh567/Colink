@@ -170,12 +170,19 @@ octop_warn_small_shm() {
 
 # 部分 ARM 虚拟机（飞牛在 Parallels 上）会把 CPU 特性报高，OpenBLAS / onnxruntime 随后 SIGILL。
 # 基线 OpenBLAS 对真 ARM 只是少用一点新指令。探测失败只写日志，服务继续启动。
+# 同时对报告 sve2 但未报告 sve 的 Linux ARM64 环境注入 OPENSSL_armcap=0，避免 OpenSSL 执行 SVE cntb 遭遇 SIGILL。
 octop_prepare_arm_runtime() {
     local py log code
     case "$(uname -m)" in
         aarch64|arm64) ;;
         *) return 0 ;;
     esac
+    if [ -z "${OPENSSL_armcap:-}" ] && [ -f /proc/cpuinfo ]; then
+        if grep -qE '^Features.*\bsve2\b' /proc/cpuinfo && ! grep -qE '^Features.*\bsve\b' /proc/cpuinfo; then
+            export OPENSSL_armcap=0
+            echo "[entrypoint] 检测到 ARM64 sve2 但缺少 sve 特征，注入 OPENSSL_armcap=0 防止 OpenSSL SVE2 崩溃。" >&2
+        fi
+    fi
     if [ -z "${OPENBLAS_CORETYPE:-}" ]; then
         export OPENBLAS_CORETYPE=ARMV8
     fi

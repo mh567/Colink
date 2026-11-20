@@ -12,6 +12,7 @@
 | `../.dockerignore` | 构建上下文忽略规则（Podman 与 BuildKit 均适用） |
 | `docker_build.sh` | 从源码构建镜像（默认开启 BuildKit 缓存） |
 | `docker-compose.yml` | 本地开发 / 自托管一键启动 |
+| `docker-compose.offline.yml` | 双架构（x86_64 / ARM64）服务端离线容器编排，显式资源限制与数据持久化，无外部依赖 |
 | `docker-compose.cn.yml` | 同一套服务，拉取 `ghcr.nju.edu.cn/tencentcloud/octop:latest`（不本地构建） |
 | `docker-compose.postgres.yml` | 仅 PostgreSQL（+ pgvector）开发/测试库；扩展在 `postgres/init-vector.sql` |
 | `postgres/init-vector.sql` | 实例级 `CREATE EXTENSION vector`（initdb.d；**不**进 Octop 迁移） |
@@ -19,7 +20,19 @@
 
 ### 快速开始
 
-**方式一：Compose（推荐）**
+**方式一：离线容器部署（推荐生产与内网断网环境）**
+
+适用于物理断网、银河麒麟或企业私有云环境。镜像由预先导出的 tar.gz 导入，不依赖外网拉取：
+
+```bash
+# 导入离线镜像包（以 ARM64 或 x86_64 为例）
+docker load -i octop-server-arm64.tar.gz
+
+# 使用离线编排文件启动（默认 pull_policy: never，分配 4 核 CPU，4096MB 内存限制，nofile 65535）
+docker compose -f docker/docker-compose.offline.yml up -d
+```
+
+**方式二：在线 Compose（开发/联调）**
 
 在仓库根目录执行：
 

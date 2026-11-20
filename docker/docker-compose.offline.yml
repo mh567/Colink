@@ -1,0 +1,69 @@
+# =============================================================================
+# Colink (Octop) — 双架构服务端离线容器编排 (x86_64 / ARM64)
+#
+# 对应工单: #23 [T22] 双架构服务端离线容器部署
+#
+# 适用场景:
+#   断网物理机/虚拟机、企业私有云环境，使用已导入的离线容器镜像启动服务。
+#   支持通过 docker load -i colink-server-<arch>.tar.gz 导入的本地镜像。
+#
+# 前置准备（离线导入镜像）:
+#   # x86_64 主机:
+#   docker load -i colink-server-amd64.tar.gz
+#   # 或 ARM64 / 银河麒麟主机:
+#   docker load -i colink-server-arm64.tar.gz
+#
+# 用法:
+#   docker compose -f docker/docker-compose.offline.yml up -d
+#   # 指定自定义离线导入的镜像标签:
+#   OCTOP_IMAGE=octop:1.0.3b3 docker compose -f docker/docker-compose.offline.yml up -d
+#
+# 资源限制与调优:
+#   默认限制 4 核 CPU、4096MB 内存，nofile 软硬限制 65535。
+#   可通过环境变量 OCTOP_CPUS_LIMIT 与 OCTOP_MEM_LIMIT 覆盖。
+# =============================================================================
+
+services:
+  octop:
+    image: ${OCTOP_IMAGE:-${COLINK_IMAGE:-octop:latest}}
+    pull_policy: never
+    container_name: ${OCTOP_CONTAINER_NAME:-octop}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "${OCTOP_CPUS_LIMIT:-${COLINK_CPUS_LIMIT:-4.0}}"
+          memory: "${OCTOP_MEM_LIMIT:-${COLINK_MEM_LIMIT:-4096M}}"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    shm_size: "1gb"
+    ports:
+      - "${OCTOP_PORT:-8088}:${OCTOP_PORT:-8088}"
+    volumes:
+      - ${OCTOP_DATA:-~/.octop}:/data/.octop
+    environment:
+      - HOME=/data
+      - OCTOP_BIND_HOST=0.0.0.0
+      - OCTOP_PORT=${OCTOP_PORT:-8088}
+      - OCTOP_LOG_LEVEL=${OCTOP_LOG_LEVEL:-info}
+      - OCTOP_DEFAULT_PASSWORD=${OCTOP_DEFAULT_PASSWORD:-}
+      - OCTOP_ADMIN_USERNAME=${OCTOP_ADMIN_USERNAME:-admin}
+      - OCTOP_ADMIN_DISPLAY_NAME=${OCTOP_ADMIN_DISPLAY_NAME:-Admin}
+      - OCTOP_DATABASE_URL=${OCTOP_DATABASE_URL:-}
+      - OCTOP_DATABASE_DRIVER=${OCTOP_DATABASE_DRIVER:-}
+      - OCTOP_DATABASE_SQLITE_PATH=${OCTOP_DATABASE_SQLITE_PATH:-}
+      - OCTOP_DATABASE_HOST=${OCTOP_DATABASE_HOST:-}
+      - OCTOP_DATABASE_PORT=${OCTOP_DATABASE_PORT:-}
+      - OCTOP_DATABASE_NAME=${OCTOP_DATABASE_NAME:-}
+      - OCTOP_DATABASE_USER=${OCTOP_DATABASE_USER:-}
+      - OCTOP_DATABASE_PASSWORD=${OCTOP_DATABASE_PASSWORD:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:$${OCTOP_PORT:-8088}/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
