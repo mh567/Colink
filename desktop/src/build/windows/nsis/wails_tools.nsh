@@ -68,11 +68,11 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 
 !macro wails.checkArchitecture
     !ifndef WAILS_WIN10_REQUIRED
-        !define WAILS_WIN10_REQUIRED "This product is only supported on Windows 10 (Server 2016) and later."
+        !define WAILS_WIN10_REQUIRED "本产品仅支持 64 位 Windows 10（及 Windows Server 2016）或更高版本操作系统。"
     !endif
 
     !ifndef WAILS_ARCHITECTURE_NOT_SUPPORTED
-        !define WAILS_ARCHITECTURE_NOT_SUPPORTED "This product can't be installed on the current Windows architecture. Supports: ${ARCH}"
+        !define WAILS_ARCHITECTURE_NOT_SUPPORTED "当前系统架构不支持安装本产品，支持架构：${ARCH}"
     !endif
 
     ${If} ${AtLeastWin10}
@@ -183,6 +183,11 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
         Goto ok
     ${EndIf}
 
+    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    ${If} $0 != ""
+        Goto ok
+    ${EndIf}
+
     ${If} ${REQUEST_EXECUTION_LEVEL} == "user"
         ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
         ${If} $0 != ""
@@ -194,11 +199,39 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     DetailPrint "${WAILS_INSTALL_WEBVIEW_DETAILPRINT}"
     SetDetailsPrint listonly
 
-    InitPluginsDir
-    CreateDirectory "$pluginsdir\webview2bootstrapper"
-    SetOutPath "$pluginsdir\webview2bootstrapper"
-    File "MicrosoftEdgeWebview2Setup.exe"
-    ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install'
+    # Check for offline standalone installer beside installer first ($EXEDIR\MicrosoftEdgeWebView2RuntimeInstallerX64.exe)
+    ${If} ${FileExists} "$EXEDIR\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+        ExecWait '"$EXEDIR\MicrosoftEdgeWebView2RuntimeInstallerX64.exe" /silent /install' $1
+    ${Else}
+        InitPluginsDir
+        CreateDirectory "$pluginsdir\webview2bootstrapper"
+        SetOutPath "$pluginsdir\webview2bootstrapper"
+        File /nonfatal "MicrosoftEdgeWebview2Setup.exe"
+        ${If} ${FileExists} "$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe"
+            ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
+        ${EndIf}
+    ${EndIf}
+
+    # Verify if WebView2 is installed after attempt
+    ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    ${If} $0 == ""
+        ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    ${EndIf}
+    ${If} $0 == ""
+        ${If} ${REQUEST_EXECUTION_LEVEL} == "user"
+            ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${EndIf}
+    ${EndIf}
+
+    ${If} $0 == ""
+        IfSilent silentWebView notSilentWebView
+        silentWebView:
+            SetErrorLevel 66
+            Abort
+        notSilentWebView:
+            MessageBox MB_ICONSTOP|MB_OK "未检测到 Microsoft Edge WebView2 运行时。$\r$\n在离线断网环境中，请先安装 64 位独立离线包（Microsoft Edge WebView2 Evergreen Standalone Installer x64），或将该安装包置于本安装程序同级目录下。"
+            Abort
+    ${EndIf}
 
     SetDetailsPrint both
     ok:

@@ -129,6 +129,9 @@ func (b *localBrowser) close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.stopLocked()
+	if b.docx != nil {
+		b.docx.close()
+	}
 }
 
 func (b *localBrowser) run(s docxSession, request browserRequest, current func() error) (browserResult, error) {

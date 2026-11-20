@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,9 @@ func TestManagedPDFPublicationBoundaries(t *testing.T) {
 					case "cancelled":
 						cancel()
 					case "directory changed":
+						if runtime.GOOS == "windows" {
+							t.Skip("Windows prevents renaming directories containing open files")
+						}
 						if err := os.Rename(dir, dir+"-moved"); err != nil {
 							t.Fatal(err)
 						}

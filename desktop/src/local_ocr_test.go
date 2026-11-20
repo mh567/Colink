@@ -53,6 +53,7 @@ func TestLocalOCRMissingResourcesFailsWithoutUploadingSource(t *testing.T) {
 	}))
 	defer server.Close()
 	worker := newLocalDOCX(t.TempDir())
+	t.Cleanup(worker.close)
 	session := docxSession{Base: server.URL, DeviceID: "device", UserID: 1, Secret: "secret", Context: context.Background()}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "扫描.pdf"), []byte("%PDF-1.7\nsource"), 0600); err != nil {
@@ -80,6 +81,7 @@ func TestLocalOCRMissingResourcesFailsWithoutUploadingSource(t *testing.T) {
 
 func TestLocalOCRRejectsPathsAndUnauthorizedDirectories(t *testing.T) {
 	worker := newLocalDOCX(t.TempDir())
+	t.Cleanup(worker.close)
 	session := docxSession{Base: "https://example.test", DeviceID: "device", UserID: 1, Context: context.Background()}
 	grant, err := worker.grant(session, t.TempDir(), "ro")
 	if err != nil {
@@ -140,6 +142,7 @@ func TestLocalOCRRealTask(t *testing.T) {
 	defer server.Close()
 	session := docxSession{Base: server.URL, DeviceID: "device", UserID: 1, Context: context.Background()}
 	worker := newLocalDOCX(t.TempDir())
+	t.Cleanup(worker.close)
 	dir := t.TempDir()
 	if err = os.WriteFile(filepath.Join(dir, "扫描.pdf"), source, 0600); err != nil {
 		t.Fatal(err)

@@ -53,6 +53,7 @@ func TestLocalXLSXTaskCreatesCalculatedEditableWorkbook(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := newLocalDOCX(t.TempDir())
+	t.Cleanup(worker.close)
 	session := docxSession{Base: server.URL, DeviceID: "mine", UserID: 1, Token: "token", Secret: "secret", Context: context.Background()}
 	grant, err := worker.grant(session, dir, "rw")
 	if err != nil {
@@ -145,6 +146,7 @@ func TestLocalXLSXFailuresNeverCreateArtifact(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker := newLocalDOCX(t.TempDir())
+	t.Cleanup(worker.close)
 			session := docxSession{Base: server.URL, DeviceID: "mine", UserID: 1, Context: context.Background()}
 			mode := "rw"
 			if scenario == "readonly" {
