@@ -284,6 +284,23 @@ func TestLocalBrowserRejectsSensitiveFormActionQueryValues(t *testing.T) {
 	}
 }
 
+func TestLocalBrowserSensitiveFormQueryKeyBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		url   string
+		valid bool
+	}{
+		{name: "verification code is sensitive", url: "https://intranet.test/save?verification_code=private"},
+		{name: "author id is not auth", url: "https://intranet.test/save?author_id=42", valid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if valid := validBrowserFormActionURL(test.url); valid != test.valid {
+				t.Fatalf("validBrowserFormActionURL(%q) = %t, want %t", test.url, valid, test.valid)
+			}
+		})
+	}
+}
+
 func browserCurrent() error { return nil }
 
 func assertBrowserOperation(t *testing.T, result browserResult, err error, status string) {

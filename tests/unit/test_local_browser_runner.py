@@ -66,6 +66,44 @@ def test_rejects_disallowed_url_before_starting_browser(runner, tmp_path, monkey
     ]
 
 
+def test_worker_accepts_submit_command_larger_than_form_snapshot_limit(
+    runner, tmp_path, monkeypatch
+):
+    class Browser:
+        def __init__(self, profile):
+            pass
+
+        async def action(self, name, url, tab_id, **kwargs):
+            assert name == "submit_form"
+            assert len(kwargs["values"]["c1"]) > runner.REQUEST_LIMIT - 128
+            return {"click_dispatched": True}
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "LocalBrowser", Browser)
+    value = "<" * (runner.REQUEST_LIMIT - 64)
+    assert (
+        len(json.dumps({"values": {"c1": value}}, separators=(",", ":")).encode())
+        <= runner.REQUEST_LIMIT
+    )
+    command = {
+        "action": "submit_form",
+        "url": _ORDERS,
+        "tab_id": "a" * 32,
+        "form_id": "c1",
+        "submit_id": "c2",
+        "snapshot_id": "snapshot_1",
+        "values": {"c1": value},
+    }
+    line = json.dumps(command, separators=(",", ":")).replace("<", r"\u003c").encode() + b"\n"
+    assert runner.REQUEST_LIMIT < len(line) <= runner.WORKER_INPUT_LIMIT
+    response = io.StringIO()
+    asyncio.run(runner.serve(tmp_path / "profile", io.BytesIO(line), response))
+    reply = [json.loads(item) for item in response.getvalue().splitlines()]
+    assert reply == [{"click_dispatched": True}]
+
+
 def test_missing_system_browser_fails_without_launching_any_process(runner, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "browser_executable", lambda: None)
 
@@ -445,7 +483,7 @@ def test_submit_form_rejects_stale_snapshot_without_click(runner, browser, tmp_p
         {"script": "document.forms[0].submit()"},
         {"selector": "#save"},
         {"values": {"quantity": 17}},
-        {"values": {"quantity": "a" * (16 * 1024)}},
+        {"values": {"quantity": "a" * (128 * 1024)}},
     ],
 )
 def test_submit_form_rejects_unstructured_or_oversized_worker_requests(
@@ -543,10 +581,7 @@ class Element extends Node {
         Object.assign(this, {localName, type, storedValue, attributes, isConnected: true});
     }
     getAttribute(name) { return this.attributes[name] ?? null; }
-    get value() {
-        assert.ok(!this.protectedValue, "excluded input value read");
-        return this.storedValue;
-    }
+    get value() { return this.storedValue; }
     set value(value) { this.storedValue = value; }
     get formAction() { return this.resolvedAction("formaction"); }
     resolvedAction(name) {
@@ -568,9 +603,9 @@ global.getComputedStyle = () => ({visibility: "visible", opacity: "1"});
 global.location = {href: "https://intranet.test/orders?token=private#result"};
 const quantity = new Element("input", "text", "42", {"aria-label": "Quantity"});
 const excluded = ["password", "hidden", "file", "button"].map((type) =>
-    Object.assign(new Element("input", type, "private"), {protectedValue: true}));
-excluded.push(Object.assign(new Element("input", "text"), {disabled: true, protectedValue: true}));
-excluded.push(Object.assign(new Element("input", "text"), {readOnly: true, protectedValue: true}));
+    new Element("input", type, "private"));
+excluded.push(Object.assign(new Element("input", "text"), {disabled: true}));
+excluded.push(Object.assign(new Element("input", "text"), {readOnly: true}));
 const submitter = new Element("button", "submit", "", {"aria-label": "Save"});
 const form = new HTMLFormElement("form", "", "", {
     action: "https://intranet.test/save?token=private#result", method: "POST",
@@ -617,10 +652,24 @@ def test_form_page_hides_sensitive_controls_and_stops_on_readback_mismatch(form_
 const {candidate, snapshot} = selectForm();
 assert.deepEqual(candidate.fields.map((field) => field.label), ["Quantity"]);
 assert.deepEqual(snapshot.fields.map((field) => field.value), ["42"]);
+assert.ok(!JSON.stringify([candidate, snapshot]).includes("private"));
 const [{id}] = snapshot.fields;
 quantity.onEvent = () => { quantity.value = "page changed it"; };
 assert.equal(call("fill", {[id]: "17"}), true);
 assert.equal(quantity.value, "page changed it");
+assert.equal(call("click"), false);
+assert.equal(submitter.clicks ?? 0, 0);
+""")
+
+
+def test_form_page_stops_when_hidden_successful_control_changes(form_page_js):
+    form_page_js("""
+const {candidate, snapshot} = selectForm();
+const hidden = excluded.find((node) => node.type === "hidden");
+assert.ok(!JSON.stringify([candidate, snapshot]).includes("private"));
+const [{id}] = snapshot.fields;
+assert.equal(call("fill", {[id]: "17"}), true);
+hidden.value = "delete";
 assert.equal(call("click"), false);
 assert.equal(submitter.clicks ?? 0, 0);
 """)
@@ -642,7 +691,7 @@ Object.assign(submitter.attributes, {formaction: "preview?operation=delete&token
     formmethod: "GET", formtarget: "preview"});
 ({button, snapshot} = selectForm());
 assert.deepEqual(destination(button),
-    {action_url: "https://intranet.test/team/preview?operation=delete&token=%5Bredacted%5D",
+    {action_url: "https://intranet.test/team/preview",
         method: "get", target: "preview"});
 assert.deepEqual(destination(snapshot), destination(button));
 assert.equal(submitter.attributes.formaction, "preview?operation=delete&token=private#fragment");
@@ -650,6 +699,15 @@ assert.equal(submitter.attributes.formaction, "preview?operation=delete&token=pr
 Object.assign(submitter.attributes, {formaction: "", formmethod: "DIALOG", formtarget: ""});
 assert.deepEqual(destination(selectForm().button),
     {action_url: "https://intranet.test/orders?token=%5Bredacted%5D", method: "dialog", target: "_self"});
+""")
+
+
+def test_form_page_masks_sensitive_query_components_without_masking_author_id(form_page_js):
+    form_page_js("""
+submitter.attributes.formaction = "preview?verification_code=private&author_id=42";
+const {button} = selectForm();
+assert.equal(button.action_url,
+    "https://intranet.test/team/preview?verification_code=%5Bredacted%5D&author_id=42");
 """)
 
 

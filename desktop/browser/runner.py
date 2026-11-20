@@ -19,6 +19,7 @@ from typing import Any, BinaryIO, TextIO
 from urllib.parse import SplitResult, urlsplit
 
 REQUEST_LIMIT = 16 * 1024
+WORKER_INPUT_LIMIT = 128 * 1024
 ACTIONS = {
     "open": set(),
     "list": set(),
@@ -321,13 +322,18 @@ FORM_PAGE = r"""
         if ((url.protocol !== "http:" && url.protocol !== "https:") ||
             url.username || url.password) return null;
         const action = url.href;
-        url.search = new URLSearchParams(Array.from(url.searchParams, ([key, value]) => [
-            key, /(?:token|secret|password|passwd|api[_-]?key|authorization|auth|session|cookie|csrf|xsrf|signature|^code$)/i.test(key)
-                ? "[redacted]" : value,
-        ])).toString();
+        const method = (attribute(node, "formmethod") ?? attribute(form, "method"))?.toLowerCase();
+        const effectiveMethod = method === "post" || method === "dialog" ? method : "get";
+        if (effectiveMethod === "get") {
+            url.search = "";
+        } else {
+            url.search = new URLSearchParams(Array.from(url.searchParams, ([key, value]) => [
+                key, /(?:token|secret|password|passwd|api[_-]?key|authorization|authentication|(?:^|[_-])auth(?:$|[_-])|session|cookie|csrf|xsrf|signature|(?:^|[_-])code(?:$|[_-]))/i.test(key)
+                    ? "[redacted]" : value,
+            ])).toString();
+        }
         url.hash = "";
 
-        const method = (attribute(node, "formmethod") ?? attribute(form, "method"))?.toLowerCase();
         const target = attribute(node, "formtarget") ?? attribute(form, "target") ?? baseTarget;
         return {
             node,
@@ -337,7 +343,7 @@ FORM_PAGE = r"""
                 label: node.getAttribute("aria-label")?.trim() || node.innerText?.trim() ||
                     node.value || id(node),
                 action_url: url.href,
-                method: method === "post" || method === "dialog" ? method : "get",
+                method: effectiveMethod,
                 target: target?.includes("<") && /[\t\n\r]/.test(target) ? "_blank" : target || "_self",
             },
         };
@@ -350,6 +356,13 @@ FORM_PAGE = r"""
             node.type === "submit" && available(node))
             .map((node) => submitter(form, node, baseTarget)).filter(Boolean);
         const fields = listFields(elements);
+        const submissionState = elements.map((node) => [
+            id(node), attributes(node, ["type", "name", "disabled", "readonly", "form"]),
+            node.matches(":disabled"), node.value, node.checked, node.selectedIndex,
+            node.localName === "select" ? Array.from(node.options, (option) =>
+                [id(option), option.value, option.selected, option.disabled, option.hidden]) : null,
+            node.type === "file" ? Array.from(node.files ?? [], id) : null,
+        ]);
         const data = {
             id: id(form),
             label: attribute(form, "aria-label")?.trim() || attribute(form, "name") || id(form),
@@ -365,6 +378,7 @@ FORM_PAGE = r"""
             fields.map(({nodes, choices, data: {value, ...field}}) => [field, choices.map(id),
                 nodes.map((node) => [id(node), attributes(node, ["name", "maxlength",
                     "minlength", "pattern", "required"]), node.type === "checkbox" ? node.value : null])]),
+            submissionState,
         ];
         return {data, structure, submitters, fields};
     };
@@ -1430,10 +1444,10 @@ class LocalBrowser:
 async def serve(profile: Path, source: BinaryIO, output: TextIO) -> None:
     browser = LocalBrowser(profile)
     try:
-        while line := await asyncio.to_thread(source.readline, REQUEST_LIMIT + 1):
+        while line := await asyncio.to_thread(source.readline, WORKER_INPUT_LIMIT + 1):
             action = ""
             try:
-                if len(line) > REQUEST_LIMIT:
+                if len(line) > WORKER_INPUT_LIMIT:
                     raise BrowserError("BROWSER_INVALID_REQUEST")
                 action, url, tab_id, extra = request_args(line)
                 reply = await browser.action(action, url, tab_id, **extra)
@@ -1442,7 +1456,7 @@ async def serve(profile: Path, source: BinaryIO, output: TextIO) -> None:
             except Exception:
                 reply = {"error": "BROWSER_TASK_FAILED"}
             print(json.dumps(reply), file=output, flush=True)
-            if len(line) > REQUEST_LIMIT or action == "close":
+            if len(line) > WORKER_INPUT_LIMIT or action == "close":
                 break
     finally:
         await browser.close()

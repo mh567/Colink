@@ -111,6 +111,7 @@ interface BrowserReady {
   device_id: string;
   capability: string;
   operation_deadline?: boolean;
+  form_submission?: boolean;
 }
 
 function formValue(
@@ -210,7 +211,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   const hello = useRef<{ id: string; timeout: number } | null>(null);
   const bridgeProof = useRef<Pick<
     BrowserReady,
-    "capability" | "operation_deadline"
+    "capability" | "operation_deadline" | "form_submission"
   > | null>(null);
   const tabNumbers = useRef(new Map<string, number>());
   const [bridge, setBridge] = useState<BridgeState>("connecting");
@@ -512,7 +513,9 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
         setOperations(nextOperations);
         if (
           nextOperations.some(
-            (operation) => operation.id === uncertainOperationId,
+            (operation) =>
+              operation.id === uncertainOperationId &&
+              operationLabel(operation.status, t),
           )
         ) {
           setSubmissionUncertain(false);
@@ -592,13 +595,10 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
     };
     window.addEventListener(STATUS_EVENT, receive);
     return () => window.removeEventListener(STATUS_EVENT, receive);
-  }, [clearForms, deviceId, send, uncertainOperationId]);
+  }, [clearForms, deviceId, send, t, uncertainOperationId]);
 
   useEffect(() => {
-    if (
-      bridge === "ready" &&
-      bridgeProof.current?.operation_deadline === true
-    ) {
+    if (bridge === "ready" && bridgeProof.current?.form_submission === true) {
       send("operations");
     }
   }, [bridge, deviceId, send]);
@@ -671,7 +671,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
   );
   const canSuggest = Boolean(
     canRead &&
-      bridgeProof.current?.operation_deadline === true &&
+      bridgeProof.current?.form_submission === true &&
       selectedForm &&
       selectedSubmitter &&
       formInstruction.trim() &&
@@ -948,7 +948,7 @@ export default function LocalBrowserPanel({ deviceId }: { deviceId: string }) {
                   {t("localBrowser.query", "查询当前页")}
                 </Button>
               </div>
-              {bridgeProof.current?.operation_deadline === true && canRead && (
+              {bridgeProof.current?.form_submission === true && canRead && (
                 <section aria-label={t("localBrowser.forms", "表单填写")}>
                   <Space
                     direction="vertical"

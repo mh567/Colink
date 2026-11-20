@@ -132,7 +132,7 @@ func (a *App) handleBrowserMessage(window application.Window, message string, in
 		if validDestructiveID(hello) {
 			a.emitBrowserEvent(session, origin, "colink:browser-ready", map[string]any{
 				"request_id": hello, "device_id": session.DeviceID, "capability": a.browserCapability(session),
-				"operation_deadline": true,
+				"operation_deadline": true, "form_submission": true,
 			})
 		}
 		return
@@ -152,7 +152,7 @@ func browserHTTPURL(value string) bool {
 		(parsed.Scheme == "http" || parsed.Scheme == "https")
 }
 
-var browserSensitiveFormQueryKey = regexp.MustCompile(`(?i)(token|secret|password|passwd|api[_-]?key|authorization|auth|session|cookie|csrf|xsrf|signature|^code$)`)
+var browserSensitiveFormQueryKey = regexp.MustCompile(`(?i)(token|secret|password|passwd|api[_-]?key|authorization|authentication|(^|[_-])auth($|[_-])|session|cookie|csrf|xsrf|signature|(^|[_-])code($|[_-]))`)
 
 func validBrowserFormActionURL(value string) bool {
 	if !browserHTTPURL(value) || strings.Contains(value, "#") {

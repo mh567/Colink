@@ -104,14 +104,16 @@ function approveBrowserBridge(
     created_at: string;
     url: string;
   }[] = [],
+  formSubmission = operationDeadline,
 ) {
   return emit("colink:browser-ready", {
     request_id: helloRequest(invoke),
     device_id: "desktop-ada",
     capability,
     operation_deadline: operationDeadline,
+    form_submission: formSubmission,
   }).then(async () => {
-    if (!operationDeadline) return;
+    if (!formSubmission) return;
     const operationRequest = lastRequest(invoke);
     expect(operationRequest.action).toBe("operations");
     await emit("colink:browser-status", {
@@ -143,11 +145,17 @@ async function startBrowserPanel(
     created_at: string;
     url: string;
   }[] = [],
+  formSubmission = operationDeadline,
 ) {
   const { invoke, user } = startPage();
   await user.click(screen.getByRole("button", { name: "接入当前设备" }));
   await connectDevice("approved", true);
-  await approveBrowserBridge(invoke, operationDeadline, operations);
+  await approveBrowserBridge(
+    invoke,
+    operationDeadline,
+    operations,
+    formSubmission,
+  );
   const panel = within(screen.getByRole("region", { name: "本机浏览器" }));
   const click = (name: string) =>
     user.click(panel.getByRole("button", { name }));
@@ -233,6 +241,29 @@ afterEach(() => {
 });
 
 describe("本人设备的本机浏览器任务", () => {
+  it("旧桌面客户端未声明表单能力时不展示表单入口或查询操作", async () => {
+    const { invoke, panel, click, reply } = await startBrowserPanel(
+      true,
+      [],
+      false,
+    );
+    await click("打开专用浏览器");
+    await reply({ tabs: [tab], tab_id: tab.id });
+
+    expect(
+      panel.queryByRole("region", { name: "表单填写" }),
+    ).not.toBeInTheDocument();
+    const requests = invoke.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.startsWith(prefix))
+      .map((message) =>
+        JSON.parse(decodeURIComponent(message.slice(prefix.length))),
+      );
+    expect(requests.some((request) => request.action === "operations")).toBe(
+      false,
+    );
+  });
+
   it("在员工选择表单和提交动作后才生成建议并预览目标和值", async () => {
     const { invoke, panel, user, click, reply } = await startBrowserPanel(true);
     await click("打开专用浏览器");
@@ -507,6 +538,33 @@ describe("本人设备的本机浏览器任务", () => {
       await waitFor(() =>
         expect(lastRequest(invoke).action).toBe("operations"),
       );
+    },
+  );
+
+  it.each(["awaiting_confirmation", "submitting"])(
+    "保留未收到回执提示，直到操作进入可展示状态：%s",
+    async (status) => {
+      const { panel, click, reply, invoke } = await prepareOrderSuggestion();
+      await click("提交表单");
+      const submission = lastRequest(invoke);
+      await reply({ error: "BROWSER_TIMEOUT" });
+      await waitFor(() =>
+        expect(lastRequest(invoke).action).toBe("operations"),
+      );
+      await reply({
+        operations: [
+          {
+            id: submission.request_id,
+            status,
+            created_at: "2026-11-19T00:00:00Z",
+            url: "https://intranet.example",
+          },
+        ],
+      });
+
+      expect(
+        panel.getByRole("region", { name: "表单操作状态" }),
+      ).toHaveTextContent("未收到提交回执，请先检查业务页面");
     },
   );
 
