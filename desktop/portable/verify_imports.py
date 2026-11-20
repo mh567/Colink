@@ -100,18 +100,22 @@ def _dist_version(dist_name: str) -> str | None:
         return None
 
 
-def _archive_destination(filename: str) -> str:
+def _archive_destination(filename: str, *, case_sensitive: bool) -> str:
     relative = filename.partition("/")[2].replace("\\", "/")
     normalized = posixpath.normpath("/" + relative.lstrip("/"))
-    return posixpath.normpath(
-        "/".join(part.rstrip(" .") for part in normalized.split("/"))
-    ).casefold()
+    key = posixpath.normpath("/".join(part.rstrip(" .") for part in normalized.split("/")))
+    return key if case_sensitive else key.casefold()
 
 
 def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -> bool:
     root = packages.parent
+    # Linux runtimes ship distinct terminfo directories such as Q/ and q/.
+    case_sensitive = root_name.startswith("Octop-linux-")
     desktop = Path(__file__).resolve().parents[1]
+    templates = Path(__file__).resolve().parent / "templates"
+    launchers = ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd")
     required = {
+        **{name: templates / name for name in launchers},
         "pptx/runner.py": desktop / "pptx/runner.py",
         "browser/runner.py": desktop / "browser/runner.py",
         "pdf/runner.py": desktop / "pdf/runner.py",
@@ -123,9 +127,9 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
             (root / name).read_bytes() != source.read_bytes() for name, source in required.items()
         ):
             return False
-        if (root / "PORTABLE-REVISION.txt").read_bytes() != b"4\n":
+        if (root / "PORTABLE-REVISION.txt").read_bytes() != b"5\n":
             return False
-        if not (root / "runtime").is_dir() or not (root / "launch.py").is_file():
+        if os.name != "nt" and not (root / "bin/octop").stat().st_mode & stat.S_IXUSR:
             return False
         expected = {}
         for relative in (
@@ -139,18 +143,19 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
                 return False
             for path in [directory, *directory.rglob("*")]:
                 name = path.relative_to(root).as_posix()
-                key = _archive_destination(f"{root_name}/{name}")
+                key = _archive_destination(f"{root_name}/{name}", case_sensitive=case_sensitive)
                 if key in expected:
                     return False
                 expected[key] = (name, path)
         standalone_files = (
-            "launch.py",
+            *launchers,
             "pptx/runner.py",
             "browser/runner.py",
             "PORTABLE-REVISION.txt",
         )
         for name in standalone_files:
-            expected[_archive_destination(f"{root_name}/{name}")] = (name, root / name)
+            key = _archive_destination(f"{root_name}/{name}", case_sensitive=case_sensitive)
+            expected[key] = (name, root / name)
 
         with zipfile.ZipFile(archive_path) as archive:
             seen = set()
@@ -174,7 +179,7 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
                     if not member.is_dir() or kind not in (0, stat.S_IFDIR):
                         return False
                     continue
-                key = _archive_destination(member.filename)
+                key = _archive_destination(member.filename, case_sensitive=case_sensitive)
                 if key in seen:
                     return False
                 seen.add(key)
@@ -281,7 +286,9 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
                         stack.pop()
                         continue
                     stack.append(part)
-                    link = "/" + "/".join(stack).casefold()
+                    link = "/" + "/".join(stack)
+                    if not case_sensitive:
+                        link = link.casefold()
                     if link in links:
                         stack.pop()
                         pending = links[link].split("/") + pending

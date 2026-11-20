@@ -137,6 +137,67 @@ def test_roundtrip_backup(layout: PathLayout, tmp_path: Path) -> None:
     assert manifest["database_driver"] == "sqlite"
 
 
+def test_restore_in_place_keeps_forgotten_sqlite_memory_erased(
+    layout: PathLayout, tmp_path: Path
+) -> None:
+    from octop_memory import Memory
+
+    from octop.infra.agents.memory.personal import record_forgotten_ids
+    from octop.infra.db.repos.agents import AgentRepo
+    from octop.infra.db.repos.users import UserRepo
+
+    pool = SqlitePool(layout.db)
+    try:
+        run_migrations(pool)
+        users = UserRepo(pool)
+        users.create(username="memory-owner", password_hash="x", role="user")
+        owner = users.get_by_username("memory-owner")
+        assert owner is not None
+        agent_id = "Nested_Agent"
+        agents = AgentRepo(pool)
+        agents.create(
+            agent_id=agent_id,
+            user_id=owner.id,
+            name="Test",
+            config_json=json.dumps({"system_files_path": ".octop"}),
+        )
+        row = agents.get(agent_id)
+        assert row is not None
+        db_path = layout.ensure_agent_workspace(agent_id) / ".octop" / "memory.sqlite"
+        db_path.parent.mkdir()
+        backend_config = {"db_path": str(db_path)}
+        memory = Memory(f"agent_{agent_id}", backend_config=backend_config)
+        forgotten, *_ = memory.create_atom("Forget this test preference", entity_name="User")
+        retained, *_ = memory.create_atom("Keep this test preference", entity_name="User")
+        memory.backend.close()
+
+        archive = tmp_path / "old-memory-backup.tar.gz"
+        create_system_backup(
+            paths=layout,
+            agent_rows=[row],
+            pool=pool,
+            db_config=DatabaseConfig(),
+            dest=archive,
+            include_chats=True,
+        )
+        with tarfile.open(archive, mode="r:gz") as tar:
+            assert f"workspaces/{agent_id}/.octop/memory.sqlite" in tar.getnames()
+        memory = Memory(f"agent_{agent_id}", backend_config=backend_config)
+        record_forgotten_ids(layout.root, agent_id, memory.atom_forget_ids(forgotten.id))
+        assert memory.forget_atom(forgotten.id)
+        memory.backend.close()
+
+        restore_system_backup(archive, paths=layout, pool=pool, db_config=DatabaseConfig())
+        memory = Memory(f"agent_{agent_id}", backend_config=backend_config)
+        try:
+            assert memory.get_atom(forgotten.id) is None
+            assert memory.get_atom(retained.id) is not None
+        finally:
+            memory.backend.close()
+    finally:
+        pool.close()
+
+
 def test_backup_packs_config_workspace_dir(layout: PathLayout, tmp_path: Path) -> None:
     db_path = layout.db
     pool = SqlitePool(db_path)

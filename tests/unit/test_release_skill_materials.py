@@ -14,6 +14,7 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "strip_restricted_skills.py"
 DIST_INFO = "octop_harness-1.0.7.dist-info"
+COLINK_DIST_INFO = "colink_harness-1.0.7.post1.dist-info"
 KEPT_RECORD = (
     "octop_harness/__init__.py,,\r\n"
     '"octop_harness/builtin/skills/en/keep,skill/SKILL.md",sha256=unchanged,17\r\n'
@@ -24,14 +25,14 @@ KEPT_RECORD = (
 ).encode()
 
 
-def _installation(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
+def _installation(tmp_path: Path, dist_info: str = DIST_INFO) -> tuple[Path, dict[str, bytes]]:
     site_packages = tmp_path / "packages with spaces"
     retained = {
         "octop_harness/__init__.py": b"",
         "octop_harness/builtin/skills/en/keep,skill/SKILL.md": b"keep this skill\n",
         "octop_harness/builtin/skills/en/powerpoint-extra/SKILL.md": b"separate skill\n",
-        f"{DIST_INFO}/METADATA": b"Name: octop-harness\nVersion: 1.0.7\nLicense: MIT\n",
-        f"{DIST_INFO}/licenses/LICENSE": b"MIT license must remain\n",
+        f"{dist_info}/METADATA": b"Name: octop-harness\nVersion: 1.0.7\nLicense: MIT\n",
+        f"{dist_info}/licenses/LICENSE": b"MIT license must remain\n",
         "another_component-1.0.dist-info/NOTICE": b"keep third-party notice\n",
     }
     restricted = {
@@ -45,9 +46,10 @@ def _installation(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
         path = site_packages / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-    record = site_packages / DIST_INFO / "RECORD"
-    record.write_bytes(KEPT_RECORD + "".join(f"{path},,\r\n" for path in restricted).encode())
-    retained[f"{DIST_INFO}/RECORD"] = KEPT_RECORD
+    record = site_packages / dist_info / "RECORD"
+    kept_record = KEPT_RECORD.replace(DIST_INFO.encode(), dist_info.encode())
+    record.write_bytes(kept_record + "".join(f"{path},,\r\n" for path in restricted).encode())
+    retained[f"{dist_info}/RECORD"] = kept_record
     return site_packages, retained
 
 
@@ -61,8 +63,11 @@ def _run(site_packages: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_cli_removes_complete_trees_and_preserves_other_materials(tmp_path: Path) -> None:
-    site_packages, retained = _installation(tmp_path)
+@pytest.mark.parametrize("dist_info", [DIST_INFO, COLINK_DIST_INFO])
+def test_cli_removes_complete_trees_and_preserves_other_materials(
+    tmp_path: Path, dist_info: str
+) -> None:
+    site_packages, retained = _installation(tmp_path, dist_info)
 
     for _ in range(2):
         result = _run(site_packages)
@@ -75,7 +80,7 @@ def test_cli_removes_complete_trees_and_preserves_other_materials(tmp_path: Path
         assert actual == retained
         assert not (site_packages / "octop_harness/builtin/skills/en/powerpoint").exists()
         assert not (site_packages / "octop_harness/builtin/skills/zh/powerpoint").exists()
-        with (site_packages / DIST_INFO / "RECORD").open(encoding="utf-8", newline="") as stream:
+        with (site_packages / dist_info / "RECORD").open(encoding="utf-8", newline="") as stream:
             assert all((site_packages / row[0]).is_file() for row in csv.reader(stream))
 
 
@@ -99,8 +104,9 @@ def test_cli_does_not_change_a_shared_cache_record(tmp_path: Path) -> None:
     [
         ("tree", "SITE_PACKAGES is not a directory"),
         ("package", "octop_harness installation is missing"),
-        ("metadata", "Expected one octop-harness dist-info, found 0"),
-        ("unique-metadata", "Expected one octop-harness dist-info, found 2"),
+        ("metadata", "Expected one Harness dist-info, found 0"),
+        ("unique-metadata", "Expected one Harness dist-info, found 2"),
+        ("mixed-metadata", "Expected one Harness dist-info, found 2"),
         ("record", "RECORD"),
     ],
 )
@@ -116,6 +122,8 @@ def test_cli_rejects_incomplete_or_ambiguous_installations(
         shutil.rmtree(site_packages / DIST_INFO)
     elif missing == "unique-metadata":
         (site_packages / "octop_harness-9.0.dist-info").mkdir()
+    elif missing == "mixed-metadata":
+        (site_packages / COLINK_DIST_INFO).mkdir()
     else:
         (site_packages / DIST_INFO / "RECORD").unlink()
     before = {path: path.read_bytes() for path in site_packages.rglob("*") if path.is_file()}
@@ -244,7 +252,7 @@ PY
     archive = green / "release" / "Octop-portable-linux-amd64-1.0.3b3.zip"
     with zipfile.ZipFile(archive) as packed:
         assert packed.read("Octop-linux-amd64/ocr/fixture-marker.txt") == b"bundled-python"
-        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"4\n"
+        assert packed.read("Octop-linux-amd64/PORTABLE-REVISION.txt") == b"5\n"
         for worker in ("pptx", "browser"):
             assert (
                 packed.read(f"Octop-linux-amd64/{worker}/runner.py")
@@ -301,6 +309,7 @@ def test_desktop_release_validates_the_reused_portable_archive(
     portable.mkdir(parents=True)
     for name in ("_common.sh", "verify_imports.py"):
         shutil.copyfile(repo / "desktop" / "portable" / name, portable / name)
+    shutil.copytree(repo / "desktop/portable/templates", portable / "templates")
     shutil.copyfile(repo / "desktop" / "package-release.sh", desktop / "package-release.sh")
     (tmp_path / "pyproject.toml").write_text('version = "1.0.3b3"\n', encoding="utf-8")
     (portable / "requirements-linux-amd64.txt").write_text(
@@ -323,8 +332,11 @@ def test_desktop_release_validates_the_reused_portable_archive(
         (staging / name).mkdir(parents=True)
         (staging / name / "runner.py").write_bytes(current_runner)
     shutil.copytree(desktop / "pdf", staging / "pdf")
-    (staging / "PORTABLE-REVISION.txt").write_text("4\n")
-    (staging / "launch.py").write_text("# launcher\n")
+    (staging / "PORTABLE-REVISION.txt").write_text("5\n")
+    for name in ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd"):
+        (staging / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(portable / "templates" / name, staging / name)
+    (staging / "bin/octop").chmod(0o755)
     runtime = staging / "runtime/bin"
     runtime.mkdir(parents=True)
     (runtime / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
@@ -382,7 +394,8 @@ def test_desktop_release_validates_the_reused_portable_archive(
             archive.write(
                 staging / "PORTABLE-REVISION.txt", "Octop-linux-amd64/PORTABLE-REVISION.txt"
             )
-        archive.write(staging / "launch.py", "Octop-linux-amd64/launch.py")
+        for name in ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd"):
+            archive.write(staging / name, f"Octop-linux-amd64/{name}")
         archive.write(runtime / "python3", "Octop-linux-amd64/runtime/bin/python3")
         for path in (staging / "pdf").iterdir():
             if missing != f"pdf/{path.name}":
@@ -450,8 +463,11 @@ def portable_integrity_fixture(tmp_path):
     for relative, data in {
         "runtime/bin/python3": b"python runtime",
         "packages/octop/__init__.py": b"core dependency",
-        "launch.py": b"launcher",
-        "PORTABLE-REVISION.txt": b"4\n",
+        **{
+            name: (repo / "desktop/portable/templates" / name).read_bytes()
+            for name in ("launch.py", "start.sh", "bin/octop", "bin/octop.cmd")
+        },
+        "PORTABLE-REVISION.txt": b"5\n",
         "browser/runner.py": (repo / "desktop/browser/runner.py").read_bytes(),
         "pptx/runner.py": (repo / "desktop/pptx/runner.py").read_bytes(),
         "pdf/runner.py": (repo / "desktop/pdf/runner.py").read_bytes(),
@@ -466,6 +482,7 @@ def portable_integrity_fixture(tmp_path):
         metadata.mkdir()
         (metadata / "RECORD").write_text(f"{dist}-1.dist-info/RECORD,,\n")
     (root / "runtime/bin/python3").chmod(0o755)
+    (root / "bin/octop").chmod(0o755)
     return module, root, tmp_path / "bundle.zip"
 
 
@@ -495,9 +512,37 @@ def test_reused_archive_accepts_current_browser_and_pdf_resources(portable_integ
     assert module._has_current_resources(archive, root.name, root / "packages")
 
 
+@pytest.mark.parametrize(("platform", "accepted"), [("linux-arm64", True), ("darwin-arm64", False)])
+def test_reused_archive_distinguishes_case_for_linux_only(
+    portable_integrity_fixture, platform, accepted
+):
+    module, root, archive = portable_integrity_fixture
+    target = root.with_name(f"Octop-{platform}")
+    root.rename(target)
+    write_integrity_archive(target, archive)
+    with zipfile.ZipFile(archive, "a") as result:
+        for name in ("Q", "q"):
+            result.writestr(f"{target.name}/share/terminfo/{name}/", b"")
+    assert module._has_current_resources(archive, target.name, target / "packages") is accepted
+
+
+def test_reused_archive_rejects_matching_stale_launcher(portable_integrity_fixture):
+    module, root, archive = portable_integrity_fixture
+    (root / "launch.py").write_text("# stale launcher\n", encoding="utf-8")
+    write_integrity_archive(root, archive)
+    assert not module._has_current_resources(archive, root.name, root / "packages")
+
+
 @pytest.mark.parametrize(
     "omitted",
-    ["runtime/bin/python3", "launch.py", "packages/octop/__init__.py", "browser/runner.py"],
+    [
+        "runtime/bin/python3",
+        "launch.py",
+        "bin/octop",
+        "bin/octop.cmd",
+        "packages/octop/__init__.py",
+        "browser/runner.py",
+    ],
 )
 def test_reused_archive_requires_runtime_launcher_and_core_files(
     portable_integrity_fixture, omitted

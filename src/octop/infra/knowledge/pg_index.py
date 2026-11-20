@@ -16,6 +16,7 @@ from octop.infra.db.file_store import KNOWLEDGE_CHUNKS, adopt_legacy_content_tab
 from octop.infra.knowledge.index import Hit
 
 _TABLE = f"public.{KNOWLEDGE_CHUNKS}"
+_DOC_INDEX = "idx_knowledge_chunks_doc"
 
 
 def _vector_literal(values: Sequence[float]) -> str:
@@ -27,46 +28,70 @@ class PgVectorKnowledgeIndex:
 
     def __init__(self, kb_id: str, database: DatabaseConfig) -> None:
         self._kb_id = kb_id
-        self._database = database
         self._conninfo = database.postgresql_conninfo()
-        self._ensure_schema()
+        with self._connect() as conn:
+            self._ensure_schema(conn, database)
 
     def _connect(self) -> Any:
         import psycopg
 
         return psycopg.connect(self._conninfo)
 
-    def _ensure_schema(self) -> None:
-        with self._connect() as conn:
-            present = conn.execute("SELECT 1 FROM pg_type WHERE typname = 'vector'").fetchone()
-            if present is None:
-                raise RuntimeError(
-                    "pgvector is not installed on this PostgreSQL. "
-                    "Run CREATE EXTENSION vector (docker/postgres/init-vector.sql) "
-                    "before using knowledge search with database.driver=postgresql."
-                )
-            adopt_legacy_content_tables(self._database)
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {_TABLE} (
-                    kb_id TEXT NOT NULL,
-                    chunk_id TEXT NOT NULL,
-                    doc_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL,
-                    text TEXT NOT NULL,
-                    embedding vector NOT NULL,
-                    meta_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                    PRIMARY KEY (kb_id, chunk_id)
-                )
-                """
+    @staticmethod
+    def _ensure_schema(conn: Any, database: DatabaseConfig) -> None:
+        vector, table, index, legacy = conn.execute(
+            "SELECT to_regtype('vector'), to_regclass(%s), to_regclass(%s), "
+            "to_regclass('octop_knowledge.chunks')",
+            (_TABLE, f"public.{_DOC_INDEX}"),
+        ).fetchone()
+        if vector is None:
+            raise RuntimeError(
+                "pgvector is not installed on this PostgreSQL. "
+                "Run CREATE EXTENSION vector (docker/postgres/init-vector.sql) "
+                "before using knowledge search with database.driver=postgresql."
             )
-            conn.execute(
-                f"""
-                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc
-                ON {_TABLE} (kb_id, doc_id)
-                """
+        if legacy is not None:
+            adopt_legacy_content_tables(database)
+        if table is not None and index is not None:
+            return
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_TABLE} (
+                kb_id TEXT NOT NULL,
+                chunk_id TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                embedding vector NOT NULL,
+                meta_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                PRIMARY KEY (kb_id, chunk_id)
             )
-            conn.commit()
+            """
+        )
+        conn.execute(f"CREATE INDEX IF NOT EXISTS {_DOC_INDEX} ON {_TABLE} (kb_id, doc_id)")
+
+    @classmethod
+    def is_available(cls, database: DatabaseConfig) -> bool:
+        """Validate real index operations without inserting or deleting probe rows."""
+        import psycopg
+
+        try:
+            with psycopg.connect(database.postgresql_conninfo(), connect_timeout=3) as conn:
+                conn.execute("SET LOCAL statement_timeout = '3s'")
+                cls._ensure_schema(conn, database)
+                conn.execute(
+                    f"SELECT kb_id, chunk_id, doc_id, ordinal, text, meta_json, "
+                    f"embedding <=> '[1,0]'::vector FROM {_TABLE} LIMIT 0"
+                )
+                conn.execute(
+                    f"EXPLAIN INSERT INTO {_TABLE} "
+                    "(kb_id, chunk_id, doc_id, ordinal, text, embedding, meta_json) "
+                    "VALUES ('', '', '', 0, '', NULL::vector, '{}'::jsonb)"
+                )
+                conn.execute(f"EXPLAIN DELETE FROM {_TABLE} WHERE kb_id = '' AND doc_id = ''")
+        except (psycopg.Error, RuntimeError):
+            return False
+        return True
 
     def replace_doc_chunks(
         self,

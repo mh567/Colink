@@ -60,6 +60,85 @@ def test_search_knowledge_default_description_is_empty_catalog_fallback() -> Non
 
 
 @pytest.mark.asyncio
+async def test_admin_search_cannot_retrieve_another_users_private_base(
+    tmp_path, monkeypatch
+) -> None:
+    from octop.infra.db.migrate import run_migrations
+    from octop.infra.db.pool import SqlitePool
+    from octop.infra.db.repos.knowledge import KnowledgeRepo
+    from octop.infra.db.repos.settings import SettingsRepo
+    from octop.infra.db.repos.users import UserRepo
+    from octop.infra.knowledge import retrieve
+    from octop.infra.knowledge.index import KnowledgeIndex
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    users = UserRepo(pool)
+    admin = users.create(username="admin", password_hash="h", role="admin")
+    owner = users.create(username="owner", password_hash="h", role="user")
+    repo = KnowledgeRepo(pool)
+    base = repo.create_base(owner_user_id=owner, name="Private")
+    doc = repo.create_document(
+        kb_id=base.id,
+        filename="private.md",
+        content_type="text/markdown",
+        byte_size=1,
+        status="ready",
+    )
+    KnowledgeIndex(base.id).replace_doc_chunks(doc.id, ["private information"], [[1.0, 0.0]])
+    services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    monkeypatch.setattr(retrieve, "assert_knowledge_usable", lambda *_args: None)
+    monkeypatch.setattr(
+        retrieve, "embed_intranet_knowledge_query", AsyncMock(return_value=[[1.0, 0.0]])
+    )
+    tool = _tool_by_name(build_knowledge_tools(services), "search_knowledge")
+
+    with _configurable(user=str(admin), user_is_admin=True, knowledge_base_ids=[base.id]):
+        result = await tool.ainvoke({"query": "information"})
+
+    assert "private information" not in result
+    assert "private.md" not in result
+
+
+@pytest.mark.asyncio
+async def test_search_refuses_public_embedding_endpoint(monkeypatch) -> None:
+    import httpx
+
+    from octop.infra.knowledge import retrieve
+
+    settings = {
+        "knowledge_embedding_backend": "remote",
+        "knowledge_embedding_model": "embed",
+        "knowledge_embedding_provider_id": "1",
+    }
+    provider = SimpleNamespace(base_url="http://8.8.8.8/v1", api_key="secret")
+    services = SimpleNamespace(
+        settings_repo=SimpleNamespace(get=settings.get),
+        provider_repo=SimpleNamespace(get=lambda _id: provider),
+        knowledge_repo=SimpleNamespace(list_visible=lambda _id: []),
+    )
+    monkeypatch.setattr(retrieve, "assert_knowledge_usable", lambda *_args: None)
+    sent = []
+
+    def reject(_transport, request):
+        sent.append(request.url)
+        raise AssertionError("unexpected embedding request")
+
+    async def reject_async(transport, request):
+        return reject(transport, request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reject)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_async)
+    tool = _tool_by_name(build_knowledge_tools(services), "search_knowledge")
+    with _configurable(user="1", knowledge_base_ids=["kb"]):
+        result = await tool.ainvoke({"query": "private query"})
+
+    assert sent == []
+    assert "Knowledge search failed" in result
+
+
+@pytest.mark.asyncio
 async def test_search_knowledge_requires_selected_bases() -> None:
     services = SimpleNamespace(
         knowledge_repo=MagicMock(),

@@ -339,15 +339,29 @@ async def restore_backup_file(
     _raise_if_backup_busy()
     safe = normalize_backup_filename(filename)
     async with hold_backup_lock("restore"):
-        result = await asyncio.to_thread(
-            _restore_stored_backup,
-            paths=server.paths,
-            filename=safe,
-            pool=server.services.db,
-            db_config=server.services.config.database,
-            restore_config=restore_config,
-            owner_user_id=int(user.id),
+        runtime = server.app_runtime
+        registry = runtime.agent_registry if runtime is not None else None
+        if registry is not None and any(
+            registry.is_agent_active(row.agent_id) for row in registry.list_rows()
+        ):
+            raise OctopError.localized(ErrorCode.AGENT_BUSY)
+        worker = asyncio.create_task(
+            asyncio.to_thread(
+                _restore_stored_backup,
+                paths=server.paths,
+                filename=safe,
+                pool=server.services.db,
+                db_config=server.services.config.database,
+                restore_config=restore_config,
+                owner_user_id=int(user.id),
+            )
         )
+        try:
+            result = await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            await worker
+            await _rehydrate_runtime_after_restore(server)
+            raise
         await _rehydrate_runtime_after_restore(server)
     server.services.audit_repo.write(
         actor=getattr(user, "username", None) or ACTOR_ADMIN,

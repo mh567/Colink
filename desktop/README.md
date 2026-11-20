@@ -124,6 +124,8 @@ IPC bridge instead of the HTTP runtime transport. macOS 12+.
 - 分别确认覆盖和删除，只有覆盖目标的内容发生变化，只有删除目标消失。同一任务重试返回原结果。
 - 弹窗打开后撤销当前设备或动作权限，再确认操作，目标文件保持原样。
 
+可在专用 Linux 测试用户下，从 `desktop/src` 运行 `go test -run '^TestLiveManagedDirectoryReturnsAbsolutePath$' .`（按目标平台构建配置添加构建标签），验证设备接入后能打开受管目录。配置 `COLINK_FILEOPS_TEST_SERVER`（与已安装服务一致的测试 HTTPS 地址）、`COLINK_FILEOPS_TEST_USERNAME`、`COLINK_FILEOPS_TEST_PASSWORD_FILE` 和 `COLINK_FILEOPS_TEST_DEVICE_KEY_FILE`。设备密钥必须是专用测试服务器上已审批、当前未连接的独立设备密钥，使用权限为 `0600` 的绝对路径。测试不创建、覆盖或删除办公文件；上述确认流程仍须在桌面上验收。
+
 ## Icons
 
 | File | Used for | Rule |

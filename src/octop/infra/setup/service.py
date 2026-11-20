@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from xml.sax.saxutils import escape
 
 from octop.config import load_config
 from octop.infra.errors import corrupt_config_error
@@ -180,6 +181,10 @@ def resolve_octop_executable(home: Path | None = None) -> Path:
     for candidate in (
         Path(sys.executable).parent / "octop",
         Path(sys.executable).parent / "octop.exe",
+        Path(sys.executable).parent.parent / "bin" / "octop",
+        Path(sys.executable).parent.parent / "bin" / "octop.exe",
+        Path(sys.executable).parent.parent.parent / "bin" / "octop",
+        Path(sys.executable).parent.parent.parent / "bin" / "octop.exe",
     ):
         if candidate.is_file():
             return candidate
@@ -378,6 +383,12 @@ def is_service_installed(
     return unit_path(mode, scope=scope, run_as_user=run_as_user).is_file()
 
 
+def _systemd_quote(value: str) -> str:
+    value = value.replace("\\", r"\\").replace('"', r"\"").replace("%", "%%")
+    value = value.replace("\n", r"\n").replace("\r", r"\r").replace("\t", r"\t")
+    return f'"{value}"'
+
+
 def render_systemd_unit(runtime: ServiceRuntime, *, user_unit: bool | None = None) -> str:
     if user_unit is None:
         user_unit = runtime.scope == "user"
@@ -391,12 +402,16 @@ def render_systemd_unit(runtime: ServiceRuntime, *, user_unit: bool | None = Non
         user_line = f"User={runtime.run_as_user}\n"
     wanted_by = "default.target" if user_unit else "multi-user.target"
     env_lines = (
-        f'Environment="HOME={account_home}"\n'
-        f"Environment=OCTOP_HOME={runtime.home}\n"
+        f"Environment={_systemd_quote(f'HOME={account_home}')}\n"
+        f"Environment={_systemd_quote(f'OCTOP_HOME={runtime.home}')}\n"
         "Environment=OCTOP_SERVICE_MODE=systemd\n"
     )
+    env_map = getattr(os, "environ", None) or {}
     if user_unit:
         env_lines += "Environment=OCTOP_SYSTEMD_USER=1\n"
+    for name in ("OCTOP_GREEN_PACKAGES", "OPENSSL_armcap"):
+        if name in env_map:
+            env_lines += f"Environment={_systemd_quote(f'{name}={env_map[name]}')}\n"
     nofile = _user_nofile_cap() if user_unit else SERVICE_NOFILE_LIMIT
     nofile_line = f"LimitNOFILE={nofile}\n" if nofile is not None else ""
     return (
@@ -408,7 +423,7 @@ def render_systemd_unit(runtime: ServiceRuntime, *, user_unit: bool | None = Non
         "Type=simple\n"
         f"{user_line}"
         f"{env_lines}"
-        f"ExecStart={runtime.octop_bin} run\n"
+        f"ExecStart={_systemd_quote(str(runtime.octop_bin))} run\n"
         "Restart=on-failure\n"
         "RestartSec=5\n"
         "TimeoutStopSec=30\n"
@@ -426,13 +441,32 @@ def render_launchd_plist(runtime: ServiceRuntime) -> str:
     plists; launchd rejects it for user-domain agents and the agent runs as
     the logged-in user automatically.
     """
-    log_path = runtime.home / "logs" / "octop.log"
-    account_home = _account_home(runtime.run_as_user)
+    log_path = escape(str(runtime.home / "logs" / "octop.log"))
+    account_home = escape(str(_account_home(runtime.run_as_user)))
+    home = escape(str(runtime.home))
     user_block = (
-        f"  <key>UserName</key>\n  <string>{runtime.run_as_user}</string>\n"
+        f"  <key>UserName</key>\n  <string>{escape(runtime.run_as_user)}</string>\n"
         if runtime.scope == "system"
         else ""
     )
+    env_dict_lines = (
+        "  <key>EnvironmentVariables</key>\n"
+        "  <dict>\n"
+        f"    <key>HOME</key>\n"
+        f"    <string>{account_home}</string>\n"
+        f"    <key>OCTOP_HOME</key>\n"
+        f"    <string>{home}</string>\n"
+        "    <key>OCTOP_SERVICE_MODE</key>\n"
+        "    <string>launchd</string>\n"
+    )
+    env_map = getattr(os, "environ", None) or {}
+    for name in ("OCTOP_GREEN_PACKAGES", "OPENSSL_armcap"):
+        if name in env_map:
+            env_dict_lines += (
+                f"    <key>{name}</key>\n    <string>{escape(env_map[name])}</string>\n"
+            )
+    env_dict_lines += "  </dict>\n"
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -444,20 +478,12 @@ def render_launchd_plist(runtime: ServiceRuntime) -> str:
         f"{user_block}"
         "  <key>ProgramArguments</key>\n"
         "  <array>\n"
-        f"    <string>{runtime.octop_bin}</string>\n"
+        f"    <string>{escape(str(runtime.octop_bin))}</string>\n"
         "    <string>run</string>\n"
         "  </array>\n"
-        "  <key>EnvironmentVariables</key>\n"
-        "  <dict>\n"
-        f"    <key>HOME</key>\n"
-        f"    <string>{account_home}</string>\n"
-        f"    <key>OCTOP_HOME</key>\n"
-        f"    <string>{runtime.home}</string>\n"
-        "    <key>OCTOP_SERVICE_MODE</key>\n"
-        "    <string>launchd</string>\n"
-        "  </dict>\n"
+        f"{env_dict_lines}"
         f"  <key>WorkingDirectory</key>\n"
-        f"  <string>{runtime.home}</string>\n"
+        f"  <string>{home}</string>\n"
         "  <key>RunAtLoad</key>\n"
         "  <true/>\n"
         "  <key>KeepAlive</key>\n"

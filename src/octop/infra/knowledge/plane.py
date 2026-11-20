@@ -35,3 +35,9 @@ def open_knowledge_index(services: Any, kb_id: str) -> KnowledgeIndex | PgVector
     if database is None:
         return KnowledgeIndex(kb_id)
     return PgVectorKnowledgeIndex(kb_id, database)
+
+
+def pgvector_available(services: Any) -> bool:
+    """Check that the app connection can read and write the vector index."""
+    database = postgres_database(services)
+    return database is None or PgVectorKnowledgeIndex.is_available(database)

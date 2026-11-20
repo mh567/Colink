@@ -24,9 +24,18 @@ if TYPE_CHECKING:
     from octop.infra.agents.providers.host_factory import HostModelFactory
 
 DEVICE_TIMEOUT_SECONDS = 15
+KNOWLEDGE_IMPORT_TIMEOUT_SECONDS = 120
 LocalFileAction = Literal["read", "create", "overwrite", "delete"]
 LocalFileOutputAction = Literal["create", "overwrite"]
 PptxSourceFormat = Literal["pptx", "docx"]
+
+
+@dataclass
+class KnowledgeImportTicket:
+    kb_id: str
+    path: str
+    expires_at: float
+    token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
 
 
 @dataclass
@@ -40,6 +49,7 @@ class DeviceConnection:
     disconnected: asyncio.Future[ErrorCode] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future(), repr=False
     )
+    knowledge_import: KnowledgeImportTicket | None = field(default=None, repr=False)
 
 
 class DeviceManager:
@@ -171,6 +181,80 @@ class DeviceManager:
         self._require_native_grants(
             user, device_id, session_token, required, operation="local browser operation"
         )
+
+    def authorize_knowledge_import(
+        self, user: User, device_id: str, session_token: str, filename: str
+    ) -> None:
+        """Require the employee's connected device and existing local read grants."""
+        from pathlib import Path
+
+        required = {"knowledge_bases", "local_files_read"}
+        suffix = Path(filename).suffix.lower()
+        feature = {
+            ".docx": "local_docx",
+            ".doc": "local_docx",
+            ".wps": "local_docx",
+            ".xlsx": "local_xlsx",
+            ".xlsm": "local_xlsx",
+            ".xls": "local_xlsx",
+            ".csv": "local_xlsx",
+            ".tsv": "local_xlsx",
+            ".pptx": "local_pptx",
+            ".pdf": "local_pdf",
+            ".png": "local_ocr",
+            ".jpg": "local_ocr",
+            ".jpeg": "local_ocr",
+            ".webp": "local_ocr",
+        }.get(suffix)
+        if feature:
+            required.add(feature)
+        self._require_native_grants(
+            user, device_id, session_token, required, operation="knowledge import"
+        )
+
+    def confirm_knowledge_import(
+        self,
+        user: User,
+        device_id: str,
+        session_token: str,
+        *,
+        kb_id: str,
+        path: str,
+        filename: str,
+    ) -> str:
+        from octop.infra.knowledge.service import KnowledgeService
+
+        self.authorize_knowledge_import(user, device_id, session_token, filename)
+        KnowledgeService(self.services).get_private_import_base(kb_id, actor_user_id=user.id)
+        ticket = KnowledgeImportTicket(
+            kb_id, path, time.monotonic() + KNOWLEDGE_IMPORT_TIMEOUT_SECONDS
+        )
+        self._connections[device_id].knowledge_import = ticket
+        return ticket.token
+
+    def consume_knowledge_import(
+        self,
+        user: User,
+        device_id: str,
+        session_token: str,
+        *,
+        kb_id: str,
+        path: str,
+        filename: str,
+        token: str,
+    ) -> None:
+        self.authorize_knowledge_import(user, device_id, session_token, filename)
+        connection = self._connections[device_id]
+        ticket = connection.knowledge_import
+        if (
+            ticket is None
+            or ticket.expires_at <= time.monotonic()
+            or ticket.kb_id != kb_id
+            or ticket.path != path
+            or not secrets.compare_digest(ticket.token.encode(), token.encode())
+        ):
+            raise OctopError(ErrorCode.FORBIDDEN, "knowledge import confirmation required")
+        connection.knowledge_import = None
 
     def authorize_docx(
         self,

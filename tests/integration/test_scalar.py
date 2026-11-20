@@ -23,6 +23,28 @@ async def test_api_docs_endpoint(tmp_octop_home: Path) -> None:
             spec = c.get("/api/openapi.json")
             assert spec.status_code == 200
             assert spec.json()["info"]["title"] == "Octop API"
+            paths = spec.json()["paths"]
+            for path, result_model in (
+                ("/api/knowledge-bases/citation-status", "KnowledgeCitationStatusResponse"),
+                ("/api/devices/{device_id}/knowledge/authorize", "KnowledgeImportAuthorization"),
+            ):
+                operation = paths[path]["post"]
+                assert operation["summary"]
+                schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+                assert schema["$ref"].endswith(f"/{result_model}")
+
+            upload = paths["/api/knowledge-bases/{kb_id}/documents"]["post"]
+            headers = {
+                item["name"]: item for item in upload["parameters"] if item["in"] == "header"
+            }
+            for name in (
+                "X-Colink-Device-Id",
+                "X-Colink-Device-Session",
+                "X-Colink-Knowledge-Import",
+            ):
+                assert headers[name]["required"] is True
+                assert headers[name]["description"]
+            assert upload["description"]
 
 
 async def test_api_docs_disabled_by_default(tmp_octop_home: Path) -> None:

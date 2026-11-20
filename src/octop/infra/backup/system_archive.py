@@ -14,7 +14,19 @@ from pathlib import Path
 from typing import Any
 
 from octop import __version__
-from octop.config import DatabaseConfig
+from octop.config import DatabaseConfig, OctopConfig
+from octop.infra.agents.memory.backend import open_memory_kwargs
+from octop.infra.agents.memory.client import invalidate_cached_memory, memory_io_lock
+from octop.infra.agents.memory.personal import (
+    forgotten_ids,
+    memory_restore_marker,
+    prune_restored_memories,
+)
+from octop.infra.agents.memory.thread_cleanup import (
+    agent_config_from_row,
+    memory_namespace,
+    workspace_for_agent_row,
+)
 from octop.infra.agents.workspace.dir import (
     system_files_path_from_config,
     workspace_dir_from_config_json,
@@ -446,7 +458,7 @@ def restore_system_backup(
     performing the restore) receives all imported ``user_id`` ownership. When
     omitted, the first preserved admin (else first preserved user) is used.
     """
-    with tempfile.TemporaryDirectory() as tmp:
+    with memory_io_lock, tempfile.TemporaryDirectory() as tmp:
         extracted = Path(tmp) / "extracted"
         _extract_archive(source, extracted)
         manifest = _extract_manifest_from_dir(extracted)
@@ -490,6 +502,7 @@ def restore_system_backup(
         db_path = extracted / manifest.db_file
         if not db_path.is_file():
             raise OctopError(ErrorCode.SLASH_BAD_ARGS, "backup archive missing database file")
+        forget_ids = forgotten_ids(paths.root)
 
         saved_chats = (
             capture_chat_tables(pool, Path(tmp) / "preserved-chats.sqlite")
@@ -519,6 +532,12 @@ def restore_system_backup(
                     )
 
         ownership_remap: dict[str, int] | None = None
+        restore_marker = memory_restore_marker(paths.root)
+        if forget_ids:
+            # The restored DB and the memory cleanup cannot share a transaction.
+            restore_marker.touch()
+        elif restore_marker.exists():
+            raise RuntimeError("Cannot finish memory restore without the local forget ledger")
         if pool.dialect == "postgresql":
             restore_postgres(db_config.postgresql_conninfo(), db_path)
         else:
@@ -606,6 +625,25 @@ def restore_system_backup(
             shutil.copy2(src_file, dest)
             restored_workspaces += 1
 
+        if forget_ids:
+            rows = agent_repo.list_all(include_disabled=True)
+            namespaces = [memory_namespace(row.agent_id) for row in rows]
+            config = OctopConfig(database=db_config)
+            for row, canonical in zip(rows, namespaces, strict=True):
+                ids = forget_ids.get(row.agent_id)
+                if not ids:
+                    continue
+                if namespaces.count(canonical) != 1:
+                    raise OctopError.localized(ErrorCode.FORBIDDEN)
+                ns, backend, backend_cfg = open_memory_kwargs(
+                    agent_id=row.agent_id,
+                    cfg=agent_config_from_row(row),
+                    octop_config=config,
+                    workspace_dir=workspace_for_agent_row(row, paths=paths),
+                )
+                prune_restored_memories(ns, backend, backend_cfg, ids)
+        invalidate_cached_memory()
+
         restored_skill_package_files = 0
         if manifest.includes_skill_packages:
             restored_skill_package_files = _replace_tree_from_archive(
@@ -634,6 +672,8 @@ def restore_system_backup(
             restore_preserved_chats(pool, saved_chats) if saved_chats is not None else (0, 0)
         )
         schema_version = _current_version(pool)
+        if forget_ids:
+            restore_marker.unlink()
 
     result: dict[str, Any] = {
         "schema_version": schema_version,

@@ -259,6 +259,8 @@
     "KNOWLEDGE_FEATURE_DISABLED": "管理员尚未启用知识库功能。",
     "KNOWLEDGE_PREREQUISITES_RESTART_REQUIRED": "知识库的向量模型或依赖已安装，但当前进程还加载不到，需要重启服务后生效。",
     "KNOWLEDGE_PREREQUISITES_FAILED": "知识库的向量模型或依赖尚未就绪。",
+    "KNOWLEDGE_VECTOR_UNAVAILABLE": "PostgreSQL 向量索引不可用，请联系管理员检查 vector 扩展和数据库权限。",
+    "KNOWLEDGE_WITHDRAWAL_IN_PROGRESS": "该知识库路径正在撤回，清理完成后请重试。",
     "KNOWLEDGE_NOT_FOUND": "未找到知识库或文档。",
     "KNOWLEDGE_FORBIDDEN": "您没有此知识库的访问权限。",
     "KNOWLEDGE_DOC_LIMIT": "每个知识库最多可包含 100 个文档。",
@@ -534,8 +536,8 @@
     "maxDocumentsHint": "本知识库可容纳的最大文档数，0 表示不限制，默认为 100。",
     "documentTooLarge": "单个文档不能超过 {{sizeMb}} MB。",
     "baseLimitReached": "每个用户最多可创建 {{count}} 个知识库。",
-    "uploadHint": "支持文本（md / txt / rst / html / json / yaml 等）、表格（csv / tsv / xls / xlsx / xlsm）、pdf / doc / wps / docx / pptx，单文件不超过 {{sizeMb}} MB。可直接拖到本页上传。",
-    "uploadHintOcr": "另支持 png / jpg / webp 图片及扫描 PDF OCR，单文件不超过 {{sizeMb}} MB。可直接拖到本页上传。",
+    "uploadHint": "支持文本、表格、PDF、DOCX 和 PPTX 等格式，单文件不超过 {{sizeMb}} MB。请从本人已授权目录选择。",
+    "uploadHintOcr": "另支持图片及扫描 PDF OCR，单文件不超过 {{sizeMb}} MB。请从本人已授权目录选择。",
     "dropToUpload": "将文件拖放到此处上传",
     "dropUploadUnsupported": "已跳过 {{count}} 个不支持的文件",
     "viewCard": "卡片",
@@ -581,6 +583,12 @@
       "languages": "语言"
     },
     "upload": "上传文档",
+    "importTitle": "确认导入知识库",
+    "importConfirm": "选择文件",
+    "importScope": "导入后，文件副本、提取正文和检索索引将保存在企业服务端，必要内容将发送至企业向量服务。普通任务附件不会自动加入知识库。",
+    "importDirectory": "已授权目录",
+    "importSelectDirectory": "请选择已授权目录",
+    "importDeviceRequired": "请先连接本人获准的桌面设备并授权目录。",
     "createFolder": "新建文件夹",
     "createFolderFailed": "创建文件夹失败",
     "createFile": "新建文件",
@@ -625,13 +633,15 @@
       "pending": "待处理",
       "processing": "处理中",
       "ready": "已就绪",
-      "failed": "失败"
+      "failed": "失败",
+      "withdrawn": "已撤回，清理未完成"
     },
     "statusesShort": {
       "pending": "待索引",
       "processing": "索引中",
       "ready": "就绪",
-      "failed": "失败"
+      "failed": "失败",
+      "withdrawn": "已撤回"
     },
     "deleteConfirm": "删除此知识库及其所有文档？",
     "deleteDocumentConfirm": "删除此文档？",
@@ -1612,7 +1622,7 @@
     "unpin": "取消置顶",
     "deleteSessionConfirm": "确定删除这段会话吗？删除后无法恢复。",
     "deleteSessionTitle": "删除这段会话？",
-    "deleteSessionBody": "删除后无法恢复。会话会马上从列表里消失。数据库文件要等整理之后才会变小。",
+    "deleteSessionBody": "删除后无法恢复。会话与中断检查点会从列表中移除。注意：清理会话不等于遗忘已保存的长期记忆，法定90天安全审计日志亦会保留。数据库文件要等整理之后才会变小。",
     "deleteSessionAndCompactHint": "删除并整理：现在整理，这个专家会暂停一会儿。",
     "deleteSessionOnlyHint": "只删除：先不整理。专家空闲后，定时维护会把这次空出来的空间收回来。",
     "deleteSessionAndCompact": "删除并整理",
@@ -1838,6 +1848,7 @@
     "fileWorkspaceHint": "专家已生成或编辑文件",
     "fileSwitch": "切换文件",
     "citations": "来源",
+    "citationWithdrawn": "已撤回",
     "citationPreview": "文档预览",
     "citationViewInKnowledgeBase": "在知识库中查看",
     "citationPreviewFailed": "打开文档预览失败",
@@ -4530,6 +4541,7 @@
     "extractConfig": {
       "title": "记忆提炼时机",
       "subtitle": "控制何时把对话记忆提炼成长期记忆",
+      "captureLabel": "自动采集对话",
       "enableLabel": "自动提炼记忆",
       "modeIdle": "对话空闲后提炼",
       "modeIdleHint": "等对话安静一段时间再提炼，记忆质量最好（推荐）",
@@ -4548,7 +4560,7 @@
       "title": "记忆设置",
       "description": "控制这个专家是否使用记忆，以及对话内容何时被整理成长期记忆。",
       "storageTitle": "存储记忆",
-      "storageDescription": "允许专家读取已有记忆，并从新对话中持续积累记忆。",
+      "storageDescription": "允许专家读取和手动保存记忆。",
       "enabled": "已开启",
       "disabled": "已关闭",
       "disabledTitle": "关闭后专家将不再使用记忆",
@@ -4668,7 +4680,8 @@
     },
     "list": {
       "kind": "类型",
-      "importanceMin": "重要程度不低于"
+      "importanceMin": "重要程度不低于",
+      "searchPlaceholder": "搜索关键词或主题..."
     },
     "tree": {
       "title": "按主题浏览",
@@ -4679,6 +4692,8 @@
       "viewSummaryTip": "查看这个主题的摘要",
       "deprecateTooltip": "弃用这条记忆",
       "deprecate": "弃用这条记忆",
+      "forgetTooltip": "彻底遗忘这条记忆",
+      "forget": "彻底遗忘这条记忆",
       "actions": "操作"
     },
     "create": {
@@ -4727,6 +4742,13 @@
       "ok": "弃用",
       "success": "已弃用，Octop 将不再使用这条记忆",
       "failed": "操作失败：{{message}}"
+    },
+    "forget": {
+      "title": "彻底遗忘这条记忆？",
+      "description": "该操作将从数据库中物理删除该记忆事实，并清除关联事件、索引与内部记录。已清除的记忆无法恢复，且未来即便还原旧备份也将保持遗忘。注意：此操作不删除法定90天安全审计日志，亦不影响会话记录。",
+      "ok": "彻底遗忘",
+      "success": "已彻底遗忘该记忆并清理关联记录",
+      "failed": "遗忘失败：{{message}}"
     },
     "atomDetail": "记忆详情",
     "entitySummary": "主题摘要",

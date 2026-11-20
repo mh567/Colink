@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Button,
+  Input,
   Progress,
   Select,
   Space,
@@ -30,7 +31,7 @@ import {
 import MemoryLayerView from "./shared/MemoryLayerView";
 import LineageStrip from "./shared/LineageStrip";
 import MemoryPipelineEmpty from "./shared/MemoryPipelineEmpty";
-import { confirmDeprecateAtom } from "./shared/deprecateAtom";
+import { confirmForgetAtom } from "./shared/forgetAtom";
 import { confirmEditAtom } from "./shared/editAtom";
 import CreateAtomModal from "./shared/createAtom";
 
@@ -65,6 +66,7 @@ export default function AtomsList({ agentId }: Props) {
   const [loading, setLoading] = useState(true);
   const [kind, setKind] = useState<AtomKind | "">("");
   const [importance, setImportance] = useState<Importance | "">("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<AtomItem | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [entities, setEntities] = useState<EntityItem[]>([]);
@@ -78,6 +80,7 @@ export default function AtomsList({ agentId }: Props) {
     };
     if (kind) body.candidate_type = kind;
     if (importance) body.importance_min = importance;
+    if (searchQuery.trim()) body.query = searchQuery.trim();
     try {
       const r = await memoryDashboardApi.listAtoms(agentId, body);
       setItems(r.items);
@@ -85,7 +88,7 @@ export default function AtomsList({ agentId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [agentId, page, kind, importance]);
+  }, [agentId, page, kind, importance, searchQuery]);
 
   useEffect(() => {
     if (!agentId) return;
@@ -100,8 +103,8 @@ export default function AtomsList({ agentId }: Props) {
       .catch(() => setEntities([]));
   }, [agentId, load]);
 
-  const handleDeprecate = (atom: AtomItem) => {
-    confirmDeprecateAtom({
+  const handleForget = (atom: AtomItem) => {
+    confirmForgetAtom({
       agentId,
       atom,
       onSuccess: () => {
@@ -124,9 +127,18 @@ export default function AtomsList({ agentId }: Props) {
 
   const toolbar = (
     <>
+      <Input.Search
+        placeholder={t("memory.list.searchPlaceholder", "搜索关键词或主题...")}
+        allowClear
+        style={{ width: 200 }}
+        onSearch={(v) => {
+          setSearchQuery(v);
+          setPage(1);
+        }}
+      />
       <span style={{ color: "#595959" }}>{t("memory.list.kind", "类型")}:</span>
       <Select
-        style={{ width: 160 }}
+        style={{ width: 140 }}
         value={kind}
         onChange={(v) => {
           setKind(v);
@@ -138,7 +150,7 @@ export default function AtomsList({ agentId }: Props) {
         {t("memory.list.importanceMin", "重要程度不低于")}:
       </span>
       <Select
-        style={{ width: 140 }}
+        style={{ width: 130 }}
         value={importance}
         onChange={(v) => {
           setImportance(v);
@@ -158,7 +170,7 @@ export default function AtomsList({ agentId }: Props) {
 
   // Guided empty only when no filter is active — a filtered-out list must
   // keep the plain empty so it doesn't read as "distillation pending".
-  const noFilterActive = !kind && !importance;
+  const noFilterActive = !kind && !importance && !searchQuery.trim();
 
   return (
     <>
@@ -226,12 +238,12 @@ export default function AtomsList({ agentId }: Props) {
                   </span>
                 </Tooltip>
                 <Tooltip
-                  title={t("memory.tree.deprecateTooltip", "弃用这条记忆")}
+                  title={t("memory.tree.forgetTooltip", "彻底遗忘这条记忆")}
                 >
                   <span
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleDeprecate(a);
+                      handleForget(a);
                     }}
                     style={{
                       color: "#ff4d4f",
@@ -303,8 +315,8 @@ export default function AtomsList({ agentId }: Props) {
                   <Button onClick={() => handleEdit(atom)}>
                     {t("memory.edit.action", "编辑这条记忆")}
                   </Button>
-                  <Button danger onClick={() => handleDeprecate(atom)}>
-                    {t("memory.tree.deprecate", "弃用这条记忆")}
+                  <Button danger onClick={() => handleForget(atom)}>
+                    {t("memory.tree.forget", "彻底遗忘这条记忆")}
                   </Button>
                 </Space>
               </>

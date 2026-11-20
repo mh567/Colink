@@ -14,7 +14,7 @@ from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.settings import SettingsRepo
 from octop.infra.db.repos.users import UserRepo
-from octop.infra.knowledge import jobs
+from octop.infra.knowledge import jobs, ocr
 from octop.infra.knowledge.files import write_document
 from octop.infra.knowledge.index import KnowledgeIndex
 
@@ -77,12 +77,13 @@ def test_process_document_marks_empty_extract_as_failed(
         jobs, "embed_knowledge_texts", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError())
     )
 
-    with pytest.raises(RuntimeError, match="Knowledge indexing failed"):
+    with pytest.raises(RuntimeError, match="Could not extract text"):
         jobs.process_document(services, kb.id, doc.id)
 
     updated = repo.get_document(doc.id)
     assert updated is not None
     assert updated.status == "failed"
+    assert updated.error_message == "knowledge.document_parse_failed"
     assert updated.chunk_count == 0
 
 
@@ -116,7 +117,39 @@ def test_process_document_indexes_chunks_and_marks_ready(
     assert KnowledgeIndex(kb.id).search([1.0, 0.0], 1)[0].doc_id == doc.id
 
 
-def test_process_document_indexes_ocr_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_removal_during_embedding_does_not_restore_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from octop.infra.knowledge.service import KnowledgeService
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    kb = repo.create_base(owner_user_id=owner, name="Private")
+    doc = repo.create_document(
+        kb_id=kb.id, filename="sample.txt", content_type="text/plain", byte_size=6
+    )
+    write_document(kb.id, doc.id, doc.filename, b"secret")
+    services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    monkeypatch.setattr(jobs, "assert_knowledge_usable", lambda *_args: None)
+
+    def remove_during_embedding(*_args):
+        KnowledgeService(services).delete_document(kb.id, doc.id, actor_user_id=owner)
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(jobs, "embed_knowledge_texts", remove_during_embedding)
+    jobs.process_document(services, kb.id, doc.id)
+
+    assert repo.get_document(doc.id) is None
+    assert KnowledgeIndex(kb.id).list_doc_chunks(doc.id) == []
+
+
+@pytest.mark.parametrize("backend", ["onnx", "remote"])
+def test_process_private_scan_requires_local_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
     monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
     pool = SqlitePool(tmp_path / "octop.db")
     run_migrations(pool)
@@ -128,15 +161,38 @@ def test_process_document_indexes_ocr_text(tmp_path: Path, monkeypatch: pytest.M
     )
     write_document(kb.id, doc.id, doc.filename, b"image")
     services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    services.settings_repo.set("knowledge_ocr_enabled", "true")
+    services.settings_repo.set("knowledge_ocr_backend", backend)
     monkeypatch.setattr(jobs, "assert_knowledge_usable", lambda *_args: None)
-    monkeypatch.setattr(jobs, "optional_ocr_extractor", lambda _services: lambda _path: "发票")
-    monkeypatch.setattr(jobs, "embed_knowledge_texts", lambda _services, _texts: [[1.0, 0.0]])
+    monkeypatch.setattr(ocr, "local_ocr_deps_available", lambda: True)
+    monkeypatch.setattr(ocr, "_extract_local", lambda _path: "发票")
+    monkeypatch.setattr(
+        ocr, "_provider_for_config", lambda *_args: pytest.fail("unexpected remote OCR")
+    )
+    texts: list[str] = []
+
+    def embed(_services, chunks):
+        texts.extend(chunks)
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(jobs, "embed_knowledge_texts", embed)
+
+    if backend == "remote":
+        with pytest.raises(RuntimeError):
+            jobs.process_document(services, kb.id, doc.id)
+        updated = repo.get_document(doc.id)
+        assert updated is not None
+        assert updated.status == "failed"
+        assert updated.error_message == "knowledge.private_ocr_local_required"
+        assert texts == []
+        return
 
     jobs.process_document(services, kb.id, doc.id)
 
     updated = repo.get_document(doc.id)
     assert updated is not None
     assert updated.status == "ready"
+    assert texts == ["发票"]
     assert KnowledgeIndex(kb.id).search([1.0, 0.0], 1)[0].text == "发票"
 
 
@@ -225,6 +281,7 @@ def test_failed_indexing_preserves_existing_vectors_and_records_safe_failure(
     assert "private-token" not in str(error.value)
     updated = repo.get_document(doc.id)
     assert updated.status == "failed"
-    assert updated.error_message == "knowledge.indexing_failed"
+    reason = "embedding_dimension_mismatch" if mode == "dimension" else "embedding_failed"
+    assert updated.error_message == f"knowledge.{reason}"
     assert repo.get_base(kb.id).embedding_dim == 2
     assert KnowledgeIndex(kb.id).list_doc_chunks(doc.id) == [(0, "old valid content")]

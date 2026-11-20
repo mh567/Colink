@@ -55,9 +55,14 @@ const MAX_AUX_TOKENS = 65536;
 export default function MemorySettings({ agentId }: Props) {
   const { t } = useTranslation();
   const loadFailedMessage = t("memory.settings.loadFailed", "记忆设置加载失败");
+  const storageLabel = t("memory.settings.storageTitle", "存储记忆");
+  const captureLabel = t("memory.extractConfig.captureLabel", "自动采集对话");
+  const extractLabel = t("memory.extractConfig.enableLabel", "自动提炼记忆");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [captureEnabled, setCaptureEnabled] = useState(false);
+  const [extractEnabled, setExtractEnabled] = useState(false);
   const [mode, setMode] = useState<ExtractTriggerMode>("idle");
   const [idleMinutes, setIdleMinutes] = useState(5);
   const [intervalHours, setIntervalHours] = useState(6);
@@ -98,6 +103,8 @@ export default function MemorySettings({ agentId }: Props) {
 
   const applyConfig = useCallback((cfg: ExtractConfig) => {
     setMemoryEnabled(cfg.memory_enabled ?? true);
+    setCaptureEnabled(cfg.capture_enabled ?? false);
+    setExtractEnabled(cfg.extract_on_session_end ?? false);
     setMode(cfg.extract_trigger_mode);
     setAuxModel(defaultModelToForm(cfg.aux_model));
     setSupportedCallOptions(cfg.supported_call_options);
@@ -185,7 +192,8 @@ export default function MemorySettings({ agentId }: Props) {
     try {
       const cfg = await memoryDashboardApi.putExtractConfig(agentId, {
         memory_enabled: memoryEnabled,
-        extract_on_session_end: true,
+        capture_enabled: captureEnabled,
+        extract_on_session_end: extractEnabled,
         extract_trigger_mode: mode,
         extract_idle_seconds: Math.round(
           Math.max(MIN_IDLE_MINUTES, idleMinutes) * 60,
@@ -244,13 +252,11 @@ export default function MemorySettings({ agentId }: Props) {
               <Database size={18} />
             </span>
             <div>
-              <div className={styles.settingTitle}>
-                {t("memory.settings.storageTitle", "存储记忆")}
-              </div>
+              <div className={styles.settingTitle}>{storageLabel}</div>
               <div className={styles.settingDescription}>
                 {t(
                   "memory.settings.storageDescription",
-                  "允许 Agent 读取已有记忆，并从新对话中持续积累记忆。",
+                  "允许专家读取和手动保存记忆。",
                 )}
               </div>
             </div>
@@ -263,7 +269,11 @@ export default function MemorySettings({ agentId }: Props) {
                 ? t("memory.settings.enabled", "已开启")
                 : t("memory.settings.disabled", "已关闭")}
             </span>
-            <Switch checked={memoryEnabled} onChange={setMemoryEnabled} />
+            <Switch
+              aria-label={storageLabel}
+              checked={memoryEnabled}
+              onChange={setMemoryEnabled}
+            />
           </div>
         </div>
 
@@ -307,7 +317,28 @@ export default function MemorySettings({ agentId }: Props) {
           </div>
         </div>
 
-        <fieldset className={styles.strategyFields} disabled={!memoryEnabled}>
+        <div className={styles.settingRow}>
+          <span>{captureLabel}</span>
+          <Switch
+            aria-label={captureLabel}
+            checked={captureEnabled}
+            disabled={!memoryEnabled}
+            onChange={setCaptureEnabled}
+          />
+        </div>
+        <div className={styles.settingRow}>
+          <span>{extractLabel}</span>
+          <Switch
+            aria-label={extractLabel}
+            checked={extractEnabled}
+            disabled={!memoryEnabled}
+            onChange={setExtractEnabled}
+          />
+        </div>
+        <fieldset
+          className={styles.strategyFields}
+          disabled={!memoryEnabled || !extractEnabled}
+        >
           <Radio.Group
             value={mode}
             onChange={(event) =>

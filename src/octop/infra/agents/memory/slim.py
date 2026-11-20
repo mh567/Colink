@@ -193,14 +193,22 @@ class MemorySlimCoordinator:
                 loop.call_soon_threadsafe(self._update, values)
 
             def operation() -> dict[str, Any]:
+                from octop.infra.agents.memory.client import memory_io_lock
+                from octop.infra.agents.memory.personal import forgotten_ids
                 from octop.infra.agents.memory.storage import sqlite_store_is_shared
 
                 self._assert_owner(agent_id, owner_id, locale)
                 if sqlite_store_is_shared(registry, agent_id, memory):
                     raise ValueError(tr("memory_storage.shared_sqlite", locale))
-                result = restore_sqlite(
-                    path, str(memory.backend._ns), backup_id, locale=locale, progress=progress
-                )
+                with memory_io_lock:
+                    result = restore_sqlite(
+                        path,
+                        str(memory.backend._ns),
+                        backup_id,
+                        locale=locale,
+                        progress=progress,
+                        forgotten_atom_ids=forgotten_ids(registry.paths.root).get(agent_id, []),
+                    )
                 progress({"phase": "restarting", "report": result})
                 return result
 

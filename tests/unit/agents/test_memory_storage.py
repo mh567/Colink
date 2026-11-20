@@ -24,7 +24,6 @@ def store(tmp_path):
     registry._repos = SimpleNamespace(agent_repo=MagicMock())
     registry._repos.agent_repo.list_all.return_value = [row]
     registry._config = OctopConfig()
-    registry._paths = SimpleNamespace()
     yield coordinator, registry, memory, cfg, cp
     memory._checkpointer.conn.close()
     memory.backend.close()

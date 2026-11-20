@@ -41,6 +41,11 @@ const (
 	copyBrowserOverwriteScope       = "browser.overwritescope"
 	copyFileConfirmTitle            = "file.confirm_title"
 	copyFileConfirmMessage          = "file.confirm_message"
+	copyKnowledgeConfirmTitle       = "knowledge.confirm_title"
+	copyKnowledgeConfirmMessage     = "knowledge.confirm_message"
+	copyKnowledgeCancelled          = "knowledge.cancelled"
+	copyKnowledgeSelectTitle        = "knowledge.select_title"
+	copyKnowledgeOutsideDirectory   = "knowledge.outside_directory"
 	copyFileDelete                  = "file.delete"
 	copyFileDeleteScope             = "file.delete_scope"
 	copyFileOverwrite               = "file.overwrite"
@@ -49,6 +54,7 @@ const (
 	copyFileInvalidPath             = "file.invalid_path"
 	copyFilePathTooLong             = "file.path_too_long"
 	copyFileConfirmationUnavailable = "file.confirmation_unavailable"
+	copyFileNotConfirmed            = "file.not_confirmed"
 	copyFileCheckResult             = "file.check_result"
 	copyFileCheckBackup             = "file.check_backup"
 	copyFileIntentChanged           = "file.intent_changed"
@@ -103,6 +109,11 @@ var desktopCopy = map[Locale]map[string]string{
 		copyBrowserOverwriteScope:       "Replace this file with the downloaded artifact.",
 		copyFileConfirmTitle:            "Confirm file operation",
 		copyFileConfirmMessage:          "Action: %s\nFull path (join the lines without spaces):\n%s\nScope: %s",
+		copyKnowledgeConfirmTitle:       "Confirm knowledge import",
+		copyKnowledgeConfirmMessage:     "File: %s\nKnowledge base: %s\nA copy, extracted text and search index will be stored on the company server. Necessary content will be sent to the configured embedding service.",
+		copyKnowledgeCancelled:          "Knowledge import cancelled",
+		copyKnowledgeSelectTitle:        "Choose a file from the authorized directory",
+		copyKnowledgeOutsideDirectory:   "The selected file is outside the authorized directory.",
 		copyFileDelete:                  "Delete",
 		copyFileDeleteScope:             "Delete this file.",
 		copyFileOverwrite:               "Overwrite",
@@ -111,6 +122,7 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileInvalidPath:             "Choose a path without control characters.",
 		copyFilePathTooLong:             "Shorten the path and try again.",
 		copyFileConfirmationUnavailable: "Open the desktop window and try again.",
+		copyFileNotConfirmed:            "Confirmation was not obtained. Check the system prompt and try again.",
 		copyFileCheckResult:             "Check the target file before starting a new task.",
 		copyFileCheckBackup:             "Check the target and this backup path: %s",
 		copyFileIntentChanged:           "The operation or target changed. Start a new task to confirm it.",
@@ -163,6 +175,11 @@ var desktopCopy = map[Locale]map[string]string{
 		copyBrowserOverwriteScope:       "用本次下载的产物替换此文件。",
 		copyFileConfirmTitle:            "确认文件操作",
 		copyFileConfirmMessage:          "动作：%s\n完整路径（各行直接拼接）：\n%s\n影响范围：%s",
+		copyKnowledgeConfirmTitle:       "确认导入知识库",
+		copyKnowledgeConfirmMessage:     "文件：%s\n知识库：%s\n文件副本、提取正文和检索索引将保存在企业服务端，必要内容将发送至配置的向量服务。",
+		copyKnowledgeCancelled:          "已取消知识库导入",
+		copyKnowledgeSelectTitle:        "从已授权目录选择文件",
+		copyKnowledgeOutsideDirectory:   "所选文件不在已授权目录内。",
 		copyFileDelete:                  "删除",
 		copyFileDeleteScope:             "删除此文件。",
 		copyFileOverwrite:               "覆盖",
@@ -171,6 +188,7 @@ var desktopCopy = map[Locale]map[string]string{
 		copyFileInvalidPath:             "请选择不含控制字符的路径。",
 		copyFilePathTooLong:             "请缩短路径后重试。",
 		copyFileConfirmationUnavailable: "请打开桌面窗口后重试。",
+		copyFileNotConfirmed:            "未获确认。请检查系统提示后重试。",
 		copyFileCheckResult:             "请核对目标文件后再新建任务。",
 		copyFileCheckBackup:             "请核对目标文件和此备份路径：%s",
 		copyFileIntentChanged:           "操作或目标已改变，请新建任务并确认。",

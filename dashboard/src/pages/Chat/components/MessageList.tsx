@@ -42,6 +42,8 @@ import {
 import { prependAnchorShift } from "../utils/prependAnchor";
 import * as chatStore from "../hooks/chatStore";
 import { shouldBlockHistoryRefresh } from "../hooks/wsResumeGate";
+import { collectTurnKnowledgeCitations } from "../../../utils/collectTurnKnowledgeCitations";
+import { KnowledgeCitationStatusProvider } from "./KnowledgeCitationStatusContext";
 import styles from "../index.module.less";
 
 /** Virtualize long threads; short chats keep the simpler DOM path. */
@@ -849,6 +851,16 @@ export default function MessageList(props: MessageListProps) {
       setScrollerMountKey((k) => k + 1);
     }
   }, []);
+  const citationRefsKey = useMemo(
+    () =>
+      JSON.stringify(
+        collectTurnKnowledgeCitations(messages).map(({ kbId, docId }) => ({
+          kb_id: kbId,
+          doc_id: docId,
+        })),
+      ),
+    [messages],
+  );
 
   if (loading && messages.length === 0) {
     return (
@@ -858,7 +870,7 @@ export default function MessageList(props: MessageListProps) {
     );
   }
 
-  return (
+  const messageList = (
     <div ref={wrapperRef} className={styles.messageListWrapper}>
       <TurnTimelineRail
         messages={messages}
@@ -930,5 +942,10 @@ export default function MessageList(props: MessageListProps) {
         onClick={() => scrollToBottom()}
       />
     </div>
+  );
+  return (
+    <KnowledgeCitationStatusProvider refsKey={citationRefsKey}>
+      {messageList}
+    </KnowledgeCitationStatusProvider>
   );
 }
