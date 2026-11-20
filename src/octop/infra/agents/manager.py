@@ -1180,11 +1180,12 @@ class AgentManager:
         try:
             async with self._lifecycle_lock_for(agent_id):
                 live = self._octop_harness_or_none(agent_id)
-                if shared and live is not None:
-                    live.set_memory_access(False)
+                set_mem_access = getattr(live, "set_memory_access", None)
+                if shared and callable(set_mem_access):
+                    set_mem_access(False)
                 self._repos.agent_repo.set_shared(agent_id, shared)
-                if not shared and live is not None:
-                    live.set_memory_access(True)
+                if not shared and callable(set_mem_access):
+                    set_mem_access(True)
         finally:
             self.end_history_backfill(agent_id)
         row = self._repos.agent_repo.get(agent_id)
@@ -4373,7 +4374,7 @@ class AgentManager:
         ):
             memory_settings["memory_extract_on_session_end"] = False
 
-        if row.is_shared:
+        if row.is_shared and "memory_access_enabled" in _HARNESS_AGENT_CONFIG_FIELDS:
             memory_settings["memory_access_enabled"] = False
 
         harness_cfg = HarnessAgentConfig(
@@ -4412,6 +4413,8 @@ class AgentManager:
             **memory_settings,
             **_resolve_memory_backend_kwargs(cfg, workspace_dir=workspace_dir, config=self._config),
         )
+        if not hasattr(harness_cfg, "memory_access_enabled"):
+            object.__setattr__(harness_cfg, "memory_access_enabled", not row.is_shared)
         if "tools_disabled" in _HARNESS_AGENT_CONFIG_FIELDS:
             from octop.infra.agents.settings.tool_catalog import effective_tools_disabled
             from octop.infra.agents.teams import host_tools_disabled
@@ -4474,10 +4477,13 @@ class AgentManager:
                 ],
             )
         self._tool_guard_rules.ensure_seeded()
-        return replace(
+        res = replace(
             applied,
             tool_guard_rules_dir=str(self._tool_guard_rules.rules_dir),
         )
+        if not hasattr(res, "memory_access_enabled"):
+            object.__setattr__(res, "memory_access_enabled", not row.is_shared)
+        return res
 
     def _install_team_host_dispatch(self) -> None:
         """Team hosts always enqueue inbox work, even on harness 1.0.8 (default sync)."""

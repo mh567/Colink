@@ -103,7 +103,7 @@ async def forget_memory_atom_for_agent(
 
 
 def _forget(registry: AgentManager, agent_id: str, atom_id: str, user: User, live: Any) -> None:
-    runtime = live._memory_runtime if live is not None else None
+    runtime = getattr(live, "_memory_runtime", None) if live is not None else None
     middleware = getattr(runtime, "_middleware", None)
     pause = middleware.pause_background(timeout=120) if middleware is not None else nullcontext()
     with pause, memory_io_lock:

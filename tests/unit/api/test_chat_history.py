@@ -534,3 +534,116 @@ async def test_turn_exception_clears_flag_so_delete_is_not_stuck() -> None:
     server.app_runtime.agent_registry.delete_thread_checkpoint.assert_awaited_once_with(
         "agt_1", "thr_1"
     )
+
+
+def test_require_thread_forbidden_for_other_user() -> None:
+    hub = WebSocketHub()
+    server, _ = _delete_server(hub)
+    # When agent is shared, peer still cannot access another user's private thread
+    server.app_runtime.agent_registry.get_row.return_value.is_shared = 1
+    bob = MagicMock()
+    bob.id = 2
+    bob.is_admin = False
+
+    with pytest.raises(OctopError) as exc_info:
+        history_mod._require_thread(server, "agt_1", "thr_1", bob, as_user=None)
+    assert exc_info.value.code is ErrorCode.FORBIDDEN
+    assert exc_info.value.status == 403
+    assert "thread not owned by user" in str(exc_info.value)
+
+
+def test_require_thread_forbidden_for_other_user_on_private_agent() -> None:
+    hub = WebSocketHub()
+    server, _ = _delete_server(hub)
+    # Agent is private to user 1
+    server.app_runtime.agent_registry.get_row.return_value.is_shared = 0
+    bob = MagicMock()
+    bob.id = 2
+    bob.is_admin = False
+
+    with pytest.raises(OctopError) as exc_info:
+        history_mod._require_thread(server, "agt_1", "thr_1", bob, as_user=None)
+    assert exc_info.value.code is ErrorCode.FORBIDDEN
+    assert exc_info.value.status == 403
+    assert "agent not accessible to user" in str(exc_info.value)
+
+
+def test_require_thread_forbidden_for_admin_default() -> None:
+    """Admin cannot read employee's private thread on a shared agent by default."""
+    hub = WebSocketHub()
+    server, _ = _delete_server(hub)
+    server.app_runtime.agent_registry.get_row.return_value.is_shared = 1
+    admin = MagicMock()
+    admin.id = 99
+    admin.is_admin = True
+
+    with pytest.raises(OctopError) as exc_info:
+        history_mod._require_thread(server, "agt_1", "thr_1", admin, as_user=None)
+    assert exc_info.value.code is ErrorCode.FORBIDDEN
+    assert exc_info.value.status == 403
+    assert "thread not owned by user" in str(exc_info.value)
+
+
+def test_require_thread_forbidden_for_admin_as_user() -> None:
+    """Admin cannot bypass privacy via ?as_user=employee_id."""
+    hub = WebSocketHub()
+    server, _ = _delete_server(hub)
+    admin = MagicMock()
+    admin.id = 99
+    admin.is_admin = True
+
+    with pytest.raises(OctopError) as exc_info:
+        history_mod._require_thread(server, "agt_1", "thr_1", admin, as_user=1)
+    assert exc_info.value.code is ErrorCode.FORBIDDEN
+    assert exc_info.value.status == 403
+    assert "management does not grant private content access" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_missing_raises_not_found() -> None:
+    hub = WebSocketHub()
+    server, user = _delete_server(hub)
+    server.app_runtime.gateway.thread_registry.get_thread.return_value = None
+
+    with pytest.raises(OctopError) as exc_info:
+        await history_mod.delete_thread(
+            "agt_1", "thr_missing", compact=None, user=user, server=server
+        )
+    assert exc_info.value.code is ErrorCode.AGENT_NOT_FOUND
+    assert exc_info.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_forbidden_for_non_owner() -> None:
+    hub = WebSocketHub()
+    server, _ = _delete_server(hub)
+    bob = MagicMock()
+    bob.id = 2
+    bob.is_admin = False
+
+    with pytest.raises(OctopError) as exc_info:
+        await history_mod.delete_thread("agt_1", "thr_1", compact=None, user=bob, server=server)
+    assert exc_info.value.code is ErrorCode.FORBIDDEN
+    assert exc_info.value.status == 403
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_preserves_task_artifact_file_on_disk(tmp_path: Path) -> None:
+    """Deleting a thread removes checkpoints and metadata, but preserves files on disk."""
+    hub = WebSocketHub()
+    server, user = _delete_server(hub)
+
+    # Simulate an artifact created in the workspace
+    artifact_file = tmp_path / "report.docx"
+    artifact_file.write_bytes(b"PK\x03\x04docx-content")
+
+    thread = server.app_runtime.gateway.thread_registry.get_thread.return_value
+    thread.artifacts = (str(artifact_file),)
+
+    response = await history_mod.delete_thread(
+        "agt_1", "thr_1", compact=None, user=user, server=server
+    )
+    assert response.status_code == 204
+    # The physical artifact must not be removed by session deletion
+    assert artifact_file.is_file()
+    assert artifact_file.read_bytes() == b"PK\x03\x04docx-content"
