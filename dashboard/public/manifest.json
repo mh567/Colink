@@ -1,14 +1,14 @@
 {
   "id": "/",
-  "name": "Octop",
-  "short_name": "Octop",
+  "name": "Colink",
+  "short_name": "Colink",
   "description": "Smarter self-hosted AI assistant — multi-user, multi-agent",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0f1117",
-  "theme_color": "#ffffff",
+  "background_color": "#FCFDFF",
+  "theme_color": "#FCFDFF",
   "prefer_related_applications": false,
   "lang": "zh-CN",
   "icons": [

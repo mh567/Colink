@@ -244,3 +244,29 @@
     display: none !important;
   }
 }
+
+.sidebarBrand {
+  background: var(--fn-header-bg);
+  border-bottom: 1px solid var(--fn-border-primary);
+}
+
+.newTask {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  margin: 12px 10px 4px;
+  padding: 6px;
+  border: 1px solid var(--fn-border-primary);
+  border-radius: var(--fn-radius-md);
+  background: var(--fn-surface);
+  color: var(--fn-text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--fn-bg-selected);
+  }
+}

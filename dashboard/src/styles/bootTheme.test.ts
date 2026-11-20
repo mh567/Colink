@@ -76,7 +76,13 @@ describe("index.html boot theme", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
 
-  it("follows the OS when preference is system or missing", () => {
+  it("starts light on an OS using dark mode", () => {
+    eval(bootThemeScript());
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("follows the OS when the user chooses system", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "system");
     eval(bootThemeScript());
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
 

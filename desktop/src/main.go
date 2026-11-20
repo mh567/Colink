@@ -386,7 +386,7 @@ func main() {
 
 	app := application.New(api.withBrowserMessages(application.Options{
 		Name:        "Octop",
-		Description: "Octop desktop",
+		Description: "Colink desktop",
 		Services: []application.Service{
 			application.NewService(api),
 		},
@@ -417,7 +417,7 @@ func main() {
 
 	// Remote dashboard pages do not load the Wails runtime.
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:                "Octop",
+		Title:                "Colink",
 		Width:                1200,
 		Height:               800,
 		URL:                  "/",
@@ -442,7 +442,7 @@ func main() {
 	win.OnWindowEvent(events.Windows.WebViewNavigationCompleted, installDragOverlay)
 	win.OnWindowEvent(events.Linux.WindowLoadFinished, installDragOverlay)
 	settingsWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "Octop 设置",
+		Title:            "Colink 设置",
 		Width:            settingsWindowWidth,
 		Height:           settingsWindowOuterHeight(),
 		URL:              "/?settings=1",
@@ -486,7 +486,7 @@ func main() {
 
 	tray := app.SystemTray.New()
 	applyTrayIcon(tray)
-	tray.SetTooltip("Octop")
+	tray.SetTooltip("Colink")
 	tray.AttachWindow(settingsWin).WindowOffset(6)
 	showSettings := func() { tray.ShowWindow() }
 	api.setTrayMenuLocale = func(locale Locale) {

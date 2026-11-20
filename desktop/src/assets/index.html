@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Octop</title>
+    <title>Colink</title>
     <script>
       document.documentElement.dataset.chrome = /Mac|iPhone|iPad/.test(
         navigator.userAgent,
@@ -27,15 +27,15 @@
       :root {
         color-scheme: light;
         --bg-primary: #ffffff;
-        --bg-layout: #f5f6f8;
-        --bg-secondary: #f7f8fa;
-        --text-primary: #111827;
-        --text-secondary: #4b5563;
-        --text-tertiary: #9ca3af;
-        --border: #e5e7eb;
-        --brand: #e85d75;
-        --brand-hover: #d14a62;
-        --brand-soft: #fde8ec;
+        --bg-layout: #fcfdff;
+        --bg-secondary: #e8eef6;
+        --text-primary: #243c59;
+        --text-secondary: #526881;
+        --text-tertiary: #526881;
+        --border: #d9e2ee;
+        --brand: #345f90;
+        --brand-hover: #2d5680;
+        --brand-soft: #dfeafa;
         --on-brand: #ffffff;
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.03);
         --radius: 12px;
@@ -269,7 +269,7 @@
       .switch span {
         position: absolute;
         inset: 0;
-        background: #e5e7eb;
+        background: #d9e2ee;
         border-radius: 999px;
         cursor: pointer;
         transition: background 0.18s ease;
@@ -356,15 +356,7 @@
         height: auto;
         object-fit: contain;
         background: transparent;
-        cursor: pointer;
         user-select: none;
-        transition: transform 0.18s ease;
-      }
-      .loading img:hover {
-        transform: scale(1.04) translateY(-2px);
-      }
-      .loading img:active {
-        transform: scale(0.94);
       }
       .loading-brand {
         margin: 0;
@@ -429,6 +421,9 @@
       }
       .hidden {
         display: none !important;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .loading-bar-fill { animation: none; }
       }
     </style>
   </head>
@@ -502,12 +497,11 @@
     <div class="loading" id="loading-panel">
       <div class="loading-card">
         <img
-          id="mascot"
-          src="/octop-mascot-peek.webp"
-          alt="Octop"
+          src="/tray-icon.png"
+          alt="Colink"
           draggable="false"
         />
-        <p class="loading-brand" id="loading-brand">Octop</p>
+        <p class="loading-brand" id="loading-brand">Colink</p>
         <p class="loading-hint" id="loading-hint">
           正在检查运行环境，可能需要几分钟。
         </p>
@@ -522,7 +516,7 @@
 
     <div id="settings-panel" class="hidden">
       <div class="wrap">
-        <h1 id="title">Octop 设置</h1>
+        <h1 id="title">Colink 设置</h1>
         <p class="subtitle" id="subtitle">桌面端偏好</p>
         <div class="card">
           <div class="row server-row">
@@ -585,7 +579,7 @@
           </div>
         </div>
         <div class="actions">
-          <button class="primary" id="show-main">显示 Octop</button>
+          <button class="primary" id="show-main">显示 Colink</button>
           <button class="ghost" id="quit">退出</button>
         </div>
         <p class="status hidden" id="settings-status"></p>
@@ -598,7 +592,7 @@
         zh: {
           statusWait: "正在启动，请稍候…",
           loadingHint: "正在检查运行环境，可能需要几分钟。",
-          title: "Octop 设置",
+          title: "Colink 设置",
           subtitle: "桌面端偏好",
           server: "企业服务地址",
           serverH: "保存后重启生效，留空沿用默认连接",
@@ -611,7 +605,7 @@
           trayH: "点击最小化时隐藏窗口并保留在系统托盘",
           sleep: "防止系统休眠",
           sleepH: "应用运行期间阻止系统自动休眠",
-          showMain: "显示 Octop",
+          showMain: "显示 Colink",
           quit: "退出",
           winGroup: "窗口控制",
           winMin: "最小化",
@@ -621,7 +615,7 @@
         en: {
           statusWait: "Starting, please wait…",
           loadingHint: "Checking the runtime. This may take a few minutes.",
-          title: "Octop Settings",
+          title: "Colink Settings",
           subtitle: "Desktop preferences",
           server: "Enterprise server URL",
           serverH: "Restart after saving. Leave blank for the default connection.",
@@ -631,10 +625,10 @@
           auto: "Launch at login",
           autoH: "Start automatically after you sign in",
           tray: "Minimize to tray",
-          trayH: "Hide the window on minimize and keep Octop in the tray",
+          trayH: "Hide the window on minimize and keep Colink in the tray",
           sleep: "Prevent system sleep",
-          sleepH: "Keeps the system awake while Octop is running",
-          showMain: "Show Octop",
+          sleepH: "Keeps the system awake while Colink is running",
+          showMain: "Show Colink",
           quit: "Quit",
           winGroup: "Window controls",
           winMin: "Minimize",
@@ -745,26 +739,6 @@
           }
         });
       }
-
-      const MASCOT_IMAGES = [
-        "/octop-mascot-peek.webp",
-        "/octop-mascot-type.webp",
-      ];
-      const mascotEl = document.getElementById("mascot");
-      let mascotSrc = MASCOT_IMAGES[0];
-      function pickMascot(current) {
-        let next = current;
-        while (next === current) {
-          next = MASCOT_IMAGES[Math.floor(Math.random() * MASCOT_IMAGES.length)];
-        }
-        return next;
-      }
-      mascotSrc = pickMascot(mascotSrc);
-      mascotEl.src = mascotSrc;
-      mascotEl.addEventListener("click", () => {
-        mascotSrc = pickMascot(mascotSrc);
-        mascotEl.src = mascotSrc;
-      });
 
       function current() {
         return {

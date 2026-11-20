@@ -29,6 +29,7 @@ import {
 } from "../../../utils/knowledgeDocPreview";
 import { stripFrontmatter } from "../../../utils/markdown";
 import type { KnowledgeCitation } from "../../../utils/parseKnowledgeCitations";
+import { useWithdrawnCitations } from "./KnowledgeCitationStatusContext";
 import chatStyles from "../index.module.less";
 import styles from "./KnowledgeCitationPanelContent.module.less";
 
@@ -65,7 +66,22 @@ interface KnowledgeCitationPanelContentProps {
  * Knowledge citation preview body for a chat dock tab (same shell as workspace
  * file tabs opened from “编辑了 N 个文件”).
  */
-export default function KnowledgeCitationPanelContent({
+export default function KnowledgeCitationPanelContent(
+  props: KnowledgeCitationPanelContentProps,
+) {
+  const { t } = useTranslation();
+  const isWithdrawn = useWithdrawnCitations();
+  if (isWithdrawn(props.citation)) {
+    return (
+      <div className={styles.centered} role="status">
+        <span className={styles.failedText}>{t("chat.citationWithdrawn")}</span>
+      </div>
+    );
+  }
+  return <AvailableCitationPreview {...props} />;
+}
+
+function AvailableCitationPreview({
   citation,
   onActionsChange,
 }: KnowledgeCitationPanelContentProps) {

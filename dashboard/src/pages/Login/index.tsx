@@ -484,10 +484,10 @@ export default function LoginPage() {
     <img
       src={
         isDark
-          ? publicUrl("logo_horizontal_white.png")
-          : publicUrl("logo_horizontal_dark.png")
+          ? publicUrl("logo_horizontal_white.svg")
+          : publicUrl("logo_horizontal_dark.svg")
       }
-      alt="Octop"
+      alt="Colink"
       style={{
         height: 48,
         width: "auto",

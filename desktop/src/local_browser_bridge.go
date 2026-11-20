@@ -130,7 +130,7 @@ func (a *App) handleBrowserMessage(window application.Window, message string, in
 	}
 	if isHello {
 		if validDestructiveID(hello) {
-			a.emitBrowserEvent(session, origin, "colink:browser-ready", map[string]any{
+			a.emitDashboardEvent(session, origin, "colink:browser-ready", map[string]any{
 				"request_id": hello, "device_id": session.DeviceID, "capability": a.browserCapability(session),
 				"operation_deadline": true, "form_submission": true,
 			})
@@ -353,10 +353,10 @@ func (a *App) handleLocalBrowser(session docxSession, origin string, request bro
 		RequestID string `json:"request_id"`
 		DeviceID  string `json:"device_id"`
 	}{browserResult: result, RequestID: request.ID, DeviceID: session.DeviceID}
-	a.emitBrowserEvent(session, origin, "colink:browser-status", event)
+	a.emitDashboardEvent(session, origin, "colink:browser-status", event)
 }
 
-func (a *App) emitBrowserEvent(session docxSession, origin, name string, event any) {
+func (a *App) emitDashboardEvent(session docxSession, origin, name string, event any) {
 	data, err := json.Marshal(event)
 	if err != nil || a.window == nil || a.device.currentDOCX(session) != nil {
 		return

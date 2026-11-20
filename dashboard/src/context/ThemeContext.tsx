@@ -13,6 +13,7 @@ import {
 } from "../styles/appearanceStorage";
 import {
   DEFAULT_PALETTE,
+  FOG_COLORS,
   customPaletteCssVars,
   normalizeHexColor,
   type ThemePalette,
@@ -47,7 +48,7 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue>({
   mode: "light",
-  preference: "system",
+  preference: "light",
   setPreference: () => {},
   palette: DEFAULT_PALETTE,
   setPalette: () => {},
@@ -141,7 +142,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     // Keep the PWA theme-color meta tag in sync with the resolved mode so
     // the browser chrome (address bar, status bar, PWA title bar) matches.
-    const themeColor = mode === "dark" ? "#1a1c28" : "#ffffff";
+    const themeColor = FOG_COLORS[mode].app;
     document
       .querySelectorAll<HTMLMetaElement>("meta[name='theme-color']")
       .forEach((el) => {

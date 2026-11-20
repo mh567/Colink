@@ -35,7 +35,7 @@ function colorDistance(
   return dr * dr + dg * dg + db * db;
 }
 
-/** Map a stored expert hex (or null) onto the curated 8-swatch palette. */
+/** Map a stored expert hex (or null) onto the curated palette. */
 export function resolveExpertPalette(
   color: string | null | undefined,
 ): ThemePalette {
