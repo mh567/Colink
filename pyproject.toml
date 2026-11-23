@@ -215,7 +215,6 @@ module = "octop.infra.utils.subprocess_io_win"
 disable_error_code = ["attr-defined"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
