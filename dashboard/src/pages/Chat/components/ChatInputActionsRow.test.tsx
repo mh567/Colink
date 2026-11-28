@@ -56,6 +56,39 @@ const baseProps = {
 };
 
 describe("ChatInputActionsRow plus menu", () => {
+  it("offers local files next to explicit attachment sending", () => {
+    const onLocalFileSelect = vi.fn();
+    render(
+      <MemoryRouter>
+        <ChatInputActionsRow
+          {...baseProps}
+          localFilesAvailable
+          onLocalFileSelect={onLocalFileSelect}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByRole("button", { name: "Send attachment" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use on this computer" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Select local files" }),
+    );
+    expect(onLocalFileSelect).toHaveBeenCalledOnce();
+  });
+
+  it("keeps local selection unavailable in a web browser", () => {
+    render(
+      <MemoryRouter>
+        <ChatInputActionsRow {...baseProps} />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByRole("button", { name: "Use on this computer" }),
+    ).toBeDisabled();
+  });
   it("keeps approval, shortcuts, and attachments on the toolbar", () => {
     render(
       <MemoryRouter>
@@ -66,7 +99,7 @@ describe("ChatInputActionsRow plus menu", () => {
     expect(screen.getByTestId("composer-plus")).toBeInTheDocument();
     expect(screen.getByTestId("hitl-policy-picker")).toBeInTheDocument();
     expect(screen.getByLabelText("快捷指令")).toBeInTheDocument();
-    expect(screen.getByLabelText("Upload")).toBeInTheDocument();
+    expect(screen.getByLabelText("Send attachment")).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Folder" })).toBeNull();
     expect(
       screen.queryByTestId("conversation-mode-picker"),
@@ -84,7 +117,7 @@ describe("ChatInputActionsRow plus menu", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByLabelText("Upload"));
+    fireEvent.click(screen.getByLabelText("Send attachment"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Folder" }));
     expect(onFolderSelect).toHaveBeenCalledTimes(1);
   });
@@ -97,7 +130,7 @@ describe("ChatInputActionsRow plus menu", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByLabelText("Upload"));
+    fireEvent.click(screen.getByLabelText("Send attachment"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Files" }));
     expect(onFileSelect).toHaveBeenCalledTimes(1);
   });

@@ -22,7 +22,16 @@ import {
 } from "../utils/droppedFiles";
 import { useServerUploadLimit } from "../../../hooks/useServerUploadLimit";
 
-export function useChatAttachments(agentId: string | null | undefined) {
+export function useChatAttachments(
+  agentId: string | null | undefined,
+  {
+    threadId,
+    confirmUpload,
+  }: {
+    threadId?: string | null;
+    confirmUpload: (files: File[]) => Promise<boolean>;
+  },
+) {
   const { t } = useTranslation();
   const { maxUploadBytes, maxUploadMb } = useServerUploadLimit();
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -30,9 +39,30 @@ export function useChatAttachments(agentId: string | null | undefined) {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const scopeKey = `${agentId ?? ""}:${threadId ?? ""}`;
+  const currentScope = useRef(scopeKey);
+  currentScope.current = scopeKey;
+  const revision = useRef(0);
+  const pending = useRef(false);
+
+  const clearAttachments = useCallback(() => {
+    revision.current += 1;
+    pending.current = false;
+    setUploading(false);
+    setAttachments([]);
+  }, []);
+
+  useEffect(() => {
+    clearAttachments();
+    return () => {
+      revision.current += 1;
+      pending.current = false;
+    };
+  }, [scopeKey, clearAttachments]);
 
   const processFiles = useCallback(
     async (files: FileList | File[]) => {
+      if (pending.current || currentScope.current !== scopeKey) return;
       const incoming = Array.from(files);
       const capped =
         incoming.length > MAX_CHAT_UPLOAD_FILES
@@ -67,8 +97,13 @@ export function useChatAttachments(agentId: string | null | undefined) {
         return;
       }
 
+      const startedAt = revision.current;
+      const isCurrent = () =>
+        startedAt === revision.current && currentScope.current === scopeKey;
+      pending.current = true;
       setUploading(true);
       try {
+        if (!(await confirmUpload(fileArr)) || !isCurrent()) return;
         const results = await Promise.all(
           fileArr.map(async (file) => {
             const res = await uploadFile(agentId, file);
@@ -92,16 +127,21 @@ export function useChatAttachments(agentId: string | null | undefined) {
             } satisfies ChatAttachment;
           }),
         );
-        setAttachments((prev) => [...prev, ...results]);
+        if (isCurrent()) setAttachments((prev) => [...prev, ...results]);
       } catch (err: unknown) {
-        antMessage.error(
-          apiErrorMessage(err, t("upload.failed", "Upload failed"), t),
-        );
+        if (isCurrent()) {
+          antMessage.error(
+            apiErrorMessage(err, t("upload.failed", "Upload failed"), t),
+          );
+        }
       } finally {
-        setUploading(false);
+        if (isCurrent()) {
+          pending.current = false;
+          setUploading(false);
+        }
       }
     },
-    [agentId, maxUploadBytes, maxUploadMb, t],
+    [agentId, scopeKey, confirmUpload, maxUploadBytes, maxUploadMb, t],
   );
 
   const handleFileSelect = useCallback(() => {
@@ -127,10 +167,6 @@ export function useChatAttachments(agentId: string | null | undefined) {
 
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const clearAttachments = useCallback(() => {
-    setAttachments([]);
   }, []);
 
   const restoreAttachments = useCallback((next: ChatAttachment[]) => {
@@ -187,6 +223,7 @@ export function useChatAttachments(agentId: string | null | undefined) {
       e.preventDefault();
       e.stopPropagation();
       setDragOver(false);
+      const startedAt = revision.current;
       return (async () => {
         let collected: CollectedDrop;
         try {
@@ -195,6 +232,7 @@ export function useChatAttachments(agentId: string | null | undefined) {
           antMessage.error(t("upload.failed", "Upload failed"));
           return;
         }
+        if (startedAt !== revision.current) return;
         if (collected.truncated) {
           antMessage.warning(
             t(
@@ -217,6 +255,7 @@ export function useChatAttachments(agentId: string | null | undefined) {
   useEffect(() => {
     const onDesktopDrop = (event: Event) => {
       const detail = (event as CustomEvent<DesktopFileDropDetail>).detail;
+      const startedAt = revision.current;
       setDragOver(false);
       void (async () => {
         if (detail?.truncated) {
@@ -230,6 +269,7 @@ export function useChatAttachments(agentId: string | null | undefined) {
         }
         try {
           const files = await filesFromDesktopDrop(detail);
+          if (startedAt !== revision.current) return;
           if (files.length === 0) {
             antMessage.warning(t("upload.emptyDrop", "No files to upload"));
             return;

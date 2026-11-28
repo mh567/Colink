@@ -6,6 +6,7 @@ import {
   Square,
   MessageSquarePlus,
   Paperclip,
+  Monitor,
   FileUp,
   FolderUp,
   Zap,
@@ -179,6 +180,11 @@ interface ChatInputActionsRowProps {
   onSlashShortcutSelect: (command: string) => void;
   onFileSelect: () => void;
   onFolderSelect: () => void;
+  localFilesAvailable?: boolean;
+  localFilesBusy?: boolean;
+  localFilesDisabled?: boolean;
+  onLocalFileSelect?: () => void;
+  onLocalFolderSelect?: () => void;
   onNewChat: () => void;
   onPolish: () => void;
   onToggleVoice: () => void;
@@ -238,6 +244,11 @@ export default function ChatInputActionsRow({
   onSlashShortcutSelect,
   onFileSelect,
   onFolderSelect,
+  localFilesAvailable = false,
+  localFilesBusy = false,
+  localFilesDisabled = false,
+  onLocalFileSelect,
+  onLocalFolderSelect,
   onNewChat,
   onPolish,
   onToggleVoice,
@@ -260,6 +271,7 @@ export default function ChatInputActionsRow({
   const [isCompact, setIsCompact] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [localFilesOpen, setLocalFilesOpen] = useState(false);
   const [reasoningModelRef, setReasoningModelRef] = useState<string | null>(
     null,
   );
@@ -704,7 +716,7 @@ export default function ChatInputActionsRow({
           groups={slashPickerGroups}
           flatItems={slashMenuItems}
           activeIndex={-1}
-          disabled={isStreaming || disabled}
+          disabled={isStreaming || disabled || uploading || localFilesBusy}
           variant="popover"
           itemsGridClassName={styles.slashMenuGrid}
           itemClassName={styles.slashPickerItem}
@@ -1100,15 +1112,94 @@ export default function ChatInputActionsRow({
             </div>
           }
         >
-          <Tooltip title={t("upload.tooltip", "Upload")} mouseEnterDelay={0.4}>
+          <Tooltip
+            title={t("upload.tooltip", "Send files to the enterprise server")}
+            mouseEnterDelay={0.4}
+          >
             <button
-              className={styles.secondaryBtn}
+              className={cx(styles.secondaryBtn, styles.materialAction)}
               type="button"
-              disabled={uploading}
-              aria-label={t("upload.tooltip", "Upload")}
+              disabled={uploading || localFilesBusy || disabled}
+              aria-label={t("upload.action", "Send attachment")}
               aria-haspopup="menu"
             >
               <Paperclip size={16} />
+              <span>{t("upload.action", "Send attachment")}</span>
+            </button>
+          </Tooltip>
+        </Popover>
+        <Popover
+          trigger="click"
+          placement="topLeft"
+          open={localFilesOpen}
+          onOpenChange={setLocalFilesOpen}
+          overlayClassName={styles.skillPickerPopover}
+          content={
+            <div className={styles.mobileOverflowMenu} role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.mobileOverflowItem}
+                onClick={() => {
+                  setLocalFilesOpen(false);
+                  onLocalFileSelect?.();
+                }}
+              >
+                <span className={styles.mobileOverflowItemMain}>
+                  <FileUp size={16} />
+                  <span>
+                    {t("localFiles.selectFiles", "Select local files")}
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.mobileOverflowItem}
+                onClick={() => {
+                  setLocalFilesOpen(false);
+                  onLocalFolderSelect?.();
+                }}
+              >
+                <span className={styles.mobileOverflowItemMain}>
+                  <FolderUp size={16} />
+                  <span>
+                    {t("localFiles.selectFolder", "Select local folder")}
+                  </span>
+                </span>
+              </button>
+            </div>
+          }
+        >
+          <Tooltip
+            title={
+              localFilesAvailable
+                ? t(
+                    "localFiles.supportedHint",
+                    "Read selected TXT, MD or CSV files for this message",
+                  )
+                : t(
+                    "localFiles.desktopRequired",
+                    "Use the desktop app to read local files",
+                  )
+            }
+            mouseEnterDelay={0.4}
+          >
+            <button
+              className={cx(styles.secondaryBtn, styles.materialAction)}
+              type="button"
+              disabled={
+                !localFilesAvailable ||
+                localFilesBusy ||
+                localFilesDisabled ||
+                uploading ||
+                disabled
+              }
+              aria-label={t("localFiles.action", "Use on this computer")}
+              aria-haspopup="menu"
+            >
+              <Monitor size={16} />
+              <span>{t("localFiles.action", "Use on this computer")}</span>
             </button>
           </Tooltip>
         </Popover>

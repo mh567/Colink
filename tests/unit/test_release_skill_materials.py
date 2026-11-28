@@ -417,10 +417,18 @@ def test_desktop_release_validates_the_reused_portable_archive(
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    artifact = "bin/Octop-desktop-linux-amd64-1.0.3b3.tar.gz"
+    artifact = "release/Colink-desktop-linux-amd64-1.0.3b3.deb"
     for name, body in (
         ("make", "exit 0"),
-        ("wails3", f"mkdir -p bin\nprintf '%s' fixture > {artifact}"),
+        (
+            "npm",
+            'case "$*" in\n'
+            "ci) exit 0 ;;\n"
+            '"run package -- --linux --x64") '
+            f"mkdir -p release; printf '%s' fixture > {artifact} ;;\n"
+            "*) exit 2 ;;\n"
+            "esac",
+        ),
     ):
         executable = bin_dir / name
         executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")

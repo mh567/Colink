@@ -1,53 +1,73 @@
-# Octop desktop (Wails v3 + green portable)
+# Colink 桌面客户端（Electron）
 
-All desktop-client code lives here. This is **not** `src/octop/infra/control/desktop`
-(remote desktop streaming).
+新版桌面复用现有控制台的静序、雾蓝界面，在同一窗口和输入框完成聊天、附件发送与本次本机材料读取。启动、进程管理及安装路线参考 TencentCloud/Octop `v1.0.3b7`（MIT），使用锁定的 Electron 45 与 electron-builder 26.18；Python 运行库继续沿用仓库锁文件。
 
-| Path | Role |
+| 路径 | 用途 |
 |------|------|
-| [`portable/`](portable/) | Green zip packaging (was `scripts/green/`) |
-| [`src/`](src/) | Wails v3 shell: load bundled zip, spawn Octop, tray/settings |
-| [`package-release.sh`](package-release.sh) | Native end-to-end portable + Wails release build |
+| [`src/main/`](src/main/) | 主窗口、服务连接、随包服务进程和本机文件边界 |
+| [`src/preload/`](src/preload/) | 隔离的原生桥，仅暴露服务配置与本次文件范围操作 |
+| [`src/renderer/`](src/renderer/) | 首次企业服务连接页 |
+| [`portable/`](portable/) | 随包 Python 与运行依赖，仍保留 `Octop-portable-*` 名称 |
+| [`package-release.sh`](package-release.sh) | 控制台构建、便携包核验和 Electron 安装包构建 |
 
-## Data directory
+`src/` 中原有 Go/Wails 文件保留供历史任务参考，不会打进 Electron 应用。本目录也不是服务端远程桌面模块 `src/octop/infra/control/desktop`。
 
-Same as the Octop CLI/server default:
+## 开发与启动
 
-- `OCTOP_HOME` → `~/.octop` (or the existing `OCTOP_HOME` env)
-- Green runtime extract → `~/.octop/portable/`
-- Shell prefs → `~/.octop/desktop-settings.json`
-
-## Build green zip
-
-From repo root:
+使用 Node.js 24，在企业服务已运行后执行（示例为本机服务）：
 
 ```bash
-make -f desktop/portable/Makefile green
+cd desktop/src
+npm ci
+npm test
+COLINK_SERVER_URL=http://127.0.0.1:8088 npm start
 ```
 
-The [desktop release workflow](../.github/workflows/octop-desktop.yml) builds
-all six native variants for `v*` tags or a manual run with `platforms=all`.
-Each job creates the green zip and packages the matching Wails application.
-Use the [local verification steps](portable/README.md#本机验证) before release.
+不指定 `COLINK_SERVER_URL` 时，使用已保存的企业地址；首次启动尝试随包服务，缺少运行环境时显示连接页。也可通过文件菜单切换企业 HTTPS 地址，可包含反向代理路径前缀。仅环回地址允许 HTTP，不跳过证书检查。首次登录沿用服务端账号流程，普通聊天无需设备审批或目录绑定。
 
-## Build a complete desktop release
+安装包也可启动随包服务：只使用 `resources/portable` 内的 Python 和依赖，随机绑定本机端口，健康检查通过后打开控制台；缺少运行环境会明确报错。开发运行的对应目录为 `desktop/portable/release/Octop-<platform>`。退出应用时回收它启动的服务进程树。
 
-Run the end-to-end script on the matching native host. It builds the Dashboard,
-creates and verifies the portable runtime, embeds it into Wails, and produces
-the final native package:
+## 数据与文件范围
+
+- 默认数据目录为 `~/.colink-v1`，`profile/` 保存 Electron 会话数据，`server/` 保存随包服务数据，`connection.json` 保存所选服务地址。测试可用 `COLINK_DESKTOP_HOME` 指定另一个隔离目录。
+- 不沿用 `OCTOP_HOME`、`~/.octop` 或旧 Wails 数据；拒绝指向旧目录的重定向，不迁移旧账号、会话、目录授权、任务或文件。
+- 附件经确认才上传原件到企业服务器。“在本机使用”只读取本次选择的 UTF-8 TXT、MD、CSV，文字随本条消息发送，原件留在本机；两者可在同一条消息中混用。
+- 本机范围绑定当前账号、专家和会话，单次使用；最多 20 个文件、单文件 1 MiB、合计 60,000 字符。目录包含不支持文件、符号链接、替换文件或超限材料时明确失败。
+- 移除、取消、换会话、退出登录、网络离线或权限复核失败会撤销未完成的读取。聊天连接短暂重连不单独撤销尚未使用的范围，发送时仍重新核验权限。移除范围不会撤回已经进入聊天的文字。普通附件不自动入知识库，也不启用默认关闭的记忆采集。
+
+页面启用上下文隔离与渲染沙箱，不暴露 Node.js、任意路径读写或命令执行。原生选择器确定文件范围，主进程再次向当前服务核对账号、专家和已有会话权限。Office 文件处理和受控写入仍待后续专项接入，不能用本次文本读取代替其验收。
+
+## 构建、安装与更新
+
+在对应架构的原生系统或虚拟机运行：
 
 ```bash
 desktop/package-release.sh
-# Reuse an existing desktop/portable/release/Octop-portable-<plat>-<version>.zip:
+# 复用已构建的便携包，仍执行导入和包内容校验：
 desktop/package-release.sh darwin-arm64 --reuse-portable
 ```
 
-Rebuild without `--reuse-portable` if the archive's presentation or browser worker differs from the current checkout.
+脚本构建控制台、生成并校验便携运行环境，再将它置于安装包的 `resources/portable`。输出位于 `desktop/src/release/`，名称为 `Colink-desktop-<platform>-<version>`：Windows 为 NSIS `.exe`，macOS 为 `.dmg`，Linux 为 `.deb`。`amd64` 对应 Electron 的 `x64`。版本来自 `pyproject.toml`；内部应用版本按 npm 语义版本格式转换，产物名称保留原版本。便携包与 Python 包继续使用原来的 `Octop`/`octop` 标识。
 
-Wails requires native packaging. The release workflow uses macOS, Linux, and
-Windows runners for their respective variants.
-Windows packaging also needs [NSIS](https://nsis.sourceforge.io/) (`makensis`)
-so the `.exe` is an installer rather than a portable single-file binary.
+[桌面构建工作流](../.github/workflows/octop-desktop.yml)沿用六个平台的原生 runner，调用同一脚本。更新时先退出应用，再安装企业提供的新包；桌面壳不连接上游公网更新源。NSIS 不删除应用数据目录，其他安装方式也没有清理用户数据的脚本。用户个人材料不会复制到安装目录。安装、升级、卸载的实际行为须用对应平台产物验证。
+
+## 验证范围
+
+```bash
+cd desktop/src
+npm test
+npm run typecheck
+```
+
+Windows 进程回收测试使用已构建的 `desktop/portable/release/Octop-windows-<arch>/runtime/python.exe`，也可用环境变量 `COLINK_TEST_PYTHON` 指定现有 Python 的绝对路径。缺少运行环境时该专项明确跳过，不能记为已验证。
+
+使用隔离账号和示例文件，在真实 Electron 窗口检查：直接聊天；附件拒绝与确认；本机范围选择、移除、取消和混用；换会话与退出账号；浅深主题、中文输入、键盘和缩放。预置旧目录中的账号、会话、授权、任务和文件，核对首次启动及更新后均未导入、改写或删除。普通网页不得取得本机范围桥。
+
+构建成功不能替代安装运行验收。Windows x64、Linux x64、Linux ARM64 分别使用同架构目标系统或虚拟机验证，复用[平台测试分工](../docs/agents/workflow.md#平台测试分工)和[便携包验证](portable/README.md#本机验证)。macOS 开发结果不代表上述目标平台已通过；实际命令、截图与未验证项随 PR 记录。
+
+## 旧 Wails 客户端参考
+
+以下保留旧客户端的构建与专项任务说明，使用 `~/.octop`、旧设备登记和目录授权。新版 Electron 不读取或迁移这些数据，也不加载旧原生桥；下文的 Wails 包名、更新和设备任务不代表新版已实现。
 
 ## Build the Wails shell
 

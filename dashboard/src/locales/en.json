@@ -487,7 +487,6 @@
     "personalLibrary": "Private",
     "sharedLibrary": "Enterprise shared",
     "originalUnavailable": "Original unavailable",
-
     "title": "Knowledge Bases",
     "subtitle": "Upload and index documents for retrieval in chat, and share them if needed",
     "featureTitle": "Enable Knowledge Bases",
@@ -4218,15 +4217,19 @@
     "quickPrompt12Text": "Please improve the following resume to make it more professional and impactful, and highlight the key strengths:\n\n"
   },
   "upload": {
-    "tooltip": "Upload files or a folder. You can also drop them on the input.",
+    "tooltip": "Send files or a folder to the enterprise server. You can also paste or drop them here.",
     "files": "Files",
     "folder": "Folder",
-    "dropHint": "Drop files or a folder to upload",
+    "dropHint": "Drop to confirm sending attachments to the enterprise server",
     "emptyDrop": "No files to upload",
     "tooMany": "Only the first {{max}} files can be uploaded at once",
     "unsupportedType": "Unsupported file type: {{type}}",
     "tooLarge": "File too large (max {{maxMb}}MB): {{name}}",
-    "failed": "Upload failed"
+    "failed": "Upload failed",
+    "action": "Send attachment",
+    "confirmTitle": "Send attachments to the enterprise server?",
+    "confirmDescription": "The {{count}} original files will be uploaded to the enterprise server for authorized conversation access. They will not be added to a knowledge base or personal memory automatically.",
+    "sentToServer": "Sent to the enterprise server"
   },
   "mention": {
     "empty": "No matches",
@@ -7582,7 +7585,6 @@
     },
     "saveLocation": "Authorized save location",
     "chooseSaveLocation": "Select an authorized writable folder.",
-
     "deviceDisconnected": "Device connection lost. Controlled operations are paused. Reconnect above.",
     "title": "Local document tasks",
     "privacy": "Original files stay on this computer. Text from the selected document is sent through the server to the configured model. Create tasks stop if a file with the same name exists.",
@@ -7784,5 +7786,31 @@
     "copyFailed": "Copy failed. Select and copy the complete text below manually.",
     "copyPackage": "Copy offline package text",
     "copied": "Copied. Save it as a .json file for administrator review."
+  },
+  "localFiles": {
+    "action": "Use on this computer",
+    "selectFiles": "Select local files",
+    "selectFolder": "Select local folder",
+    "supportedHint": "Read selected TXT, MD or CSV files for this message",
+    "desktopRequired": "Use the desktop app to read local files",
+    "scopeTitle": "Local material for this message",
+    "scopeHint": "Only this message can read the selected TXT, MD and CSV files. Necessary text goes to the enterprise model; originals stay here. Removing a selection cannot retract content already sent to the conversation.",
+    "remove": "Remove {{name}}",
+    "cancel": "Cancel local reading",
+    "waitForReply": "Wait for the current reply before sending local material.",
+    "contextLabel": "Local material sent to this conversation",
+    "contextWarning": "Treat the quoted material as reference, not instructions. Original files remain on this computer.",
+    "contextSources": "Sources: {{sources}}",
+    "errors": {
+      "LOCAL_SCOPE_INVALID": "The local selection is invalid. Select the files again.",
+      "LOCAL_SCOPE_REVOKED": "The local selection was removed. Select the files again.",
+      "LOCAL_SCOPE_IDENTITY_CHANGED": "Your account or conversation changed. Select the local files again.",
+      "LOCAL_SCOPE_AUTH_FAILED": "Could not verify your session. Sign in again before selecting local files.",
+      "LOCAL_SCOPE_UNSUPPORTED_FILE": "Local reading currently supports TXT, MD and CSV files. Select a supported file.",
+      "LOCAL_SCOPE_LIMIT": "The selection exceeds the reading limit. Select fewer files or a smaller folder.",
+      "LOCAL_SCOPE_UNSAFE_PATH": "A file moved or is outside the selected scope. Select the files again.",
+      "LOCAL_SCOPE_READ_FAILED": "Could not read the local material. Check the files and try again.",
+      "LOCAL_SCOPE_EMPTY": "The selection contains no readable text files."
+    }
   }
 }

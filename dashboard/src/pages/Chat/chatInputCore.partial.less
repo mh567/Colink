@@ -267,6 +267,86 @@
   }
 }
 
+.secondaryBtn.materialAction {
+  width: auto;
+  flex-shrink: 0;
+  gap: 5px;
+  padding-inline: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.attachmentDestination {
+  display: block;
+  margin-top: 8px;
+  color: var(--fn-text-secondary);
+  font-size: 12px;
+}
+
+.localFiles {
+  margin-block: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--fn-border-secondary);
+  border-radius: var(--fn-radius-md);
+  background: var(--fn-bg-secondary);
+  color: var(--fn-text-secondary);
+  font-size: 12px;
+
+  strong {
+    color: var(--fn-text-primary);
+  }
+
+  ul {
+    margin: 6px 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  li {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+
+    span {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  p {
+    margin: 6px 0 0;
+    line-height: 1.5;
+  }
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 2px 5px;
+    border: 0;
+    border-radius: var(--fn-radius-sm);
+    background: transparent;
+    color: var(--fn-text-brand);
+    font: inherit;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--fn-bg-hover);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--fn-color-brand);
+      outline-offset: 2px;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+}
+
 /* Active state for toggle buttons (connectors, etc.) */
 .secondaryBtnActive {
   color: #2563eb !important;

@@ -16,7 +16,7 @@ from octop_gateway.models import (
     TextContent,
 )
 
-from octop.api.common.agent import require_agent_row
+from octop.api.common.agent import assert_agent_owner, require_agent_row
 from octop.api.common.validators import validate_chat_mcp_servers, validate_chat_skills
 from octop.api.routers.chat.models import ChatTurnBody
 from octop.infra.errors import ErrorCode, OctopError
@@ -253,6 +253,10 @@ async def prepare_dashboard_turn(
 ) -> PreparedDashboardTurn:
     """Validate MCP/skills, resolve thread, return data for gateway enqueue."""
     row = require_agent_row(agent_id, user=user, as_user=None, server=server)
+    inbound_content = content_parts_from_dashboard_turn(turn)
+    inbound_attachments = inbound_attachments_from_parts(inbound_content)
+    if inbound_attachments:
+        assert_agent_owner(row, user)
     default_model = (row.default_model or "").strip() or None
 
     mcp_servers = await validate_chat_mcp_servers(server, user_id=user.id, names=turn.mcp_servers)
@@ -314,8 +318,6 @@ async def prepare_dashboard_turn(
         model_ref=model_ref,
         default_model=default_model,
     )
-    inbound_content = content_parts_from_dashboard_turn(turn)
-    inbound_attachments = inbound_attachments_from_parts(inbound_content)
     return PreparedDashboardTurn(
         thread_id=thread_id,
         session_key=session_key,
