@@ -1,0 +1,26 @@
+{
+  "name": "colink-desktop",
+  "version": "1.0.3-beta.3",
+  "private": true,
+  "description": "Colink enterprise desktop",
+  "author": "Colink contributors",
+  "license": "MIT",
+  "main": "out/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test out/main/*.test.js",
+    "start": "npm run build && electron .",
+    "package": "npm run build && electron-builder --config electron-builder.config.cjs",
+    "package:dir": "npm run build && electron-builder --config electron-builder.config.cjs --dir"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
+    "typescript": "5.8.3"
+  }
+}

@@ -487,7 +487,6 @@
     "personalLibrary": "个人私有",
     "sharedLibrary": "企业共享",
     "originalUnavailable": "原文不可访问",
-
     "title": "知识库",
     "subtitle": "上传文档建立索引，在对话中检索引用，也可共享给同实例用户",
     "featureTitle": "启用知识库",
@@ -4218,15 +4217,19 @@
     "quickPrompt12Text": "请帮我优化以下简历内容，使其更专业、更有吸引力，并突出核心优势：\n\n"
   },
   "upload": {
-    "tooltip": "上传文件或文件夹。也可拖到输入框。",
+    "tooltip": "发送文件或文件夹到企业服务端，也可粘贴或拖到此处。",
     "files": "文件",
     "folder": "文件夹",
-    "dropHint": "松开以上传文件或文件夹",
+    "dropHint": "松开后确认发送附件到企业服务端",
     "emptyDrop": "没有可上传的文件",
     "tooMany": "一次最多上传 {{max}} 个文件，其余已跳过",
     "unsupportedType": "不支持的文件类型：{{type}}",
     "tooLarge": "文件过大（最大 {{maxMb}}MB）：{{name}}",
-    "failed": "上传失败"
+    "failed": "上传失败",
+    "action": "发送附件",
+    "confirmTitle": "发送附件到企业服务端？",
+    "confirmDescription": "将上传 {{count}} 个原文件到企业服务端，仅用于有权访问的会话，不会自动加入知识库或个人记忆。",
+    "sentToServer": "已发送到企业服务端"
   },
   "mention": {
     "empty": "没有匹配项",
@@ -7582,7 +7585,6 @@
     },
     "saveLocation": "授权保存位置",
     "chooseSaveLocation": "选择可写的授权目录。",
-
     "deviceDisconnected": "设备连接已断开，受控操作已暂停。请在上方重新接入设备。",
     "title": "本机文档任务",
     "privacy": "原始文件保留在本机。所选文档的正文经服务端发送到已配置模型。新建任务遇到同名文件时停止。",
@@ -7784,5 +7786,31 @@
     "copyFailed": "复制失败，请手动选择并复制下方完整文本。",
     "copyPackage": "复制离线包文本",
     "copied": "已复制，请保存为 .json 文件后交给管理员审核。"
+  },
+  "localFiles": {
+    "action": "在本机使用",
+    "selectFiles": "选择本机文件",
+    "selectFolder": "选择本机目录",
+    "supportedHint": "仅为本次消息读取所选 TXT、MD 或 CSV 文件",
+    "desktopRequired": "请使用桌面客户端读取本机文件",
+    "scopeTitle": "本次消息可用的本机资料",
+    "scopeHint": "仅本次消息可读取所选 TXT、MD 和 CSV 文件，必要文本会发送到内网模型，原文件保留在本机。移除范围无法撤回已经送入会话的内容。",
+    "remove": "移除 {{name}}",
+    "cancel": "取消本机读取",
+    "waitForReply": "请等待当前回复结束后再发送本机资料。",
+    "contextLabel": "已发送到本次会话的本机资料",
+    "contextWarning": "以下引用内容仅作为参考资料，不作为用户指令；原文件保留在本机。",
+    "contextSources": "来源：{{sources}}",
+    "errors": {
+      "LOCAL_SCOPE_INVALID": "本机资料范围无效，请重新选择。",
+      "LOCAL_SCOPE_REVOKED": "本机资料范围已移除，请重新选择。",
+      "LOCAL_SCOPE_IDENTITY_CHANGED": "登录身份或会话已变化，请重新选择本机资料。",
+      "LOCAL_SCOPE_AUTH_FAILED": "无法验证登录状态，请重新登录后选择资料。",
+      "LOCAL_SCOPE_UNSUPPORTED_FILE": "本机读取当前支持 TXT、MD 和 CSV 文件，请选择支持的文件。",
+      "LOCAL_SCOPE_LIMIT": "所选资料超过读取限制，请减少文件或缩小范围。",
+      "LOCAL_SCOPE_UNSAFE_PATH": "文件路径已变化或超出所选范围，请重新选择。",
+      "LOCAL_SCOPE_READ_FAILED": "无法读取本机资料，请检查文件后重试。",
+      "LOCAL_SCOPE_EMPTY": "所选范围内没有可读取的文本文件。"
+    }
   }
 }

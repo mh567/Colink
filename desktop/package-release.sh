@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build one native Octop desktop release: Dashboard → portable runtime → Wails package.
+# Build one native Colink desktop release: Dashboard → portable runtime → Electron package.
 # Run once per native platform; the GitHub Actions matrix runs all six variants.
 set -euo pipefail
 
@@ -52,15 +52,11 @@ if ! is_known_plat "$plat"; then
 fi
 host="$(host_plat)"
 if [[ "$plat" != "$host" ]]; then
-  echo "Wails release packages require a native runner: requested=${plat}, host=${host}" >&2
+  echo "Desktop release packages require a native runner: requested=${plat}, host=${host}" >&2
   exit 2
 fi
-if ! command -v wails3 >/dev/null 2>&1; then
-  echo "wails3 is required: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.13" >&2
-  exit 1
-fi
-if [[ "$plat" == windows-* ]] && ! command -v makensis >/dev/null 2>&1; then
-  echo "makensis is required for the Windows installer: choco install nsis" >&2
+if ! command -v npm >/dev/null 2>&1; then
+  echo "Node.js 24 and npm are required" >&2
   exit 1
 fi
 
@@ -101,13 +97,21 @@ echo "[desktop-release] verifying portable imports"
 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 "$portable_python" -B \
   "${REPO_ROOT}/desktop/portable/verify_imports.py" "${verify_args[@]}"
 
-echo "[desktop-release] packaging Wails application"
+case "$plat" in
+  darwin-*) target=mac; extension=dmg ;;
+  windows-*) target=win; extension=exe ;;
+  linux-*) target=linux; extension=deb ;;
+esac
+if [[ "$arch" == amd64 ]]; then arch=x64; fi
+
+echo "[desktop-release] packaging Electron application"
 (
   cd "${REPO_ROOT}/desktop/src"
-  wails3 task package "ARCH=${arch}" "PORTABLE_ZIP=${portable_zip}" "VERSION=${ver}"
+  npm ci
+  OCTOP_VERSION="$ver" OCTOP_PLATFORM="$plat" npm run package -- "--${target}" "--${arch}"
 )
 
-output="${REPO_ROOT}/desktop/src/bin/$(desktop_pkg_basename "$plat")"
+output="${REPO_ROOT}/desktop/src/release/Colink-desktop-${plat}-${ver}.${extension}"
 if [[ ! -s "$output" ]]; then
   echo "desktop release was not created: ${output}" >&2
   exit 1

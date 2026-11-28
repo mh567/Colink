@@ -222,13 +222,13 @@ curl -fsSL https://download.octop.cloud/octop/scripts/install.sh | bash -s -- --
 
 See [scripts/README.md](scripts/README.md) for all install options (`--version`, `--from-source`, `--mirror`, Windows flags).
 
-**Desktop app** (GUI, no terminal) — grab the artifact for your platform from [GitHub Releases](https://github.com/TencentCloud/Octop/releases/latest):
+**桌面客户端** — Colink Electron 的构建、企业服务连接和验证范围见 [desktop/README.md](desktop/README.md)。新版使用独立数据目录，不导入旧版账号、会话或目录授权。各平台构建产物如下；构建成功不代表已完成目标系统验收。
 
 | Platform | Artifact |
 |----------|----------|
-| Windows | `Octop-desktop-windows-amd64-<version>.exe` (64-bit) / `Octop-desktop-windows-arm64-<version>.exe` (ARM64) — NSIS installer |
-| macOS | `Octop-desktop-darwin-arm64-<version>.dmg` (Apple Silicon) / `Octop-desktop-darwin-amd64-<version>.dmg` (Intel) |
-| Linux | `Octop-desktop-linux-amd64-<version>.tar.gz` / `Octop-desktop-linux-arm64-<version>.tar.gz` |
+| Windows | `Colink-desktop-windows-amd64-<version>.exe` / `Colink-desktop-windows-arm64-<version>.exe` — NSIS installer |
+| macOS | `Colink-desktop-darwin-arm64-<version>.dmg` / `Colink-desktop-darwin-amd64-<version>.dmg` |
+| Linux | `Colink-desktop-linux-amd64-<version>.deb` / `Colink-desktop-linux-arm64-<version>.deb` |
 | FnOS NAS | `Octop-fnos-docker-lite-<version>.fpk` (smaller image) / `Octop-fnos-docker-<version>.fpk` (full: desktop, OCR, local models) / `Octop-fnos-native-amd64-<version>.fpk` (x86_64, no Docker) / `Octop-fnos-native-arm64-<version>.fpk` (ARM64 fallback if no Docker) — install via App Center |
 
 See [desktop/README.md](desktop/README.md) for the desktop shell and [fnos/README.md](fnos/README.md) for the FnOS packaging guide.

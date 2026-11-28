@@ -6,6 +6,7 @@ import pytest
 
 from octop.infra.gateway.threads import ThreadRegistry
 from tests.support.auth import create_user, resolve_user_id
+from tests.support.http import chat_ws_path, ws_chat_turn, ws_connect
 
 
 @pytest.fixture
@@ -162,6 +163,58 @@ async def test_shared_agent_does_not_expose_owner_inbound_attachment(env) -> Non
     )
     assert response.status_code == 403, response.text
     assert b"shared attachment" not in response.content
+
+
+@pytest.mark.parametrize("actor", ["peer", "admin"])
+@pytest.mark.parametrize("block_type", ["file", "image", "image_url"])
+async def test_shared_agent_rejects_owner_attachment_in_other_users_chat(
+    env, actor: str, block_type: str
+) -> None:
+    client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
+    auth = peer_auth if actor == "peer" else env[2]
+    uploaded = await client.post(
+        f"/api/agents/{agent_id}/upload",
+        headers=owner_auth,
+        files={"file": ("private.txt", b"owner-only attachment", "text/plain")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    async with ws_connect(client._octop_app, chat_ws_path(agent_id, auth)) as ws:
+        await ws.send_json(
+            {
+                "type": "user_turn",
+                "text": "Read this attachment",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": block_type,
+                                "workspace_path": uploaded.json()["workspace_path"],
+                                "filename": "private.txt",
+                                "media_type": "text/plain",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        frames = await ws.drain_turn()
+
+    assert frames[-1]["type"] == "error", frames
+    assert frames[-1]["message"] == "agent not owned by user"
+    threads = await client.get(f"/api/agents/{agent_id}/threads", headers=auth)
+    assert threads.status_code == 200, threads.text
+    assert threads.json() == []
+
+
+async def test_shared_agent_still_allows_peer_text_chat(env) -> None:
+    client, _owner_auth, peer_auth, agent_id = await _shared_agent(env)
+
+    frames = await ws_chat_turn(client, agent_id, peer_auth, text="Hello")
+
+    assert frames[-1]["type"] == "done", frames
+    assert all(frame["type"] != "error" for frame in frames)
 
 
 async def test_unshare_hides_agent_from_peer(env) -> None:

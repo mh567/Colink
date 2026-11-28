@@ -19,6 +19,10 @@ export const FORBIDDEN_EVENT = "octop:forbidden";
 export const ACCESS_TOKEN_RESPONSE_HEADER = "X-Octop-Access-Token";
 /** Keep an explicitly connected native device on the renewed login session. */
 export const AUTH_TOKEN_RENEWED_EVENT = "octop:auth-token-renewed";
+export interface AuthTokenRenewal {
+  previousToken: string;
+  accessToken: string;
+}
 
 /** Quiet error thrown when setup lockdown blocks a non-wizard API call. */
 export class SetupRequiredError extends Error {
@@ -102,12 +106,22 @@ export function clearAuthToken() {
   setActiveAgentId(null);
 }
 
-/** Persist a sliding-renewed access token from an API response, if present. */
-export function applyRenewedAccessToken(response: Response): void {
+/** Apply renewal only while the request's original login is still current. */
+export function applyRenewedAccessToken(
+  response: Response,
+  requestHeaders: HeadersInit,
+): void {
+  const previousToken = new Headers(requestHeaders)
+    .get("Authorization")
+    ?.match(/^Bearer\s+(\S+)$/i)?.[1];
   const renewed = response.headers.get(ACCESS_TOKEN_RESPONSE_HEADER);
-  if (renewed) {
+  if (renewed && previousToken && previousToken === getAuthToken()) {
     setAuthToken(renewed, !isSessionOnlyAuth());
-    window.dispatchEvent(new Event(AUTH_TOKEN_RENEWED_EVENT));
+    window.dispatchEvent(
+      new CustomEvent<AuthTokenRenewal>(AUTH_TOKEN_RENEWED_EVENT, {
+        detail: { previousToken, accessToken: renewed },
+      }),
+    );
   }
 }
 
@@ -402,7 +416,7 @@ export async function request<T = unknown>(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
+  applyRenewedAccessToken(response, headers);
 
   if (!response.ok) {
     if (response.status === 403 && isAgentScopedPath(path)) {
@@ -445,10 +459,13 @@ export async function requestBlob(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = {
+    ...buildAuthHeaders(path),
+    ...(options.headers as Record<string, string>),
+  };
   const response = await fetch(url, {
     ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    headers,
   });
 
   if (await check503ForSetupRequired(path, response)) {
@@ -456,7 +473,7 @@ export async function requestBlob(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
+  applyRenewedAccessToken(response, headers);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -498,10 +515,13 @@ export async function probeAuthResource(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = {
+    ...buildAuthHeaders(path),
+    ...(options.headers as Record<string, string>),
+  };
   const response = await fetch(url, {
     ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    headers,
   });
 
   if (await check503ForSetupRequired(path, response)) {
@@ -509,7 +529,7 @@ export async function probeAuthResource(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
+  applyRenewedAccessToken(response, headers);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -538,10 +558,13 @@ export async function requestStream(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = {
+    ...buildAuthHeaders(path),
+    ...(options.headers as Record<string, string>),
+  };
   const response = await fetch(url, {
     ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    headers,
   });
 
   if (await check503ForSetupRequired(path, response)) {
@@ -549,7 +572,7 @@ export async function requestStream(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
+  applyRenewedAccessToken(response, headers);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -586,6 +609,7 @@ export async function requestUpload<T = unknown>(
 
   const url = getApiUrl(path);
   const headers = buildAuthHeaders(path);
+  const renewalHeaders = new Headers(headers);
   const method = options.method ?? "POST";
 
   return new Promise<T>((resolve, reject) => {
@@ -604,6 +628,7 @@ export async function requestUpload<T = unknown>(
           : Object.entries(options.headers);
       for (const [k, v] of extraEntries) {
         xhr.setRequestHeader(k, String(v));
+        renewalHeaders.append(k, String(v));
       }
     }
 
@@ -655,7 +680,7 @@ export async function requestUpload<T = unknown>(
           return;
         }
 
-        applyRenewedAccessToken(response);
+        applyRenewedAccessToken(response, renewalHeaders);
 
         if (!response.ok) {
           // Same shape as request() so parseApiError() can read the error envelope.

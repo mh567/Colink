@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Colink</title>
+    <link rel="stylesheet" href="connect.css" />
+  </head>
+  <body>
+    <main>
+      <div class="brand">Colink</div>
+      <h1 id="title"></h1>
+      <form id="connection">
+        <label id="label" for="server"></label>
+        <input
+          id="server"
+          type="url"
+          autocomplete="url"
+          placeholder="https://"
+          required
+          aria-describedby="hint"
+        />
+        <p id="hint"></p>
+        <p id="error" role="alert"></p>
+        <button id="connect" type="submit"></button>
+      </form>
+      <button id="local" type="button"></button>
+    </main>
+    <script src="connect.js"></script>
+  </body>
+</html>

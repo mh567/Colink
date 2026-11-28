@@ -100,6 +100,7 @@ export default function ChatInputPreviewBar({
   selectedModel,
   onModelChange,
 }: ChatInputPreviewBarProps) {
+  const { t } = useTranslation();
   // Show the chip whenever a model is explicitly selected, mirroring how
   // connectors behave — not only when it differs from the
   // agent default (that was the old "override" behavior).
@@ -125,23 +126,66 @@ export default function ChatInputPreviewBar({
   );
 
   return (
-    <div className={styles.imagePreviewBar}>
-      {imageAttachments.length > 0 ? (
-        <Image.PreviewGroup>
-          {attachments.map((attachment, idx) =>
-            inferKindFromNameAndMime(
-              attachment.mediaType,
-              attachment.filename,
-              attachment.kind,
-            ) === "image" ? (
+    <>
+      {attachments.length > 0 && (
+        <span className={styles.attachmentDestination}>
+          {t("upload.sentToServer", "Sent to the enterprise server")}
+        </span>
+      )}
+      <div className={styles.imagePreviewBar}>
+        {imageAttachments.length > 0 ? (
+          <Image.PreviewGroup>
+            {attachments.map((attachment, idx) =>
+              inferKindFromNameAndMime(
+                attachment.mediaType,
+                attachment.filename,
+                attachment.kind,
+              ) === "image" ? (
+                <div
+                  key={`${attachment.url}-${idx}`}
+                  className={styles.imagePreviewItem}
+                >
+                  <ComposerImagePreview
+                    url={attachment.url}
+                    alt={attachment.filename || "preview"}
+                    className={styles.imagePreviewThumb}
+                  />
+                  <button
+                    className={styles.imagePreviewRemove}
+                    onClick={() => onRemoveAttachment(idx)}
+                    type="button"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : null,
+            )}
+          </Image.PreviewGroup>
+        ) : null}
+        {attachments.map((attachment, idx) => {
+          const kind = inferKindFromNameAndMime(
+            attachment.mediaType,
+            attachment.filename,
+            attachment.kind,
+          );
+          if (kind === "image") return null;
+          if (kind === "video" || kind === "audio") {
+            return (
               <div
                 key={`${attachment.url}-${idx}`}
-                className={styles.imagePreviewItem}
+                className={
+                  kind === "video"
+                    ? styles.composerMediaItem
+                    : styles.attachmentPreviewCard
+                }
               >
-                <ComposerImagePreview
+                <ChatMediaPlayer
                   url={attachment.url}
-                  alt={attachment.filename || "preview"}
-                  className={styles.imagePreviewThumb}
+                  filename={attachment.filename}
+                  workspacePath={attachment.workspacePath}
+                  mediaType={attachment.mediaType}
+                  kind={kind}
+                  compact
                 />
                 <button
                   className={styles.imagePreviewRemove}
@@ -151,35 +195,19 @@ export default function ChatInputPreviewBar({
                   <X size={12} />
                 </button>
               </div>
-            ) : null,
-          )}
-        </Image.PreviewGroup>
-      ) : null}
-      {attachments.map((attachment, idx) => {
-        const kind = inferKindFromNameAndMime(
-          attachment.mediaType,
-          attachment.filename,
-          attachment.kind,
-        );
-        if (kind === "image") return null;
-        if (kind === "video" || kind === "audio") {
+            );
+          }
           return (
             <div
               key={`${attachment.url}-${idx}`}
-              className={
-                kind === "video"
-                  ? styles.composerMediaItem
-                  : styles.attachmentPreviewCard
-              }
+              className={styles.attachmentPreviewCard}
             >
-              <ChatMediaPlayer
-                url={attachment.url}
-                filename={attachment.filename}
-                workspacePath={attachment.workspacePath}
-                mediaType={attachment.mediaType}
-                kind={kind}
-                compact
-              />
+              <div className={styles.attachmentPreviewMeta}>
+                <FileText size={14} className={styles.attachmentPreviewIcon} />
+                <span className={styles.attachmentPreviewName}>
+                  {attachment.filename || attachment.url}
+                </span>
+              </div>
               <button
                 className={styles.imagePreviewRemove}
                 onClick={() => onRemoveAttachment(idx)}
@@ -189,81 +217,65 @@ export default function ChatInputPreviewBar({
               </button>
             </div>
           );
-        }
-        return (
-          <div
-            key={`${attachment.url}-${idx}`}
-            className={styles.attachmentPreviewCard}
-          >
-            <div className={styles.attachmentPreviewMeta}>
-              <FileText size={14} className={styles.attachmentPreviewIcon} />
-              <span className={styles.attachmentPreviewName}>
-                {attachment.filename || attachment.url}
-              </span>
+        })}
+        {uploading && (
+          <div className={styles.imagePreviewItem}>
+            <div className={styles.imagePreviewLoading}>
+              <div className={styles.uploadSpinner} />
             </div>
-            <button
-              className={styles.imagePreviewRemove}
-              onClick={() => onRemoveAttachment(idx)}
-              type="button"
-            >
-              <X size={12} />
-            </button>
           </div>
-        );
-      })}
-      {uploading && (
-        <div className={styles.imagePreviewItem}>
-          <div className={styles.imagePreviewLoading}>
-            <div className={styles.uploadSpinner} />
-          </div>
-        </div>
-      )}
-      {availableConnectors &&
-        onConnectorsChange &&
-        selectedConnectors.map((name) => {
-          const c = availableConnectors.find((x) => x.mcp_server_name === name);
-          if (!c) return null;
-          return (
-            <ContextChip
-              key={name}
-              variant="connector"
-              icon={<ConnectorLogo kind={c.kind} size={16} />}
-              label={c.label}
-              onRemove={() =>
-                onConnectorsChange(selectedConnectors.filter((n) => n !== name))
-              }
-            />
-          );
-        })}
-      {availableKnowledgeBases &&
-        onKnowledgeBaseIdsChange &&
-        selectedKnowledgeBaseIds.map((id) => {
-          const knowledgeBase = availableKnowledgeBases.find(
-            (base) => base.id === id,
-          );
-          if (!knowledgeBase) return null;
-          return (
-            <ContextChip
-              key={id}
-              variant="knowledge"
-              icon={knowledgeIconForName(knowledgeBase.icon_name, 12)}
-              label={knowledgeBase.name}
-              onRemove={() =>
-                onKnowledgeBaseIdsChange(
-                  selectedKnowledgeBaseIds.filter((baseId) => baseId !== id),
-                )
-              }
-            />
-          );
-        })}
-      {showModelChip && (
-        <ContextChip
-          variant="model"
-          icon={<Cpu size={12} strokeWidth={2.2} aria-hidden />}
-          label={modelShortLabel(selectedModelValue)}
-          onRemove={() => onModelChange?.(null)}
-        />
-      )}
-    </div>
+        )}
+        {availableConnectors &&
+          onConnectorsChange &&
+          selectedConnectors.map((name) => {
+            const c = availableConnectors.find(
+              (x) => x.mcp_server_name === name,
+            );
+            if (!c) return null;
+            return (
+              <ContextChip
+                key={name}
+                variant="connector"
+                icon={<ConnectorLogo kind={c.kind} size={16} />}
+                label={c.label}
+                onRemove={() =>
+                  onConnectorsChange(
+                    selectedConnectors.filter((n) => n !== name),
+                  )
+                }
+              />
+            );
+          })}
+        {availableKnowledgeBases &&
+          onKnowledgeBaseIdsChange &&
+          selectedKnowledgeBaseIds.map((id) => {
+            const knowledgeBase = availableKnowledgeBases.find(
+              (base) => base.id === id,
+            );
+            if (!knowledgeBase) return null;
+            return (
+              <ContextChip
+                key={id}
+                variant="knowledge"
+                icon={knowledgeIconForName(knowledgeBase.icon_name, 12)}
+                label={knowledgeBase.name}
+                onRemove={() =>
+                  onKnowledgeBaseIdsChange(
+                    selectedKnowledgeBaseIds.filter((baseId) => baseId !== id),
+                  )
+                }
+              />
+            );
+          })}
+        {showModelChip && (
+          <ContextChip
+            variant="model"
+            icon={<Cpu size={12} strokeWidth={2.2} aria-hidden />}
+            label={modelShortLabel(selectedModelValue)}
+            onRemove={() => onModelChange?.(null)}
+          />
+        )}
+      </div>
+    </>
   );
 }

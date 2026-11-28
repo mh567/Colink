@@ -10,7 +10,7 @@ import {
 } from "../../hooks/useCurrentUser";
 import { routeConfigs } from "../../routes";
 import AuthGuard from "../../components/AuthGuard";
-import { applyRenewedAccessToken } from "../../api/request";
+import { applyRenewedAccessToken, getAuthToken } from "../../api/request";
 
 vi.mock("../../i18n", () => ({ default: { language: "zh" } }));
 vi.mock("../../utils/locale", () => ({
@@ -293,6 +293,7 @@ describe("设备页", () => {
         new Response(null, {
           headers: { "X-Octop-Access-Token": "renewed-token" },
         }),
+        { Authorization: `Bearer ${getAuthToken()}` },
       ),
     );
     expect(invoke).toHaveBeenLastCalledWith(
@@ -335,6 +336,7 @@ describe("设备页", () => {
         new Response(null, {
           headers: { "X-Octop-Access-Token": "next-token" },
         }),
+        { Authorization: `Bearer ${getAuthToken()}` },
       ),
     );
     expect(invoke).not.toHaveBeenCalled();

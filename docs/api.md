@@ -124,6 +124,8 @@ does not set these headers itself.
 
 ## 本人设备接入
 
+本节及后续设备任务接口供保留的 Wails 客户端使用。新版 Electron 的普通聊天和单次本机文本读取不要求设备审批或预先绑定目录，见[统一对话与本机材料](#统一对话与本机材料)。
+
 管理员继续在“用户管理”创建、停用和重置员工账号；重置口令会使旧口令和旧访问令牌失效，停用后拒绝登录及后续产品请求。
 
 员工在桌面客户端设置中填写企业服务地址，重启后登录，从“本人设备”发起接入。客户端在本机保存 Ed25519 私钥，只发送公钥并签署服务端的一次性挑战。首次申请为 `pending`；管理员在同页的设备管理区域核对员工和设备 ID 后批准为 `approved`，也可撤销为 `revoked`。浏览器页面可以查看状态和管理登记，不能代替桌面客户端证明当前设备。一个设备公钥只绑定一个员工；管理员身份不能接管该员工的设备连接。
@@ -313,6 +315,21 @@ display the failure separately. Team rooms publish an `error` frame followed by
 `done`; stored error bubbles carry `additional_kwargs.octop_stream_error` for
 history display. These diagnostics and automatic team failure notifications do
 not become long-term memory.
+
+### 统一对话与本机材料
+
+Electron 沿用上述登录、会话和聊天接口，一个输入框可同时提交问题、已确认上传的附件和本次本机材料。普通附件发送前确认原件将进入企业服务器；上传、下载、媒体预览和发送已有附件路径均要求该专家所有者的登录身份，管理员身份不代替所有者权限。共享专家的其他使用者仍可纯文本聊天。普通附件保存在专家工作区 `inbound/`，不会自动导入知识库；上传和聊天均不启用默认关闭的记忆采集。
+
+“在本机使用”通过隔离的原生桥 `window.colinkDesktop.localFiles` 读取用户刚选定的 UTF-8 TXT、MD、CSV。原件留在本机，提取的文字作为本条消息内容经服务端发送到模型，留在会话中；不会调用附件上传或知识库导入接口。普通附件和本机材料不会自动启用长期记忆。
+
+| 方法 | 参数与结果 |
+|------|------------|
+| `select` | `{kind: "files" \| "directory", accessToken, agentId, conversationId, locale?}` → `[{id,name,path,kind}]`，由原生文件选择器确定范围 |
+| `consume` | `{ids,accessToken,agentId,conversationId,locale?}` → `{text,sources:[{name,path}]}`，核对当前登录身份、专家和会话后单次读取 |
+| `remove` | `id` → 移除尚未使用的范围 |
+| `clear` | 无参数 → 撤销当前窗口的全部范围 |
+
+已有会话使用实际 `thread_id`，未发送的草稿使用 `draft:<UUID>`。范围仅保存在原生进程内存，绑定用户、专家和当前会话；发送、移除、换会话、退出账号或窗口离开页面后失效。移除只阻止后续读取，不撤回已经发送的文字。桥不接受任意路径读写或命令执行；符号链接、超限材料和不支持的格式明确报错。Office 文档的原生处理仍由后续专项任务接入，浏览器端不提供该桥。
 
 ### Legacy SSE
 
@@ -795,11 +812,11 @@ endpoint (public, mounted directly in `api/app.py`).
 | `GET` | `/agents/{aid}/terminal/context` | owner | recent terminal context for the AI helper |
 | `WS`/`POST`/`GET`/… | `/browser/...` | user | octop-browser sessions, live stream, record/replay |
 | `POST` | `/browser/shutdown` | user | stop the current user's Octop-managed Chrome |
-| `POST` | `/agents/{aid}/upload` | user | multipart upload → `{workspace}/inbound/` |
-| `POST` | `/agents/{aid}/files/access-urls` | user | refresh inbound media URLs (signed) |
-| `GET`  | `/agents/{aid}/files/{path}` | owner | read an inbound file |
+| `POST` | `/agents/{aid}/upload` | agent owner only | multipart upload → `{workspace}/inbound/` |
 | `POST` | `/downloads/link` | user | multipart `file` → `{url, filename, expires_in}`: short-lived link for in-app browsers (WeChat, …) that cannot save `blob:` downloads; capped at `max_upload_mb` |
 | `GET`  | `/downloads/link/{token}` | public (token) | serve that file as an attachment until it expires (10 min); the token is the only credential |
+
+聊天附件响应中的 `access_url` 指向现有工作区下载或媒体预览接口（`/agents/{aid}/workspace/download?path=...`、`/agents/{aid}/media/preview?source=...&mime_type=...`），由登录身份校验所有权，不提供独立的 `/files/*` 附件接口。
 
 ## Updates, ollama, i18n, plugins, slash, preferences
 

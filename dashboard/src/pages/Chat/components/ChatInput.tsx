@@ -32,6 +32,8 @@ import ChatInputActionsRow from "./ChatInputActionsRow";
 import ChatQueuedMessages from "./ChatQueuedMessages";
 import { useVoiceInput } from "../../../hooks/useVoiceInput";
 import { useChatAttachments } from "../hooks/useChatAttachments";
+import { useChatLocalFiles } from "../hooks/useChatLocalFiles";
+import ChatLocalFiles from "./ChatLocalFiles";
 import { onSteerRestore } from "../hooks/chatStore";
 import { useSlashMentionInput } from "../hooks/useSlashMentionInput";
 import { stripThinkingTags } from "../utils/chatAttachments";
@@ -274,6 +276,31 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       onText: applyVoiceText,
     });
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const uploadDialog = useRef<{ destroy: () => void } | null>(null);
+    const confirmUpload = useCallback(
+      (files: File[]) =>
+        new Promise<boolean>((resolve) => {
+          uploadDialog.current = modal.confirm({
+            title: t(
+              "upload.confirmTitle",
+              "Send attachments to the enterprise server?",
+            ),
+            content: t("upload.confirmDescription", {
+              count: files.length,
+              defaultValue:
+                "The {{count}} original files will be uploaded to the enterprise server for authorized conversation access. They will not be added to a knowledge base or personal memory automatically.",
+            }),
+            okText: t("upload.action", "Send attachment"),
+            cancelText: t("common.cancel", "Cancel"),
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
+            afterClose: () => resolve(false),
+          });
+        }),
+      [modal, t],
+    );
+    useEffect(() => () => uploadDialog.current?.destroy(), [agentId, threadId]);
+    const localFiles = useChatLocalFiles(agentId, threadId);
     const {
       attachments,
       uploading,
@@ -291,7 +318,17 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       handleDragLeave,
       handleDragOver,
       handleDrop,
-    } = useChatAttachments(agentId);
+    } = useChatAttachments(agentId, { threadId, confirmUpload });
+    const handleNewChat = () => {
+      uploadDialog.current?.destroy();
+      clearAttachments();
+      localFiles.clear();
+      onNewChat();
+    };
+    const handleCancel = () => {
+      localFiles.clear();
+      onCancel();
+    };
 
     // Expose an imperative handle so the parent can push a new prefill without
     // triggering a prop change that would cause a re-render cascade.
@@ -503,9 +540,12 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       agentId,
       selectedConnectors,
       onConnectorsChange,
-      onSend,
-      onNewChat,
-      onCancel,
+      onSend: (command) => {
+        localFiles.clear();
+        onSend(command);
+      },
+      onNewChat: handleNewChat,
+      onCancel: handleCancel,
       isStreaming,
       onSubmitRef: submitRef,
       enterToSend: !isMobile,
@@ -610,7 +650,15 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
 
     const submitMessage = useCallback(() => {
       const trimmed = text.trim();
-      if ((!trimmed && attachments.length === 0) || disabled) return;
+      if (
+        (!trimmed &&
+          attachments.length === 0 &&
+          localFiles.scopes.length === 0) ||
+        disabled ||
+        uploading ||
+        localFiles.busy
+      )
+        return;
       const wireText = materializeSkillSlashes(trimmed, skillTokenRefs).trim();
       const slashItem = matchSlashCommand(wireText);
       if (slashItem && slashItem.spec.client_action !== "none") {
@@ -621,6 +669,16 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       }
       const ta = textareaRef.current;
       const prevHeight = ta ? ta.getBoundingClientRect().height : 0;
+
+      if (localFiles.scopes.length > 0 && (isStreaming || holdSend)) {
+        antMessage.warning(
+          t(
+            "localFiles.waitForReply",
+            "Wait for the current reply before sending local material.",
+          ),
+        );
+        return;
+      }
 
       if ((isStreaming && !isTeam) || holdSend) {
         if (!onQueue) return;
@@ -646,11 +704,20 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         return;
       }
 
-      onSend(wireText, attachments.length > 0 ? attachments : undefined);
-      resetComposerAfterSubmit(prevHeight, trimmed);
+      if (localFiles.scopes.length > 0) {
+        void localFiles.consume(wireText, (message) => {
+          onSend(message, attachments.length > 0 ? attachments : undefined);
+          resetComposerAfterSubmit(prevHeight, trimmed);
+        });
+      } else {
+        onSend(wireText, attachments.length > 0 ? attachments : undefined);
+        resetComposerAfterSubmit(prevHeight, trimmed);
+      }
     }, [
       text,
       attachments,
+      uploading,
+      localFiles,
       onSend,
       onQueue,
       disabled,
@@ -849,7 +916,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     ]);
 
     const canSend = Boolean(
-      (text.trim() || attachments.length > 0) && !disabled,
+      (text.trim() || attachments.length > 0 || localFiles.scopes.length > 0) &&
+        !disabled &&
+        !uploading &&
+        !localFiles.busy,
     );
     const showDrop = dragOver || nativeDropActive;
 
@@ -892,6 +962,13 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
             onKnowledgeBaseIdsChange={onKnowledgeBaseIdsChange}
             onModelChange={onModelChange}
           />
+          <ChatLocalFiles
+            scopes={localFiles.scopes}
+            busy={localFiles.busy}
+            error={localFiles.error}
+            onRemove={(id) => void localFiles.remove(id)}
+            onCancel={localFiles.clear}
+          />
 
           <div className={styles.inputRow} style={{ position: "relative" }}>
             <textarea
@@ -902,7 +979,17 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                 userHasEditedRef.current = true;
                 handleTextChange(e.target.value);
               }}
-              onKeyDown={handleKeyDown}
+              onKeyDown={(event) => {
+                if (
+                  (uploading || localFiles.busy) &&
+                  (event.key === "Enter" || event.key === "Tab")
+                ) {
+                  if (event.key === "Enter" && !event.shiftKey)
+                    event.preventDefault();
+                  return;
+                }
+                handleKeyDown(event);
+              }}
               onPaste={handlePaste}
               placeholder={
                 isStreaming || holdSend
@@ -913,7 +1000,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   : t("chatWelcome.inputPlaceholder", "Message Octop...")
               }
               rows={1}
-              disabled={disabled}
+              disabled={disabled || localFiles.busy}
               enterKeyHint={isMobile ? "enter" : undefined}
             />
             {/*
@@ -972,7 +1059,9 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                 groups={slashMenuGroups}
                 flatItems={slashMenuFlat}
                 activeIndex={slashMenuIndex}
-                disabled={isStreaming || disabled}
+                disabled={
+                  isStreaming || disabled || uploading || localFiles.busy
+                }
                 variant="inline"
                 itemsGridClassName={styles.slashMenuGrid}
                 itemClassName={styles.slashMenuItem}
@@ -1049,10 +1138,15 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
             onSlashShortcutSelect={handleSlashSelect}
             onFileSelect={handleFileSelect}
             onFolderSelect={handleFolderSelect}
-            onNewChat={onNewChat}
+            localFilesAvailable={localFiles.available}
+            localFilesBusy={localFiles.busy}
+            localFilesDisabled={isStreaming || holdSend || disabled}
+            onLocalFileSelect={() => void localFiles.select("files")}
+            onLocalFolderSelect={() => void localFiles.select("directory")}
+            onNewChat={handleNewChat}
             onPolish={() => void handlePolish()}
             onToggleVoice={() => toggleVoice()}
-            onCancel={onCancel}
+            onCancel={handleCancel}
             onSubmit={submitMessage}
           />
 
