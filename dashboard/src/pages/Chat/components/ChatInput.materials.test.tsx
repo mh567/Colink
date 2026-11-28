@@ -24,6 +24,8 @@ import en from "../../../locales/en.json";
 import {
   applyRenewedAccessToken,
   clearAuthToken,
+  getAuthToken,
+  request,
   setAuthToken,
 } from "../../../api/request";
 import ChatInput from "./ChatInput";
@@ -219,6 +221,7 @@ describe("chat material choices", () => {
             new Response(null, {
               headers: { "X-Octop-Access-Token": "another-account-renewed" },
             }),
+            { Authorization: "Bearer another-account" },
           );
       }
       await act(async () => {
@@ -247,6 +250,7 @@ describe("chat material choices", () => {
         new Response(null, {
           headers: { "X-Octop-Access-Token": token },
         }),
+        { Authorization: `Bearer ${getAuthToken()}` },
       );
     await act(async () => {
       finishReading({ text: "Private material", sources: [] });
@@ -257,6 +261,52 @@ describe("chat material choices", () => {
     );
     expect(screen.getByRole("textbox")).toHaveValue("");
     expect(screen.queryByText(scope.path)).not.toBeInTheDocument();
+  });
+
+  it("keeps local material with the current account when an old account's response arrives", async () => {
+    let finishOldRequest!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOldRequest = resolve;
+        }),
+    );
+    setAuthToken("account-A");
+    const oldRequest = request("/auth/me");
+    setAuthToken("account-B");
+    let finishReading!: (value: { text: string; sources: [] }) => void;
+    native.consume.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishReading = resolve;
+        }),
+    );
+    const onSend = vi.fn();
+    render(composer({ onSend, initialText: "Summarize" }));
+    await selectLocalFile();
+    fireEvent.click(screen.getByTitle("Send"));
+    expect(native.consume).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: "account-B" }),
+    );
+    await act(async () => {
+      finishOldRequest(
+        Response.json(
+          {},
+          {
+            headers: { "X-Octop-Access-Token": "account-A-renewed" },
+          },
+        ),
+      );
+      await oldRequest;
+    });
+    await act(async () => {
+      finishReading({ text: "B private material", sources: [] });
+    });
+    expect(getAuthToken()).toBe("account-B");
+    expect(onSend).toHaveBeenCalledWith(
+      expect.stringContaining("B private material"),
+      undefined,
+    );
   });
 
   it("explains the upload destination before sending and respects cancellation", async () => {
