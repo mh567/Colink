@@ -26,12 +26,15 @@ const limitedUser = {
 } as OctopUser;
 
 function catalog() {
-  return buildNavSections(adminUser, { mobileEnabled: true });
+  return buildNavSections(adminUser, {
+    mobileEnabled: true,
+    legacyDevices: true,
+  });
 }
 
 describe("sidebarNavLayout", () => {
-  it("shows the new devices entry in older layouts while respecting explicit hiding", () => {
-    const sections = buildNavSections(limitedUser);
+  it("shows the Wails devices entry in older layouts while respecting explicit hiding", () => {
+    const sections = buildNavSections(limitedUser, { legacyDevices: true });
     expect(
       sectionsFromLayout(sections, {
         groups: [],

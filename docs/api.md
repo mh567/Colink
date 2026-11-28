@@ -122,13 +122,13 @@ does not set these headers itself.
 | `POST`   | `/users/{id}/unlock-login` | admin | `204` (clears the lockout) |
 | `DELETE` | `/users/{id}` | admin | `204` |
 
+管理员在“用户管理”创建、停用和重置员工账号。重置口令会使旧口令和旧访问令牌失效。停用后拒绝登录及后续产品请求。
+
 ## 本人设备接入
 
-本节及后续设备任务接口供保留的 Wails 客户端使用。新版 Electron 的普通聊天和单次本机文本读取不要求设备审批或预先绑定目录，见[统一对话与本机材料](#统一对话与本机材料)。
+本节及后续设备任务接口供保留的 Wails 客户端使用。网页和 Electron 的旧设备、目录和任务地址会转到统一对话。Electron 的普通聊天和单次本机文本读取无需设备审批或预先绑定目录，见[统一对话与本机材料](#统一对话与本机材料)。
 
-管理员继续在“用户管理”创建、停用和重置员工账号；重置口令会使旧口令和旧访问令牌失效，停用后拒绝登录及后续产品请求。
-
-员工在桌面客户端设置中填写企业服务地址，重启后登录，从“本人设备”发起接入。客户端在本机保存 Ed25519 私钥，只发送公钥并签署服务端的一次性挑战。首次申请为 `pending`；管理员在同页的设备管理区域核对员工和设备 ID 后批准为 `approved`，也可撤销为 `revoked`。浏览器页面可以查看状态和管理登记，不能代替桌面客户端证明当前设备。一个设备公钥只绑定一个员工；管理员身份不能接管该员工的设备连接。
+员工在 Wails 设置中填写企业服务地址，重启后登录，从“本人设备”发起接入。客户端在本机保存 Ed25519 私钥，只发送公钥并签署服务端的一次性挑战。首次申请为 `pending`；管理员在同页的设备管理区域核对员工和设备 ID 后批准为 `approved`，也可撤销为 `revoked`。一个设备公钥只绑定一个员工。设备连接只允许设备所属员工使用。
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
@@ -266,7 +266,7 @@ Windows 的读写授权目录支持经确认的覆盖和删除。Linux 使用[�
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| `GET`    | `/agents` | user | `[{id, agent_id, name, persona_mbti, state, unread_count, ...}]` |
+| `GET`    | `/agents` | user | 默认返回本人专家和获准使用的共享专家，分组共享要求当前账号属于授权组。`scope=all` 要求用户管理权限，对其他账号的专家只返回管理摘要。 |
 | `POST`   | `/agents` | user | body `{name, persona_mbti?, default_model?, system_prompt?, description?, icon?, template_name?, config?}` → `201` |
 | `GET`    | `/agents/{id}` | owner | full agent row |
 | `PATCH`  | `/agents/{id}` | owner | body subset of create body |

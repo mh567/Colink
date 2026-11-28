@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from octop.infra.gateway.threads import ThreadRegistry
+from octop.infra.users.groups import RESOURCE_EXPERT
 from tests.support.auth import create_user, resolve_user_id
 from tests.support.http import chat_ws_path, ws_chat_turn, ws_connect
 
@@ -44,6 +45,24 @@ async def test_shared_agent_appears_for_other_user(env) -> None:
     assert response.status_code == 200
     assert response.json()["is_shared"] is True
     assert response.json()["is_owner"] is False
+
+
+@pytest.mark.parametrize("shared", [True, False], ids=["group-shared", "private"])
+async def test_agent_list_respects_owner_and_group_membership_for_all_roles(env, shared):
+    client, owner_auth, peer_auth, agent_id = await _shared_agent(env)
+    _, srv, admin_auth = env
+    repos = srv.services.repos
+    group = repos.user_group_repo.create(name="Report team", description=None)
+    peer_id = await resolve_user_id(client, admin_auth, "share_peer")
+    repos.user_group_member_repo.add(group.user_group_id, peer_id)
+    repos.resource_group_grant_repo.replace(RESOURCE_EXPERT, agent_id, [group.user_group_id])
+    repos.agent_repo.set_shared(agent_id, shared)
+
+    for auth, visible in ((owner_auth, True), (peer_auth, shared), (admin_auth, False)):
+        response = await client.get("/api/agents", headers=auth)
+        assert response.status_code == 200, response.text
+        listed = {row["agent_id"] for row in response.json()}
+        assert (agent_id in listed) is visible
 
 
 async def test_employee_cannot_create_or_update_directly_shared_agent(env) -> None:

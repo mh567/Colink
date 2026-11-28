@@ -251,7 +251,7 @@ class AgentRepo:
             sql += " AND a.user_id != ?"
             params.append(exclude_user_id)
         if viewer_user_id is not None:
-            sql += f" AND {group_visibility_sql(RESOURCE_EXPERT, 'a.agent_id')}"
+            sql += f" AND ({group_visibility_sql(RESOURCE_EXPERT, 'a.agent_id')})"
             params.append(viewer_user_id)
         sql += " ORDER BY a.created_at ASC, a.id ASC"
         with self._db.connect() as conn:
