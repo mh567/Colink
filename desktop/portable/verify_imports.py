@@ -199,6 +199,7 @@ def _has_current_resources(archive_path: Path, root_name: str, packages: Path) -
                     if (
                         not target
                         or "\\" in target
+                        or posixpath.isabs(target)
                         or ntpath.isabs(target)
                         or ntpath.splitdrive(target)[0]
                         or resolved == ".."

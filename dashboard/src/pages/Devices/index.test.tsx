@@ -2,7 +2,7 @@ import { Suspense, useState } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { OctopUser } from "../../api/modules/auth";
 import {
   CurrentUserProvider,
@@ -11,6 +11,7 @@ import {
 import { routeConfigs } from "../../routes";
 import AuthGuard from "../../components/AuthGuard";
 import { applyRenewedAccessToken, getAuthToken } from "../../api/request";
+import DevicesPage from "./index";
 
 vi.mock("../../i18n", () => ({ default: { language: "zh" } }));
 vi.mock("../../utils/locale", () => ({
@@ -54,9 +55,7 @@ const getStyle = window.getComputedStyle.bind(window);
 function renderPage(user = employee) {
   return render(
     <CurrentUserProvider user={user} setUser={vi.fn()}>
-      <Suspense fallback={<div>加载中</div>}>
-        {routeConfigs.find((route) => route.path === "/devices")?.element}
-      </Suspense>
+      <DevicesPage />
     </CurrentUserProvider>,
   );
 }
@@ -75,7 +74,29 @@ afterEach(() => {
 });
 
 describe("设备页", () => {
-  it("普通用户查看本人设备，浏览器说明桌面客户端要求并真实显示刷新失败", async () => {
+  it.each(["/devices", "/devices/tasks", "/files"])(
+    "新版页面打开旧地址 %s 时回到对话",
+    async (path) => {
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route
+              path={path}
+              element={
+                routeConfigs.find((route) => route.path === path)?.element
+              }
+            />
+            <Route path="/chat" element={<h1>统一对话</h1>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(
+        await screen.findByRole("heading", { name: "统一对话" }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("旧设备组件在无原生桥时提示使用桌面客户端并显示刷新失败", async () => {
     let fail = false;
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

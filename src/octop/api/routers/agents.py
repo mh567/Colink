@@ -231,7 +231,7 @@ async def list_agents(
     server: Any = Depends(get_server),
     scope: Literal["mine", "all"] = Query(
         "mine",
-        description="mine: agents owned by the current user; all: every agent (admin only)",
+        description="mine: owned and accessible shared agents; all: user management summaries",
     ),
 ) -> list[dict[str, Any]]:
     """List agents for the dashboard.
@@ -288,7 +288,7 @@ async def list_agents(
     owned = registry.list_agents(user.id)
     shared = server.services.agent_repo.list_shared(
         exclude_user_id=user.id,
-        viewer_user_id=None if user.is_admin else user.id,
+        viewer_user_id=user.id,
     )
     rows = list({row.agent_id: row for row in [*shared, *owned]}.values())
     shared_owner_username_by_id: dict[int, str] = {}

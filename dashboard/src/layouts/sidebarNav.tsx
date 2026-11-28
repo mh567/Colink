@@ -153,8 +153,9 @@ export function isGroupedNavKey(key: string): boolean {
 
 export function buildNavSections(
   user: OctopUser | null,
-  opts?: { mobileEnabled?: boolean },
+  opts?: { mobileEnabled?: boolean; legacyDevices?: boolean },
 ): NavSection[] {
+  const showLegacyDevices = Boolean(user && opts?.legacyDevices);
   const topItems: NavItem[] = [
     {
       key: "chat",
@@ -163,7 +164,7 @@ export function buildNavSections(
       labelKey: "nav.chat",
     },
   ];
-  if (user) {
+  if (showLegacyDevices) {
     topItems.push(
       {
         key: "local-tasks",
@@ -211,7 +212,7 @@ export function buildNavSections(
       labelKey: "nav.tokenUsage",
     });
   }
-  if (user) {
+  if (showLegacyDevices) {
     topItems.push({
       key: "devices",
       path: "/devices",

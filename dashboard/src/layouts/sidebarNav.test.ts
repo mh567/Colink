@@ -15,22 +15,21 @@ const adminUser = {
 } as OctopUser;
 
 describe("sidebarNav", () => {
-  it("puts the work tools before settings, with their existing workflow destinations", () => {
+  it("puts chat and the current work tools before settings", () => {
     const [work] = buildNavSections(adminUser);
     expect(work.items.slice(0, 5).map(({ key, path }) => [key, path])).toEqual([
       ["chat", "/chat"],
-      ["local-tasks", "/devices/tasks"],
-      ["files", "/files"],
       ["knowledge-bases", "/knowledge-bases"],
       ["experts", "/experts"],
+      ["tasks", "/tasks"],
+      ["token-usage", "/token-usage"],
     ]);
   });
-  it("keeps devices visible for a signed-in user without module permissions", () => {
-    const sections = buildNavSections({
-      ...adminUser,
-      role: "user",
-      permissions: [],
-    });
+  it("keeps devices visible in Wails for a user without module permissions", () => {
+    const sections = buildNavSections(
+      { ...adminUser, role: "user", permissions: [] },
+      { legacyDevices: true },
+    );
     expect(
       sections
         .flatMap((section) => section.items)
@@ -68,9 +67,10 @@ describe("sidebarNav", () => {
   });
 
   it("covers every catalog key from the admin nav", () => {
-    const keys = buildNavSections(adminUser, { mobileEnabled: true }).flatMap(
-      (section) => section.items.map((item) => item.key),
-    );
+    const keys = buildNavSections(adminUser, {
+      mobileEnabled: true,
+      legacyDevices: true,
+    }).flatMap((section) => section.items.map((item) => item.key));
     expect(new Set(keys)).toEqual(new Set(SIDEBAR_NAV_KEYS));
     const grouped = buildNavSections(adminUser, { mobileEnabled: true }).filter(
       (section) => section.id,

@@ -1,5 +1,6 @@
 import { lazy } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { isDesktopShell } from "../utils/desktopChrome";
 
 // Lazy-loaded pages — Common
 const ExpertsPage = lazy(() => import("../pages/Experts"));
@@ -38,6 +39,14 @@ const NotFoundPage = lazy(() => import("../components/NotFoundPage"));
 function RedirectPreserveSearch({ to }: { to: string }) {
   const location = useLocation();
   return <Navigate to={`${to}${location.search}${location.hash}`} replace />;
+}
+
+function LegacyDevicesPage({ view }: { view?: "tasks" | "files" }) {
+  return isDesktopShell() ? (
+    <DevicesPage view={view} />
+  ) : (
+    <Navigate to="/chat" replace />
+  );
 }
 
 export interface RouteConfig {
@@ -170,9 +179,9 @@ export const routeConfigs: RouteConfig[] = [
     element: <RedirectPreserveSearch to="/personalization/skills" />,
   },
   { path: "/token-usage", element: <TokenUsagePage /> },
-  { path: "/devices", element: <DevicesPage /> },
-  { path: "/devices/tasks", element: <DevicesPage view="tasks" /> },
-  { path: "/files", element: <DevicesPage view="files" /> },
+  { path: "/devices", element: <LegacyDevicesPage /> },
+  { path: "/devices/tasks", element: <LegacyDevicesPage view="tasks" /> },
+  { path: "/files", element: <LegacyDevicesPage view="files" /> },
 
   // Control (RequirePermission via pathPermissionKeys in MainLayout)
   { path: "/acp", element: <ACPPage /> },

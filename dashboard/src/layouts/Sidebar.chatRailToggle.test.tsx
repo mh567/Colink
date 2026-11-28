@@ -2,13 +2,14 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LayoutModeProvider } from "../context/LayoutModeContext";
 import { EXPAND_CHAT_RAIL_EVENT } from "../pages/Chat/components/ChatSidebarPanel";
 import { useChatSidebarOpen } from "../pages/Chat/hooks/useChatSidebarState";
 import { LAYOUT_MODE_KEY } from "./layoutModeStorage";
 import Sidebar from "./Sidebar";
 import { CurrentUserProvider } from "../hooks/useCurrentUser";
+import type { OctopUser } from "../api/modules/auth";
 import { preferencesApi } from "../api/modules/preferences";
 
 vi.mock("../components/AvatarDropdown", () => ({
@@ -32,17 +33,28 @@ function LocationProbe() {
   return <div data-testid="path">{pathname}</div>;
 }
 
-function renderSidebar(path: string) {
+const employee: OctopUser = {
+  id: 2,
+  username: "ada",
+  role: "user",
+  display_name: "Ada",
+  locale: "zh",
+  permissions: [],
+};
+
+function renderSidebar(path: string, currentUser: OctopUser | null = null) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <LocationProbe />
-      <Sidebar
-        selectedKey="chat"
-        collapsed={false}
-        onToggle={() => undefined}
-        isMobile={false}
-      />
-    </MemoryRouter>,
+    <CurrentUserProvider user={currentUser} setUser={vi.fn()}>
+      <MemoryRouter initialEntries={[path]}>
+        <LocationProbe />
+        <Sidebar
+          selectedKey="chat"
+          collapsed={false}
+          onToggle={() => undefined}
+          isMobile={false}
+        />
+      </MemoryRouter>
+    </CurrentUserProvider>,
   );
 }
 
@@ -52,6 +64,10 @@ function toggleButton() {
   });
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("classic chat rail toggle", () => {
   beforeEach(() => {
     localStorage.removeItem(LAYOUT_MODE_KEY);
@@ -60,7 +76,8 @@ describe("classic chat rail toggle", () => {
     hook.unmount();
   });
 
-  it("opens devices from normal navigation for a user with no module permissions and an older layout", async () => {
+  it("keeps the devices entry for Wails users with an older layout", async () => {
+    vi.stubGlobal("_wails", { invoke: vi.fn() });
     const prefs = vi.spyOn(preferencesApi, "get").mockResolvedValueOnce({
       locale: "zh",
       remote_browser_bookmarks: [],
@@ -68,35 +85,25 @@ describe("classic chat rail toggle", () => {
       model_reasoning: {},
       sidebar_nav: { groups: [], items: [{ key: "chat" }] },
     });
-    render(
-      <CurrentUserProvider
-        user={{
-          id: 2,
-          username: "ada",
-          role: "user",
-          display_name: "Ada",
-          locale: "zh",
-          permissions: [],
-        }}
-        setUser={vi.fn()}
-      >
-        <MemoryRouter initialEntries={["/chat"]}>
-          <LocationProbe />
-          <Sidebar
-            selectedKey="chat"
-            collapsed={false}
-            onToggle={() => undefined}
-            isMobile={false}
-          />
-        </MemoryRouter>
-      </CurrentUserProvider>,
-    );
+    renderSidebar("/chat", employee);
     await waitFor(() => expect(prefs).toHaveBeenCalled());
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "nav.devices" }));
     expect(screen.getByTestId("path")).toHaveTextContent("/devices");
     prefs.mockRestore();
+  });
+
+  it("starts a conversation without showing legacy device workflows", async () => {
+    renderSidebar("/experts", employee);
+
+    for (const name of ["nav.devices", "nav.localTasks", "nav.files"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "chatWelcome.newChat" }));
+    expect(screen.getByTestId("path")).toHaveTextContent("/chat");
   });
 
   it("stays beside Chat and collapses an open history rail", async () => {
