@@ -4,15 +4,6 @@ import type { WelcomeQuickCard } from "../components/WelcomeScreen";
 
 const MAX_DEFAULT_ROWS = 2;
 const MOBILE_MIN_VISIBLE = 2;
-const MASCOT_ASPECT = 711 / 812;
-const HEADING_HEIGHT_NO_MASCOT = 72;
-
-function estimateMascotHeight(): number {
-  const w = window.innerWidth;
-  if (w < 768) return Math.round(185 * MASCOT_ASPECT - 14);
-  if (w >= 1200) return Math.round(300 * MASCOT_ASPECT - 24);
-  return Math.round(240 * MASCOT_ASPECT - 20);
-}
 
 export function useWelcomeQuickCardsLayout(quickCards: WelcomeQuickCard[]) {
   const isMobile = useIsMobile();
@@ -24,9 +15,6 @@ export function useWelcomeQuickCardsLayout(quickCards: WelcomeQuickCard[]) {
     quickCards.length,
   );
   const [expanded, setExpanded] = useState(false);
-  // Keep mascot visible — auto-hiding on ResizeObserver/viewport changes caused
-  // Safari welcome-screen flicker (animated assets + layout thrash).
-  const autoHideMascot = false;
 
   useEffect(() => {
     setExpanded(false);
@@ -63,7 +51,8 @@ export function useWelcomeQuickCardsLayout(quickCards: WelcomeQuickCard[]) {
       const containerRect = container.getBoundingClientRect();
       const sectionTitleHeight =
         sectionTitleRef.current?.getBoundingClientRect().height ?? 0;
-      const headingHeight = HEADING_HEIGHT_NO_MASCOT + estimateMascotHeight();
+      const headingHeight =
+        headingRef.current?.getBoundingClientRect().height ?? 0;
       const cardHeight = probe.getBoundingClientRect().height;
       if (cardHeight <= 0) return;
 
@@ -96,6 +85,7 @@ export function useWelcomeQuickCardsLayout(quickCards: WelcomeQuickCard[]) {
 
     const ro = new ResizeObserver(schedule);
     if (welcomeRef.current) ro.observe(welcomeRef.current);
+    if (headingRef.current) ro.observe(headingRef.current);
     window.addEventListener("resize", schedule);
     return () => {
       ro.disconnect();
@@ -122,6 +112,5 @@ export function useWelcomeQuickCardsLayout(quickCards: WelcomeQuickCard[]) {
     cards,
     showToggle,
     isMobile,
-    autoHideMascot,
   };
 }

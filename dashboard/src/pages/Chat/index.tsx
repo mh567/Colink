@@ -1552,11 +1552,12 @@ function ChatPageInner() {
                 <ModelConfigEmpty canConfigure={canConfigureModels} />
               ) : showWelcome ? (
                 <WelcomeScreen
+                  conversationKey={`${resolvedAgentId}:${activeThreadId ?? ""}`}
                   agentName={activeAgent?.name ?? null}
                   welcomeSuffix={welcomeSuffix}
                   quickCards={expertQuickCards}
                   onPromptClick={handlePromptClick}
-                  hideMascot={isStreaming || liveSpeakers.length > 0}
+                  hideMark={isStreaming || liveSpeakers.length > 0}
                   isTeam={isTeamChat}
                 />
               ) : (
