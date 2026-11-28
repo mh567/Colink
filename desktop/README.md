@@ -1,6 +1,6 @@
 # Colink 桌面客户端（Electron）
 
-新版桌面复用现有控制台的静序、雾蓝界面，在同一窗口和输入框完成聊天、附件发送与本次本机材料读取。启动、进程管理及安装路线参考 TencentCloud/Octop `v1.0.3b7`（MIT），使用锁定的 Electron 45 与 electron-builder 26.18；Python 运行库继续沿用仓库锁文件。
+新版桌面复用现有控制台的静序、雾蓝界面，在同一窗口和输入框完成聊天、附件发送与本次本机材料读取。启动、进程管理、安装和更新路线参考 TencentCloud/Octop `v1.0.3b7`（MIT），使用锁定的 Electron 45 与 electron-builder 26.18；Python 运行库继续沿用仓库锁文件。
 
 | 路径 | 用途 |
 |------|------|
@@ -49,7 +49,50 @@ desktop/package-release.sh darwin-arm64 --reuse-portable
 
 脚本构建控制台、生成并校验便携运行环境，再将它置于安装包的 `resources/portable`。输出位于 `desktop/src/release/`，名称为 `Colink-desktop-<platform>-<version>`：Windows 为 NSIS `.exe`，macOS 为 `.dmg`，Linux 为 `.deb`。`amd64` 对应 Electron 的 `x64`。版本来自 `pyproject.toml`；内部应用版本按 npm 语义版本格式转换，产物名称保留原版本。便携包与 Python 包继续使用原来的 `Octop`/`octop` 标识。
 
-[桌面构建工作流](../.github/workflows/octop-desktop.yml)沿用六个平台的原生 runner，调用同一脚本。更新时先退出应用，再安装企业提供的新包；桌面壳不连接上游公网更新源。NSIS 不删除应用数据目录，其他安装方式也没有清理用户数据的脚本。用户个人材料不会复制到安装目录。安装、升级、卸载的实际行为须用对应平台产物验证。
+[桌面构建工作流](../.github/workflows/octop-desktop.yml)沿用六个平台的原生 runner，调用同一脚本。可先退出应用，再离线安装企业提供的新包；也可按下面的配置检查企业桌面更新。NSIS 不删除应用数据目录，其他安装方式也没有清理用户数据的脚本。用户个人材料不会复制到安装目录。安装、升级、卸载的实际行为须用对应平台产物验证。
+
+### 企业桌面更新
+
+管理员在启动桌面进程的环境中设置 `COLINK_UPDATE_MANIFEST_URL`，指向企业 HTTPS 静态 JSON 清单。未配置时，文件菜单的“检查桌面更新”会提示联系管理员；没有默认地址或上游公网回退源。此入口更新 Electron 安装包，控制台已有的 Python 服务更新接口不承担桌面更新。
+
+例如，管理员将以下示例清单和现有构建产物放在同一 HTTPS 来源，再设置 `COLINK_UPDATE_MANIFEST_URL=https://updates.example.com/colink/releases.json`；示例版本 `1.0.4` 不表示当前发行版本：
+
+```json
+{
+  "success": true,
+  "data": {
+    "client": {
+      "stable": {
+        "tag": "v1.0.4",
+        "assets": {
+          "win_x64": {
+            "name": "Colink-desktop-windows-amd64-1.0.4.exe",
+            "ext": "exe",
+            "url": "./Colink-desktop-windows-amd64-1.0.4.exe"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+清单沿用上游的 `data.client.stable` 结构，管理员为实际发布的平台补充 `assets`。`name` 必须匹配构建产物名 `Colink-desktop-<platform>-<version>.<ext>`，版本对应 `tag` 去掉开头的 `v`。只提供比当前应用新的版本，不降级。
+
+| 清单键 | platform | ext |
+|--------|----------|-----|
+| `mac_arm` | `darwin-arm64` | `dmg` |
+| `mac_intel` | `darwin-amd64` | `dmg` |
+| `win_arm` | `windows-arm64` | `exe` |
+| `win_x64` | `windows-amd64` | `exe` |
+| `linux_arm` | `linux-arm64` | `deb` |
+| `linux_x64` | `linux-amd64` | `deb` |
+
+清单和安装包必须同源、直接返回内容；拒绝 HTTP、带账号口令的 URL 和重定向。读取清单、下载和启动安装器均在主进程完成，网页没有更新原语，也不会向更新源转发登录令牌或会话 Cookie。安装包仅从管理员配置的 HTTPS 发布地址获取，当前清单与上游一样不提供包摘要字段。
+
+用户通过原生菜单检查并确认后才下载。取消或下载失败保留当前服务；下载完成后撤销本机文件范围、暂停页面并回收本壳启动的服务进程树，确认退出后才交给系统安装器。远端企业服务不停止。Windows 启动 `.exe`，macOS 打开 `.dmg`，Linux 交系统软件安装程序打开 `.deb`；Linux 缺少对应程序时明确报错并恢复原连接。
+
+安装器打开失败时，重启原随包服务或重连原企业地址；恢复失败会提示重新连接。成功交接后应用退出，后续安装由用户和系统完成。此恢复沿用上游的安装器交接失败恢复，不包含安装完成后的自动回滚。整个过程不导入、删除旧版目录或用户材料。
 
 ## 验证范围
 
@@ -60,6 +103,8 @@ npm run typecheck
 ```
 
 Windows 进程回收测试使用已构建的 `desktop/portable/release/Octop-windows-<arch>/runtime/python.exe`，也可用环境变量 `COLINK_TEST_PYTHON` 指定现有 Python 的绝对路径。缺少运行环境时该专项明确跳过，不能记为已验证。
+
+更新测试使用隔离临时目录和模拟下载响应，覆盖来源与版本校验、取消、下载失败、进程退出、安装器交接及恢复失败。系统安装器边界使用替身，不执行真实安装；Windows、macOS、Linux 的系统安装和升级仍须以对应发行包单独验收。
 
 使用隔离账号和示例文件，在真实 Electron 窗口检查：直接聊天；附件拒绝与确认；本机范围选择、移除、取消和混用；换会话与退出账号；浅深主题、中文输入、键盘和缩放。预置旧目录中的账号、会话、授权、任务和文件，核对首次启动及更新后均未导入、改写或删除。普通网页不得取得本机范围桥。
 

@@ -264,6 +264,33 @@ test("clearing while a read awaits verification prevents the text from returning
     await assert.rejects(reading, /LOCAL_SCOPE_REVOKED/);
   }));
 
+test("a stale authentication failure leaves the new conversation selection usable", async () =>
+  fixture(async (file) => {
+    let rejectOld!: (error: Error) => void;
+    const local = new LocalFiles(async (request) => {
+      if (request.conversationId === "old")
+        return new Promise<number>((_, reject) => {
+          rejectOld = reject;
+        });
+      return 7;
+    });
+    const oldSelection = assert.rejects(
+      local.select(
+        { ...session, conversationId: "old", kind: "files" },
+        async () => [file],
+      ),
+    );
+    local.clear();
+    const [scope] = await local.select(
+      { ...session, kind: "files" },
+      async () => [file],
+    );
+    rejectOld(new Error("unauthorized"));
+    await oldSelection;
+    const context = await local.consume({ ...session, ids: [scope!.id] });
+    assert.match(context.text, /仅在本机选择的文本/);
+  }));
+
 test("a replaced file cannot reuse the prior selection", async () =>
   fixture(async (file, dir) => {
     const local = new LocalFiles(async () => 7);

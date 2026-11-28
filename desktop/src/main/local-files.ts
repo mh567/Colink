@@ -89,6 +89,7 @@ export class LocalFiles {
       if (!Number.isSafeInteger(userId) || userId <= 0)
         throw new Error("invalid-user");
     } catch {
+      this.active(generation);
       this.clear();
       fail("LOCAL_SCOPE_AUTH_FAILED");
     }

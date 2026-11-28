@@ -186,6 +186,8 @@ export class SidecarSupervisor {
   private child: ChildProcess | undefined;
   private exited = false;
   private stopping = false;
+  private exitCode: number | null = null;
+  private exitSignal: NodeJS.Signals | null = null;
 
   constructor(
     private readonly launch: {
@@ -213,7 +215,11 @@ export class SidecarSupervisor {
       if (!this.stopping) this.onExit();
     };
     this.child.once("error", stopped);
-    this.child.once("exit", stopped);
+    this.child.once("exit", (code, signal) => {
+      this.exitCode = code;
+      this.exitSignal = signal;
+      stopped();
+    });
   }
 
   async waitUntilReady(timeout = 180_000): Promise<void> {
@@ -234,22 +240,40 @@ export class SidecarSupervisor {
     throw new Error("SIDECAR_START_FAILED");
   }
 
-  async stop(): Promise<void> {
+  async stop(
+    graceMs = 5000,
+  ): Promise<{
+    stopped: true;
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+  }> {
     this.stopping = true;
-    if (!this.child) return;
-    if (this.exited) {
-      if (process.platform !== "win32") await signalTree(this.child, true);
-      return;
-    }
-    await signalTree(this.child, false);
-    const deadline = Date.now() + 5000;
-    while (!this.exited && Date.now() < deadline) await delay(50);
+    if (!this.child) return { stopped: true, exitCode: null, signal: null };
     if (!this.exited) {
-      await signalTree(this.child, true);
-      const forceDeadline = Date.now() + 2000;
-      while (!this.exited && Date.now() < forceDeadline) await delay(50);
+      await signalTree(this.child, false);
+      const deadline = Date.now() + graceMs;
+      while (!this.exited && Date.now() < deadline) await delay(50);
+      if (!this.exited) {
+        await signalTree(this.child, true);
+        const forceDeadline = Date.now() + 2000;
+        while (!this.exited && Date.now() < forceDeadline) await delay(50);
+      }
     }
     if (!this.exited) throw new Error("SIDECAR_STOP_FAILED");
-    if (process.platform !== "win32") await signalTree(this.child, true);
+    if (process.platform !== "win32" && this.child.pid !== undefined) {
+      await signalTree(this.child, true);
+      const deadline = Date.now() + 2000;
+      for (;;) {
+        try {
+          process.kill(-this.child.pid, 0);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
+          throw error;
+        }
+        if (Date.now() >= deadline) throw new Error("SIDECAR_STOP_FAILED");
+        await delay(20);
+      }
+    }
+    return { stopped: true, exitCode: this.exitCode, signal: this.exitSignal };
   }
 }

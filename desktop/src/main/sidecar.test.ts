@@ -89,8 +89,82 @@ test("a crashed child is reported without waiting for the startup timeout", asyn
   );
   sidecar.start();
   await assert.rejects(sidecar.waitUntilReady(1000), /SIDECAR_START_FAILED/);
-  await sidecar.stop();
+  assert.deepEqual(await sidecar.stop(), {
+    stopped: true,
+    exitCode: 1,
+    signal: null,
+  });
 });
+
+test(
+  "updates wait for sidecar termination and retain whether it exited or was killed",
+  { skip: process.platform === "win32" && "requires POSIX graceful signals" },
+  async () => {
+    for (const graceful of [true, false]) {
+      const port = await reserveRandomPort();
+      const script = `process.on('SIGTERM',()=>{${
+        graceful ? "process.exit(0)" : ""
+      }});require('node:http').createServer((q,r)=>r.end('{"ok":true}')).listen(${port},'127.0.0.1')`;
+      const child = new SidecarSupervisor(
+        {
+          executable: process.execPath,
+          args: ["-e", script],
+          cwd: tmpdir(),
+          env: process.env,
+          port,
+        },
+        () => {},
+      );
+      try {
+        child.start();
+        await child.waitUntilReady(3000);
+        assert.deepEqual(await child.stop(100), {
+          stopped: true,
+          exitCode: graceful ? 0 : null,
+          signal: graceful ? null : "SIGKILL",
+        });
+      } finally {
+        await child.stop(100);
+      }
+    }
+  },
+);
+
+test(
+  "a completed shutdown that re-raises SIGTERM remains an exited sidecar",
+  { skip: process.platform === "win32" && "requires POSIX signal semantics" },
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "colink-signal-exit-"));
+    const marker = join(dir, "shutdown-completed");
+    const port = await reserveRandomPort();
+    const script = `process.once('SIGTERM',()=>{require('node:fs').writeFileSync(${JSON.stringify(
+      marker,
+    )},'completed');process.kill(process.pid,'SIGTERM')});require('node:http').createServer((q,r)=>r.end('{"ok":true}')).listen(${port},'127.0.0.1')`;
+    const child = new SidecarSupervisor(
+      {
+        executable: process.execPath,
+        args: ["-e", script],
+        cwd: dir,
+        env: process.env,
+        port,
+      },
+      () => {},
+    );
+    try {
+      child.start();
+      await child.waitUntilReady(3000);
+      assert.deepEqual(await child.stop(), {
+        stopped: true,
+        exitCode: null,
+        signal: "SIGTERM",
+      });
+      assert.equal(await readFile(marker, "utf8"), "completed");
+    } finally {
+      await child.stop();
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "POSIX cleanup also stops descendants after the parent has already exited",

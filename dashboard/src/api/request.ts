@@ -19,6 +19,10 @@ export const FORBIDDEN_EVENT = "octop:forbidden";
 export const ACCESS_TOKEN_RESPONSE_HEADER = "X-Octop-Access-Token";
 /** Keep an explicitly connected native device on the renewed login session. */
 export const AUTH_TOKEN_RENEWED_EVENT = "octop:auth-token-renewed";
+export interface AuthTokenRenewal {
+  previousToken: string;
+  accessToken: string;
+}
 
 /** Quiet error thrown when setup lockdown blocks a non-wizard API call. */
 export class SetupRequiredError extends Error {
@@ -106,8 +110,13 @@ export function clearAuthToken() {
 export function applyRenewedAccessToken(response: Response): void {
   const renewed = response.headers.get(ACCESS_TOKEN_RESPONSE_HEADER);
   if (renewed) {
+    const previousToken = getAuthToken();
     setAuthToken(renewed, !isSessionOnlyAuth());
-    window.dispatchEvent(new Event(AUTH_TOKEN_RENEWED_EVENT));
+    window.dispatchEvent(
+      new CustomEvent<AuthTokenRenewal>(AUTH_TOKEN_RENEWED_EVENT, {
+        detail: { previousToken, accessToken: renewed },
+      }),
+    );
   }
 }
 

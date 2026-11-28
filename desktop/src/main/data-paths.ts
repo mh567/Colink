@@ -49,7 +49,7 @@ export function createDataPaths(
     (p): p is string => Boolean(p),
   );
   if (
-    legacy.some((p) => inside(root, resolve(p))) ||
+    legacy.some((p) => inside(root, resolve(p)) || inside(resolve(p), root)) ||
     root.split(sep).includes(".octop")
   ) {
     throw new Error("LEGACY_DATA_DIRECTORY");
@@ -57,7 +57,7 @@ export function createDataPaths(
   const canonical = resolveExistingParents(root);
   const legacyTargets = legacy.map((p) => resolveExistingParents(resolve(p)));
   if (
-    legacyTargets.some((p) => inside(canonical, p)) ||
+    legacyTargets.some((p) => inside(canonical, p) || inside(p, canonical)) ||
     canonical.split(sep).includes(".octop")
   ) {
     throw new Error("LEGACY_DATA_DIRECTORY");

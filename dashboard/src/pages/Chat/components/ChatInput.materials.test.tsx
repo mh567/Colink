@@ -21,7 +21,11 @@ import { initReactI18next } from "react-i18next";
 import type { ComponentProps } from "react";
 import i18n from "../../../i18n";
 import en from "../../../locales/en.json";
-import { clearAuthToken, setAuthToken } from "../../../api/request";
+import {
+  applyRenewedAccessToken,
+  clearAuthToken,
+  setAuthToken,
+} from "../../../api/request";
 import ChatInput from "./ChatInput";
 
 vi.unmock("react-i18next");
@@ -193,7 +197,40 @@ describe("chat material choices", () => {
     expect(native.consume).toHaveBeenCalledTimes(1);
   });
 
-  it("does not send a completed local read after the login token is cleared", async () => {
+  it.each(["cleared", "replaced", "replaced then renewed"])(
+    "does not send a completed local read after the login token is %s",
+    async (change) => {
+      let finishReading!: (value: { text: string; sources: [] }) => void;
+      native.consume.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishReading = resolve;
+          }),
+      );
+      const onSend = vi.fn();
+      render(composer({ onSend, initialText: "Summarize" }));
+      await selectLocalFile();
+      fireEvent.click(screen.getByTitle("Send"));
+      if (change === "cleared") clearAuthToken();
+      else {
+        setAuthToken("another-account");
+        if (change === "replaced then renewed")
+          applyRenewedAccessToken(
+            new Response(null, {
+              headers: { "X-Octop-Access-Token": "another-account-renewed" },
+            }),
+          );
+      }
+      await act(async () => {
+        finishReading({ text: "Private material", sources: [] });
+      });
+      expect(onSend).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveValue("Summarize");
+      expect(screen.queryByText(scope.path)).not.toBeInTheDocument();
+    },
+  );
+
+  it("sends local material when the same login session renews during reading", async () => {
     let finishReading!: (value: { text: string; sources: [] }) => void;
     native.consume.mockImplementationOnce(
       () =>
@@ -205,12 +242,20 @@ describe("chat material choices", () => {
     render(composer({ onSend, initialText: "Summarize" }));
     await selectLocalFile();
     fireEvent.click(screen.getByTitle("Send"));
-    clearAuthToken();
+    for (const token of ["session-renewed", "session-renewed-again"])
+      applyRenewedAccessToken(
+        new Response(null, {
+          headers: { "X-Octop-Access-Token": token },
+        }),
+      );
     await act(async () => {
       finishReading({ text: "Private material", sources: [] });
     });
-    expect(onSend).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox")).toHaveValue("Summarize");
+    expect(onSend).toHaveBeenCalledWith(
+      expect.stringContaining("Private material"),
+      undefined,
+    );
+    expect(screen.getByRole("textbox")).toHaveValue("");
     expect(screen.queryByText(scope.path)).not.toBeInTheDocument();
   });
 

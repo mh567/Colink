@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { desktopLocalFiles, type LocalFileScope } from "../../../api/desktop";
-import { getAuthToken, UNAUTHORIZED_EVENT } from "../../../api/request";
+import {
+  AUTH_TOKEN_RENEWED_EVENT,
+  getAuthToken,
+  UNAUTHORIZED_EVENT,
+  type AuthTokenRenewal,
+} from "../../../api/request";
 
 const ERROR_CODES = [
   "LOCAL_SCOPE_INVALID",
@@ -162,13 +167,20 @@ export function useChatLocalFiles(
       setBusy(true);
       setError(null);
       const requestIdentity = identity();
+      let acceptedToken = requestIdentity.accessToken;
+      const onRenewedToken = (event: Event) => {
+        const renewal = (event as CustomEvent<AuthTokenRenewal>).detail;
+        if (renewal?.previousToken === acceptedToken)
+          acceptedToken = renewal.accessToken;
+      };
+      window.addEventListener(AUTH_TOKEN_RENEWED_EVENT, onRenewedToken);
       try {
         const context = await native.consume({
           ...requestIdentity,
           ids: scopes.map((scope) => scope.id),
         });
         if (!current()) return null;
-        if (getAuthToken() !== requestIdentity.accessToken) {
+        if (getAuthToken() !== acceptedToken) {
           clear();
           setError(t("localFiles.errors.LOCAL_SCOPE_IDENTITY_CHANGED"));
           return null;
@@ -189,6 +201,7 @@ export function useChatLocalFiles(
         if (current()) setError(errorMessage(cause));
         return null;
       } finally {
+        window.removeEventListener(AUTH_TOKEN_RENEWED_EVENT, onRenewedToken);
         if (current()) {
           setScopes([]);
           pending.current = false;

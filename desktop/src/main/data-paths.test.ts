@@ -54,6 +54,39 @@ test("new desktop leaves legacy accounts, sessions and files untouched", async (
   }
 });
 
+for (const directory of ["profile", "server"]) {
+  test(`a new ${directory} directory cannot reuse an inherited legacy home`, async () => {
+    const home = await realpath(
+      await mkdtemp(join(tmpdir(), "colink-overlap-")),
+    );
+    try {
+      const root = join(home, "new");
+      const legacy = join(root, directory);
+      await mkdir(legacy, { recursive: true });
+      const personalFile = join(legacy, "personal.txt");
+      await writeFile(personalFile, "keep legacy material");
+      assert.throws(
+        () =>
+          createDataPaths(
+            { COLINK_DESKTOP_HOME: root, OCTOP_HOME: legacy },
+            home,
+          ),
+        /LEGACY_DATA_DIRECTORY/,
+      );
+      assert.equal(
+        await readFile(personalFile, "utf8"),
+        "keep legacy material",
+      );
+      assert.equal(
+        existsSync(join(root, directory === "server" ? "profile" : "server")),
+        false,
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+}
+
 test(
   "the real target of an inherited legacy home cannot become the new data root",
   { skip: process.platform === "win32" },

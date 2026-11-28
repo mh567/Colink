@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   net,
+  shell,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from "electron";
@@ -15,7 +16,7 @@ import {
   type ScopeConsumption,
   type ScopeSelection,
 } from "../shared/bridge.js";
-import { desktopLocale } from "../shared/locales.js";
+import { desktopLocale, desktopUpdateMessage } from "../shared/locales.js";
 import { createDataPaths, type DataPaths } from "./data-paths.js";
 import { readConnection, saveConnection } from "./connection-store.js";
 import { LocalFiles } from "./local-files.js";
@@ -27,6 +28,13 @@ import {
   SidecarSupervisor,
 } from "./sidecar.js";
 import { normalizeServerURL, trustedPage, verifySession } from "./trust.js";
+import { checkForUpdate } from "./update/update-coordinator.js";
+import { downloadInstaller } from "./update/download.js";
+import {
+  handOffInstaller,
+  installUpdate,
+  launchDetachedInstaller,
+} from "./update/installer.js";
 
 app.setName("Colink");
 app.enableSandbox();
@@ -38,6 +46,8 @@ let savedServer: string | null = null;
 let sidecar: SidecarSupervisor | undefined;
 let connecting = false;
 let quitting = false;
+let updating = false;
+let updateAbort: AbortController | undefined;
 let setupError = "";
 const setupPage = pathToFileURL(
   join(__dirname, "../../renderer/connect.html"),
@@ -68,10 +78,102 @@ async function showSetup(error = ""): Promise<void> {
   if (window && !window.isDestroyed()) await window.loadURL(setupPage);
 }
 
-async function stopSidecar(): Promise<void> {
+async function stopSidecar(): Promise<{ stopped: true }> {
   const child = sidecar;
-  sidecar = undefined;
-  if (child) await child.stop();
+  if (!child) return { stopped: true };
+  const result = await child.stop();
+  if (sidecar === child) sidecar = undefined;
+  return result;
+}
+
+async function updateDesktop(): Promise<void> {
+  if (updating || connecting || !window || window.isDestroyed()) return;
+  updating = true;
+  updateAbort = new AbortController();
+  const controller = updateAbort;
+  const item = Menu.getApplicationMenu()?.getMenuItemById("desktop-update");
+  if (item) item.enabled = false;
+  try {
+    const selected = await checkForUpdate(
+      process.env.COLINK_UPDATE_MANIFEST_URL,
+      app.getVersion(),
+      process.platform,
+      process.arch,
+      net.fetch as typeof fetch,
+    );
+    if (quitting || controller.signal.aborted) return;
+    if (!selected) {
+      await dialog.showMessageBox(window, {
+        type: "info",
+        title: copy().updateTitle,
+        message: copy().updateCurrent,
+      });
+      return;
+    }
+    const reconnect = sidecar ? null : server;
+    const outcome = await installUpdate(selected, {
+      confirm: async (release) => {
+        const strings = copy();
+        const result = await dialog.showMessageBox(window!, {
+          type: "question",
+          title: strings.updateTitle,
+          message: strings.updateConfirm.replace("{version}", release.version),
+          buttons: [strings.cancel, strings.updateInstall],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        return result.response === 1 && !quitting && !controller.signal.aborted;
+      },
+      download: (release) =>
+        downloadInstaller(
+          release,
+          app.getPath("temp"),
+          net.fetch as typeof fetch,
+          {
+            signal: controller.signal,
+            onProgress: (received, total) => {
+              if (window && !window.isDestroyed())
+                window.setProgressBar(total > 0 ? received / total : 2);
+            },
+          },
+        ),
+      stop: async () => {
+        if (quitting || controller.signal.aborted)
+          throw new Error("UPDATE_STOP_FAILED");
+        await showSetup(copy().updateInstalling);
+        return (await stopSidecar()).stopped;
+      },
+      handOff: (kind, path) =>
+        handOffInstaller(kind, path, process.platform, {
+          openPath: shell.openPath,
+          launch: launchDetachedInstaller,
+        }),
+      restore: async () => {
+        if (quitting) return;
+        if (reconnect === undefined) await showSetup();
+        else {
+          await connect(reconnect, false);
+          if (!server) throw new Error("UPDATE_RECOVERY_FAILED");
+        }
+      },
+    });
+    if (outcome === "opened") app.quit();
+  } catch (error) {
+    if (!quitting && window && !window.isDestroyed())
+      await dialog.showMessageBox(window, {
+        type: "error",
+        title: copy().updateTitle,
+        message: desktopUpdateMessage(
+          error instanceof Error ? error.message : "",
+          app.getLocale(),
+        ),
+      });
+  } finally {
+    updating = false;
+    updateAbort = undefined;
+    if (item) item.enabled = true;
+    if (window && !window.isDestroyed()) window.setProgressBar(-1);
+  }
 }
 
 async function connect(value: string | null, persist: boolean): Promise<void> {
@@ -153,6 +255,7 @@ function registerIPC(): void {
   });
   ipcMain.handle(CHANNELS.connect, async (event, value: string | null) => {
     sender(event, true);
+    if (updating) throw new Error("UPDATE_IN_PROGRESS");
     await connect(value, true);
   });
   ipcMain.handle(CHANNELS.select, async (event, request: ScopeSelection) => {
@@ -249,9 +352,17 @@ function createWindow(): void {
         {
           label: strings.serverMenu,
           click: () => {
+            if (updating) return;
             void stopSidecar()
               .then(() => showSetup())
               .catch(() => showSetup(copy().failed));
+          },
+        },
+        {
+          id: "desktop-update",
+          label: strings.updateMenu,
+          click: () => {
+            void updateDesktop();
           },
         },
         { type: "separator" },
@@ -313,6 +424,7 @@ async function start(): Promise<void> {
 
 app.on("before-quit", (event) => {
   local.clear();
+  updateAbort?.abort();
   if (quitting) return;
   event.preventDefault();
   quitting = true;

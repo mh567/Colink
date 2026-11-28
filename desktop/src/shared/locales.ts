@@ -26,6 +26,29 @@ const en = {
   editMenu: "Edit",
   viewMenu: "View",
   serverMenu: "Change server…",
+  updateMenu: "Check desktop updates…",
+  updateTitle: "Desktop update",
+  updateCurrent: "The desktop application is up to date.",
+  updateConfirm:
+    "Install desktop version {version}? Colink will close after the installer opens.",
+  updateInstall: "Download and install",
+  updateInstalling: "Preparing to install the desktop update…",
+  cancel: "Cancel",
+  UPDATE_NOT_CONFIGURED:
+    "Ask your administrator to configure the enterprise desktop update source.",
+  UPDATE_SOURCE_INVALID:
+    "The update address is not a trusted enterprise HTTPS source.",
+  UPDATE_CHECK_FAILED:
+    "Unable to check desktop updates. Check the enterprise update service and try again.",
+  UPDATE_UNSUPPORTED:
+    "No compatible desktop installer is available for this computer.",
+  UPDATE_DOWNLOAD_FAILED: "The installer download failed. Try again later.",
+  UPDATE_STOP_FAILED:
+    "The bundled server could not be stopped, so the update was cancelled.",
+  UPDATE_INSTALL_FAILED:
+    "Unable to open the installer; the previous connection has been restored.",
+  UPDATE_RECOVERY_FAILED:
+    "The update was cancelled and the previous connection could not be restored. Reconnect to your server.",
   quit: "Quit Colink",
   LOCAL_SCOPE_INVALID: "Select local files again.",
   LOCAL_SCOPE_REVOKED: "Local access was removed. Select the files again.",
@@ -65,6 +88,21 @@ const zh: Record<keyof typeof en, string> = {
   editMenu: "编辑",
   viewMenu: "视图",
   serverMenu: "更换服务端…",
+  updateMenu: "检查桌面更新…",
+  updateTitle: "桌面更新",
+  updateCurrent: "桌面应用已是最新版本。",
+  updateConfirm: "安装桌面版本 {version}？安装器打开后 Colink 将退出。",
+  updateInstall: "下载并安装",
+  updateInstalling: "正在准备安装桌面更新…",
+  cancel: "取消",
+  UPDATE_NOT_CONFIGURED: "请联系管理员配置企业桌面更新源。",
+  UPDATE_SOURCE_INVALID: "更新地址不是受信任的企业 HTTPS 来源。",
+  UPDATE_CHECK_FAILED: "无法检查桌面更新，请检查企业更新服务后重试。",
+  UPDATE_UNSUPPORTED: "没有适用于这台电脑的桌面安装包。",
+  UPDATE_DOWNLOAD_FAILED: "安装包下载失败，请稍后重试。",
+  UPDATE_STOP_FAILED: "随包服务端未能退出，已取消更新。",
+  UPDATE_INSTALL_FAILED: "无法打开安装器，已恢复原服务连接。",
+  UPDATE_RECOVERY_FAILED: "更新已取消，原服务连接未能恢复，请重新连接。",
   quit: "退出 Colink",
   LOCAL_SCOPE_INVALID: "请重新选择本机文件。",
   LOCAL_SCOPE_REVOKED: "本机范围已移除，请重新选择文件。",
@@ -81,4 +119,11 @@ const zh: Record<keyof typeof en, string> = {
 
 export function desktopLocale(locale?: string): typeof zh {
   return locale?.toLowerCase().startsWith("zh") ? zh : en;
+}
+
+export function desktopUpdateMessage(code: string, locale?: string): string {
+  const strings = desktopLocale(locale);
+  return code.startsWith("UPDATE_") && Object.hasOwn(strings, code)
+    ? strings[code as keyof typeof strings]
+    : strings.UPDATE_CHECK_FAILED;
 }
