@@ -58,6 +58,15 @@ const local = new LocalFiles(async (session) => {
 });
 const copy = (): ReturnType<typeof desktopLocale> =>
   desktopLocale(app.getLocale());
+const appIcon = join(
+  app.getAppPath(),
+  "build",
+  process.platform === "win32"
+    ? "windows/icon.ico"
+    : process.platform === "darwin"
+    ? "appicon-macos.png"
+    : "appicon.png",
+);
 
 function sender(event: IpcMainInvokeEvent, setup = false): void {
   if (
@@ -298,6 +307,7 @@ function registerIPC(): void {
 function createWindow(): void {
   window = new BrowserWindow({
     title: "Colink",
+    icon: appIcon,
     width: 1280,
     height: 800,
     minWidth: 960,
@@ -409,6 +419,9 @@ async function start(): Promise<void> {
     window?.focus();
   });
   await app.whenReady();
+  if (process.platform === "darwin" && !app.isPackaged) {
+    app.dock?.setIcon(appIcon);
+  }
   createWindow();
   registerIPC();
   await showSetup();

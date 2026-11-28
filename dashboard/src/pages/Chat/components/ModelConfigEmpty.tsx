@@ -1,7 +1,7 @@
 import { Button } from "antd";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { OctopEmptyMascot } from "../../../components/EmptyState";
+import WelcomeMark from "./WelcomeMark";
 import styles from "../index.module.less";
 
 interface ModelConfigEmptyProps {
@@ -18,7 +18,7 @@ export default function ModelConfigEmpty({
     <div className={styles.noAgentsEmpty}>
       <div className={styles.noAgentsEmptyInner}>
         <div className={styles.noAgentsEmptyIcon}>
-          <OctopEmptyMascot className={styles.noAgentsEmptyMascot} />
+          <WelcomeMark />
         </div>
         <h1 className={styles.noAgentsEmptyTitle}>
           {t("modelConfig.promptTitle")}

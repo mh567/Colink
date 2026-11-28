@@ -53,8 +53,12 @@
 .welcomeLogoIcon {
   width: 104px;
   height: 104px;
-  object-fit: contain;
-  opacity: 1;
+  flex-shrink: 0;
+  color: #345f90;
+
+  :global(html[data-theme="dark"]) & {
+    color: #a6c6ee;
+  }
 
   @media (max-width: 767px) {
     width: 76px;
@@ -72,39 +76,23 @@
   }
 }
 
-// Mascot image shown above the greeting title
-.welcomeMascot {
-  width: 132px;
-  aspect-ratio: 352 / 320;
-  height: auto;
-  object-fit: contain;
-  margin-bottom: -12px;
-  cursor: pointer;
-  background: transparent;
-  transition: transform 0.18s ease;
+.welcomeShortArc {
+  transform-origin: 128px 128px;
+  animation: colinkArcSettle 1s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 
-  &:hover {
-    transform: scale(1.04) translateY(-2px);
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
   }
+}
 
-  &:active {
-    transform: scale(0.94);
+@keyframes colinkArcSettle {
+  from {
+    transform: translate(10px, -4px) rotate(-8deg);
+    opacity: 0.65;
   }
-
-  &:focus-visible {
-    outline: 2px solid var(--fn-color-brand);
-    outline-offset: 4px;
-    border-radius: 12px;
-  }
-
-  @media (max-width: 767px) {
-    width: 110px;
-    margin-bottom: -10px;
-  }
-
-  @media (min-width: 1200px) {
-    width: 172px;
-    margin-bottom: -16px;
+  to {
+    transform: none;
+    opacity: 1;
   }
 }
 

@@ -27,6 +27,9 @@ module.exports = {
     "out/preload/**",
     "out/shared/**",
     "renderer/**",
+    "build/appicon.png",
+    "build/appicon-macos.png",
+    "build/windows/icon.ico",
     "package.json",
     "!**/*.test.js",
   ],
@@ -41,9 +44,9 @@ module.exports = {
   mac: {
     target: ["dmg"],
     category: "public.app-category.productivity",
-    icon: "build/appicon-macos.png",
+    icon: "build/darwin/icons.icns",
   },
-  win: { target: ["nsis"], icon: "build/appicon.png" },
+  win: { target: ["nsis"], icon: "build/windows/icon.ico" },
   nsis: {
     oneClick: false,
     perMachine: false,
@@ -54,7 +57,7 @@ module.exports = {
   linux: {
     target: ["deb"],
     category: "Office",
-    icon: "build/appicon.png",
+    icon: "build/linux/icons",
     maintainer: "Colink contributors",
   },
 };
