@@ -37,7 +37,13 @@ describe("Colink welcome", () => {
   });
 
   it("uses the approved ring geometry without the old mascot or a square background", () => {
-    render(<WelcomeScreen quickCards={[]} onPromptClick={vi.fn()} />);
+    render(
+      <WelcomeScreen
+        conversationKey="agent-a:"
+        quickCards={[]}
+        onPromptClick={vi.fn()}
+      />,
+    );
 
     const mark = screen.getByRole("img", { name: "Colink" });
     const approved = new DOMParser().parseFromString(
@@ -55,7 +61,11 @@ describe("Colink welcome", () => {
   });
 
   it("keeps the same mark during rerenders and streaming visibility changes", () => {
-    const props = { quickCards: [], onPromptClick: vi.fn() };
+    const props = {
+      conversationKey: "agent-a:",
+      quickCards: [],
+      onPromptClick: vi.fn(),
+    };
     const { rerender } = render(<WelcomeScreen {...props} />);
     const mark = screen.getByRole("img", { name: "Colink" });
     rerender(<WelcomeScreen {...props} agentName="示例专家" hideMark />);
@@ -70,6 +80,7 @@ describe("Colink welcome", () => {
     const onPromptClick = vi.fn();
     const { unmount } = render(
       <WelcomeScreen
+        conversationKey="agent-a:"
         quickCards={[
           {
             title: "整理资料",

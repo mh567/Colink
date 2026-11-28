@@ -1552,6 +1552,7 @@ function ChatPageInner() {
                 <ModelConfigEmpty canConfigure={canConfigureModels} />
               ) : showWelcome ? (
                 <WelcomeScreen
+                  conversationKey={`${resolvedAgentId}:${activeThreadId ?? ""}`}
                   agentName={activeAgent?.name ?? null}
                   welcomeSuffix={welcomeSuffix}
                   quickCards={expertQuickCards}

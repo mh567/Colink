@@ -15,6 +15,7 @@ export interface WelcomeQuickCard {
 }
 
 interface WelcomeScreenProps {
+  conversationKey: string;
   onPromptClick: (text: string, options?: { prefill?: boolean }) => void;
   agentName?: string | null;
   welcomeSuffix?: string | null;
@@ -24,6 +25,7 @@ interface WelcomeScreenProps {
 }
 
 export default function WelcomeScreen({
+  conversationKey,
   onPromptClick,
   agentName,
   welcomeSuffix,
@@ -47,7 +49,7 @@ export default function WelcomeScreen({
     <div className={styles.welcome} ref={welcomeRef}>
       <div className={styles.welcomeInner}>
         <div className={styles.welcomeHeading} ref={headingRef}>
-          <WelcomeMark hidden={hideMark} animate />
+          <WelcomeMark key={conversationKey} hidden={hideMark} animate />
           <h1 className={styles.welcomeTitle}>
             {isTeam
               ? t("chatWelcome.teamHeading", {
